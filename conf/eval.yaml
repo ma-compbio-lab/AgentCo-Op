@@ -1,0 +1,19 @@
+defaults:
+  - _self_
+
+tasks: "data/tasks.jsonl"
+method: orchestrated
+
+model:
+  backend: mock
+  name: null
+
+log_dir: logs
+max_samples: null
+
+hydra:
+  job:
+    chdir: false
+  output_subdir: null
+  run:
+    dir: .

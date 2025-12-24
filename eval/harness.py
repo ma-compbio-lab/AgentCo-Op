@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-import argparse
+import hydra
+from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig, OmegaConf
 
+from config import EvalConfig, ModelConfig
 from data import load_tasks
 from eval.metrics import basic_metrics
 from methods.dispatcher import run_method
@@ -10,30 +13,44 @@ from runtime import build_runtime
 from utils import append_jsonl
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Batch evaluation harness.")
-    parser.add_argument("--tasks", required=True, help="Path to JSONL tasks file.")
-    parser.add_argument("--method", default="orchestrated", choices=["baseline", "sequential", "orchestrated"])
-    parser.add_argument("--model_backend", default="mock", choices=["mock", "openai"])
-    parser.add_argument("--model_name", default=None, help="Model name for API backends.")
-    parser.add_argument("--log_dir", default="logs", help="Directory for traces.")
-    parser.add_argument("--max_samples", type=int, default=None)
-    args = parser.parse_args()
+def to_eval_config(cfg: DictConfig) -> EvalConfig:
+    # Normalize Hydra config into typed dataclasses for safe access.
+    cfg_obj = OmegaConf.to_object(cfg)
+    if isinstance(cfg_obj, EvalConfig):
+        return cfg_obj
+    if isinstance(cfg_obj, dict):
+        model_dict = cfg_obj.get("model", {})
+        return EvalConfig(
+            tasks=cfg_obj.get("tasks", "data/tasks.jsonl"),
+            method=cfg_obj.get("method", "orchestrated"),
+            model=ModelConfig(**model_dict),
+            log_dir=cfg_obj.get("log_dir", "logs"),
+            max_samples=cfg_obj.get("max_samples"),
+        )
+    raise TypeError("Config is not compatible with EvalConfig.")
 
-    model = get_model_backend(args.model_backend, model=args.model_name)
-    runtime = build_runtime(model, log_dir=args.log_dir)
 
-    tasks = load_tasks(args.tasks)
-    if args.max_samples:
-        tasks = tasks[: args.max_samples]
+ConfigStore.instance().store(name="eval", node=EvalConfig)
 
-    summary_path = f"{args.log_dir}/eval_summary.jsonl"
+
+@hydra.main(version_base=None, config_path="../conf", config_name="eval")
+def main(cfg: DictConfig) -> None:
+    eval_cfg = to_eval_config(cfg)
+
+    model = get_model_backend(eval_cfg.model.backend, model=eval_cfg.model.name)
+    runtime = build_runtime(model, log_dir=eval_cfg.log_dir)
+
+    tasks = load_tasks(eval_cfg.tasks)
+    if eval_cfg.max_samples:
+        tasks = tasks[: eval_cfg.max_samples]
+
+    summary_path = f"{eval_cfg.log_dir}/eval_summary.jsonl"
     for task in tasks:
-        result = run_method(args.method, task, runtime)
+        result = run_method(eval_cfg.method, task, runtime)
         metrics = basic_metrics(result)
         row = {
             "task_id": task.task_id,
-            "method": args.method,
+            "method": eval_cfg.method,
             "metrics": metrics,
         }
         append_jsonl(summary_path, row)

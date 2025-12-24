@@ -5,7 +5,7 @@ Minimal multi-agent workflow runner with an Orchestrator, Execution Engine, and 
 ## Quick start
 
 ```bash
-python run.py --task "Summarize the key risks in this plan." --method orchestrated
+python run.py task.goal="Summarize the key risks in this plan." method=orchestrated
 ```
 
 ### Methods
@@ -17,4 +17,16 @@ python run.py --task "Summarize the key risks in this plan." --method orchestrat
 ### Model backends
 
 - `mock` (default)
-- `openai` (requires `openai` package and `--model_name`)
+- `openai` (requires `openai` package and `model.name=...`)
+
+### Config files (Hydra)
+
+- `conf/config.yaml` controls single runs.
+- `conf/eval.yaml` controls batch evaluation.
+
+Example overrides:
+
+```bash
+python run.py task.goal="Draft a checklist." model.backend=mock
+python eval/harness.py tasks=data/tasks.jsonl method=sequential max_samples=10
+```

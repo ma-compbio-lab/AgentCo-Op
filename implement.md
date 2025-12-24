@@ -20,6 +20,7 @@ layout with `run.py`, `models.py`, `methods/`, and core services.
 
 ## Repo Layout
 - `run.py`: CLI entrypoint.
+- `config.py`: structured configs for Hydra/OmegaConf.
 - `models.py`: model backends with caching and token estimates.
 - `prompts.py`: prompt construction helpers.
 - `utils.py`: JSONL logging, token estimation, time helpers.
@@ -29,6 +30,7 @@ layout with `run.py`, `models.py`, `methods/`, and core services.
 - `agents/`: base agent class, reasoning agents, IO agent, factory.
 - `methods/`: baseline, sequential, orchestrated method implementations.
 - `eval/`: harness and metrics for batch evaluation.
+- `conf/`: Hydra YAML configs for single runs and eval.
 
 ## Data Contracts (core/contracts.py)
 - TaskSpec: user goal, constraints, criteria, budgets, modalities.
@@ -60,21 +62,25 @@ HookManager supports:
 
 ## Usage
 - Single task:
-  - `python run.py --task "Your task here" --method orchestrated`
+  - `python run.py task.goal="Your task here" method=orchestrated`
 - Batch eval:
-  - `python eval/harness.py --tasks path/to/tasks.jsonl --method orchestrated`
+  - `python eval/harness.py tasks=path/to/tasks.jsonl method=orchestrated`
 
 ## Model Backends
 - mock: default, offline deterministic output.
-- openai: requires `openai` package and `--model_name`.
+- openai: requires `openai` package and `model.name=...`.
 
 ## Key Points
 - `logs/traces.jsonl` stores trace events for each run.
 - `mock` backend is the default to keep runs offline and deterministic.
 - Planner/worker subtasks force pipeline execution when both agents are available.
 - Protocols and hooks are minimal but structured for extension.
+- Hydra config files keep experiments reproducible and editable as YAML.
+- Hydra entrypoints normalize configs into typed dataclasses for safer access.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
   tool runtime, runtime builder, and documentation.
 - 2025-12-22: fixed JSON trace serialization for datetime fields.
+- 2025-12-22: replaced argparse with Hydra/OmegaConf configs and added YAML configs.
+- 2025-12-22: normalized Hydra configs into typed dataclasses in entrypoints.
