@@ -17,7 +17,7 @@ python run.py task.goal="Summarize the key risks in this plan." method=orchestra
 ### Model backends
 
 - `mock` (default)
-- `openai` (requires `openai` package and `model.name=...`)
+- `openai` (requires `openai` package, `model.name=...`, and `model.api_key` or `OPENAI_API_KEY`)
 
 ### Config files (Hydra)
 
@@ -29,4 +29,5 @@ Example overrides:
 ```bash
 python run.py task.goal="Draft a checklist." model.backend=mock
 python eval/harness.py tasks=data/tasks.jsonl method=sequential max_samples=10
+python run.py task.goal="Summarize" model.backend=openai model.name=gpt-4o-mini
 ```

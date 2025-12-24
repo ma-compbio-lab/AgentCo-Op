@@ -64,11 +64,11 @@ HookManager supports:
 - Single task:
   - `python run.py task.goal="Your task here" method=orchestrated`
 - Batch eval:
-  - `python eval/harness.py tasks=path/to/tasks.jsonl method=orchestrated`
+  - `python eval/harness.py tasks=path/to/tasks.jsonl method=orchestrated max_samples=10`
 
 ## Model Backends
 - mock: default, offline deterministic output.
-- openai: requires `openai` package and `model.name=...`.
+- openai: requires `openai` package, `model.name=...`, and `model.api_key` or `OPENAI_API_KEY`.
 
 ## Key Points
 - `logs/traces.jsonl` stores trace events for each run.
@@ -84,3 +84,4 @@ HookManager supports:
 - 2025-12-22: fixed JSON trace serialization for datetime fields.
 - 2025-12-22: replaced argparse with Hydra/OmegaConf configs and added YAML configs.
 - 2025-12-22: normalized Hydra configs into typed dataclasses in entrypoints.
+- 2025-12-22: added OpenAI API key wiring and Hydra eval config.

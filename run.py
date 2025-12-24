@@ -45,7 +45,11 @@ def main(cfg: DictConfig) -> None:
         output_modalities=task_cfg.output_modalities,
     )
 
-    model = get_model_backend(app_cfg.model.backend, model=app_cfg.model.name)
+    model = get_model_backend(
+        app_cfg.model.backend,
+        model=app_cfg.model.name,
+        api_key=app_cfg.model.api_key,
+    )
     runtime = build_runtime(model, log_dir=app_cfg.log_dir)
 
     result = run_method(app_cfg.method, task, runtime)

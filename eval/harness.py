@@ -36,8 +36,11 @@ ConfigStore.instance().store(name="eval", node=EvalConfig)
 @hydra.main(version_base=None, config_path="../conf", config_name="eval")
 def main(cfg: DictConfig) -> None:
     eval_cfg = to_eval_config(cfg)
-
-    model = get_model_backend(eval_cfg.model.backend, model=eval_cfg.model.name)
+    model = get_model_backend(
+        eval_cfg.model.backend,
+        model=eval_cfg.model.name,
+        api_key=eval_cfg.model.api_key,
+    )
     runtime = build_runtime(model, log_dir=eval_cfg.log_dir)
 
     tasks = load_tasks(eval_cfg.tasks)
@@ -48,11 +51,7 @@ def main(cfg: DictConfig) -> None:
     for task in tasks:
         result = run_method(eval_cfg.method, task, runtime)
         metrics = basic_metrics(result)
-        row = {
-            "task_id": task.task_id,
-            "method": eval_cfg.method,
-            "metrics": metrics,
-        }
+        row = {"task_id": task.task_id, "method": eval_cfg.method, "metrics": metrics}
         append_jsonl(summary_path, row)
 
 

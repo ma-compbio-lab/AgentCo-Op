@@ -16,6 +16,7 @@ method: orchestrated
 model:
   backend: mock
   name: null
+  api_key: ${oc.env:OPENAI_API_KEY,null}
 
 log_dir: logs
 

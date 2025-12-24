@@ -17,6 +17,7 @@ class TaskConfig:
 class ModelConfig:
     backend: str = "mock"
     name: str | None = None
+    api_key: str | None = None
 
 
 @dataclass
