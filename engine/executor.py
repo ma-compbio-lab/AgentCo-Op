@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from core.contracts import ExecutionPlan, TaskSpec
+from core.hooks import HookManager
+from core.observability import Observability
+from engine.protocols import ProtocolBase
+
+
+class ExecutionEngine:
+    def __init__(
+        self,
+        agent_pool: dict[str, object],
+        protocols: dict[str, ProtocolBase],
+        hooks: HookManager,
+        observability: Observability,
+    ) -> None:
+        self.agent_pool = agent_pool
+        self.protocols = protocols
+        self.hooks = hooks
+        self.obs = observability
+
+    def run(self, task: TaskSpec, plan: ExecutionPlan) -> dict:
+        state: dict = {"messages": [], "artifacts": [], "round": 0}
+        protocol = self.protocols[plan.protocol]
+        protocol_state = protocol.prepare(task, plan)
+
+        max_steps = max(plan.max_rounds, len(plan.subtasks), 1) * max(len(plan.active_agents), 1)
+
+        while state["round"] < max_steps:
+            step = protocol.next_step(task, plan, state, protocol_state)
+            if not step:
+                break
+            step = self.hooks.pre_step(task, plan, state, step)
+
+            agent = self.agent_pool[step["agent_id"]]
+            output_msg = agent.run(
+                task,
+                inbox=step.get("inbox", []),
+                instructions=step.get("instructions", ""),
+                **step.get("kwargs", {}),
+            )
+
+            state["messages"].append(output_msg)
+            self.obs.event(
+                "agent_output",
+                {"agent_id": step["agent_id"], "msg": output_msg.model_dump(mode="json")},
+            )
+
+            patch = self.hooks.post_step(task, plan, state, output_msg)
+            if patch:
+                plan = plan.model_copy(update=patch)
+
+            protocol.on_step_end(task, plan, state, protocol_state, output_msg)
+            state["round"] += 1
+
+            if protocol.is_done(task, plan, state, protocol_state):
+                break
+
+        return state
