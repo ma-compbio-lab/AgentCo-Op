@@ -24,6 +24,12 @@ model:
 
 log_dir: logs
 
+log:
+  enabled: true
+  level: info
+  use_color: true
+  use_icons: true
+
 hydra:
   job:
     chdir: false

@@ -28,6 +28,8 @@ class Runtime:
 
 
 def build_runtime(model_routing: ModelRouting, log_dir: str) -> Runtime:
+    from utils import log_event
+
     registry = Registry()
     agent_pool, registry = build_default_agents(model_routing)
     hooks = HookManager()
@@ -48,6 +50,12 @@ def build_runtime(model_routing: ModelRouting, log_dir: str) -> Runtime:
         observability=observability,
         run_id=run_id,
         session_id=session_id,
+    )
+    log_event(
+        "RUNTIME",
+        "init",
+        "runtime initialized",
+        data={"run_id": run_id, "agents": list(agent_pool.keys())},
     )
 
     return Runtime(

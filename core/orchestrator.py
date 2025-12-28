@@ -27,6 +27,9 @@ class Orchestrator:
         self.run_hooks = run_hooks
 
     async def plan(self, task: TaskSpec, ctx, session=None) -> ExecutionPlan:
+        from utils import log_event, log_section
+
+        log_section("ORCH", "Planning")
         task = self.hooks.pre_plan(task)
 
         candidates = self.registry.filter(required_caps=["reason"], input_types=task.input_modalities)
@@ -35,6 +38,7 @@ class Orchestrator:
             raise ValueError("No agents available for the requested task input modalities.")
 
         prompt = build_plan_prompt(task, candidates)
+        log_event("ORCH", "input", "planning input prepared", data={"candidates": [c.agent_id for c in candidates]})
         result = await run_agent(
             self.planner_agent,
             prompt,
@@ -78,6 +82,23 @@ class Orchestrator:
         plan.acceptance_tests = plan.acceptance_tests or task.success_criteria
         plan = self.hooks.post_plan(task, plan)
         self.observability.event_from_result("plan_result", result, {"plan_id": plan.plan_id})
+        log_event(
+            "ORCH",
+            "plan",
+            "execution plan ready",
+            data={
+                "protocol": plan.protocol,
+                "active_agents": plan.active_agents,
+                "subtasks": [s.title for s in plan.subtasks],
+            },
+        )
+        log_event(
+            "ORCH",
+            "plan_json",
+            "plan details",
+            level="debug",
+            data=plan.model_dump(mode="json"),
+        )
         return plan
 
     def _fallback_plan(self, task: TaskSpec, candidates: list) -> ExecutionPlan:

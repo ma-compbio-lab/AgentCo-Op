@@ -24,11 +24,15 @@ class ExecutionEngine:
         self.run_hooks = run_hooks
 
     async def run(self, task: TaskSpec, plan: ExecutionPlan, ctx, session=None) -> dict:
+        from utils import log_event, log_section
+
+        log_section("ENGINE", "Execution")
         state: dict = {"messages": [], "artifacts": [], "round": 0}
         protocol = self.protocols[plan.protocol]
         protocol_state = protocol.prepare(task, plan)
 
         max_steps = max(plan.max_rounds, len(plan.subtasks), 1) * max(len(plan.active_agents), 1)
+        log_event("ENGINE", "start", "executor started", data={"protocol": plan.protocol, "max_steps": max_steps})
 
         while state["round"] < max_steps:
             step = protocol.next_step(task, plan, state, protocol_state)
@@ -43,6 +47,23 @@ class ExecutionEngine:
             agent = self.agent_pool[agent_id]
             inbox = step.get("inbox", [])
             instructions = step.get("instructions", "")
+            log_event(
+                "ENGINE",
+                "step_start",
+                "running step",
+                data={"round": state["round"], "agent_id": agent_id},
+            )
+            log_event(
+                "ENGINE",
+                "step_input",
+                "input details",
+                level="debug",
+                data={
+                    "agent_id": agent_id,
+                    "instructions": instructions[:200],
+                    "inbox_len": len(inbox),
+                },
+            )
             prompt = build_task_prompt(agent_id, task, instructions, inbox)
             result = await run_agent(
                 agent,
@@ -69,10 +90,24 @@ class ExecutionEngine:
                 {"agent_id": agent_id, "msg": output_msg.model_dump(mode="json")},
             )
             self.obs.event_from_result("agent_usage", result, {"agent_id": agent_id})
+            log_event(
+                "ENGINE",
+                "step_end",
+                "step complete",
+                data={"agent_id": agent_id, "output_len": len(output_text)},
+            )
+            log_event(
+                "ENGINE",
+                "step_output",
+                "output preview",
+                level="debug",
+                data={"agent_id": agent_id, "preview": output_text[:200]},
+            )
 
             patch = self.hooks.post_step(task, plan, state, output_msg)
             if patch:
                 plan = plan.model_copy(update=patch)
+                log_event("ENGINE", "plan_patch", "plan patched", level="warn", data=patch)
 
             protocol.on_step_end(task, plan, state, protocol_state, output_msg)
             state["round"] += 1

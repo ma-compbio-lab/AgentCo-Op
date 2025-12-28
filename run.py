@@ -6,7 +6,7 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
-from config import AppConfig, ModelConfig, TaskConfig
+from config import AppConfig, LogConfig, ModelConfig, TaskConfig
 from core.contracts import TaskSpec
 from methods.dispatcher import run_method
 from models import build_model_routing, configure_openai, ensure_api_key, validate_backend
@@ -21,11 +21,13 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
     if isinstance(cfg_obj, dict):
         task_dict = cfg_obj.get("task", {})
         model_dict = cfg_obj.get("model", {})
+        log_dict = cfg_obj.get("log", {})
         return AppConfig(
             task=TaskConfig(**task_dict),
             method=cfg_obj.get("method", "orchestrated"),
             model=ModelConfig(**model_dict),
             log_dir=cfg_obj.get("log_dir", "logs"),
+            log=LogConfig(**log_dict) if isinstance(log_dict, dict) else LogConfig(),
         )
     raise TypeError("Config is not compatible with AppConfig.")
 
@@ -40,6 +42,15 @@ def main(cfg: DictConfig) -> None:
 
 async def run_async(cfg: DictConfig) -> None:
     app_cfg = to_app_config(cfg)
+    from utils import log_event, set_log_config
+
+    set_log_config(
+        enabled=app_cfg.log.enabled,
+        level=app_cfg.log.level,
+        use_color=app_cfg.log.use_color,
+        use_icons=app_cfg.log.use_icons,
+    )
+    log_event("RUN", "start", "starting run", data={"method": app_cfg.method})
 
     task_cfg = app_cfg.task
     task = TaskSpec(
@@ -61,6 +72,7 @@ async def run_async(cfg: DictConfig) -> None:
     print(result.answer)
     if result.judge_report:
         print(f"\n[Judge] ok={result.judge_report.ok} score={result.judge_report.score}")
+    log_event("RUN", "done", "completed run")
 
 
 if __name__ == "__main__":

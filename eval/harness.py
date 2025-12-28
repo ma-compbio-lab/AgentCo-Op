@@ -6,7 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 
 import asyncio
 
-from config import EvalConfig, ModelConfig
+from config import EvalConfig, LogConfig, ModelConfig
 from data import load_tasks
 from eval.metrics import basic_metrics
 from methods.dispatcher import run_method
@@ -22,11 +22,13 @@ def to_eval_config(cfg: DictConfig) -> EvalConfig:
         return cfg_obj
     if isinstance(cfg_obj, dict):
         model_dict = cfg_obj.get("model", {})
+        log_dict = cfg_obj.get("log", {})
         return EvalConfig(
             tasks=cfg_obj.get("tasks", "data/tasks.jsonl"),
             method=cfg_obj.get("method", "orchestrated"),
             model=ModelConfig(**model_dict),
             log_dir=cfg_obj.get("log_dir", "logs"),
+            log=LogConfig(**log_dict) if isinstance(log_dict, dict) else LogConfig(),
             max_samples=cfg_obj.get("max_samples"),
         )
     raise TypeError("Config is not compatible with EvalConfig.")
@@ -42,6 +44,15 @@ def main(cfg: DictConfig) -> None:
 
 async def run_async(cfg: DictConfig) -> None:
     eval_cfg = to_eval_config(cfg)
+    from utils import log_event, set_log_config
+
+    set_log_config(
+        enabled=eval_cfg.log.enabled,
+        level=eval_cfg.log.level,
+        use_color=eval_cfg.log.use_color,
+        use_icons=eval_cfg.log.use_icons,
+    )
+    log_event("RUN", "start", "starting eval", data={"method": eval_cfg.method})
     validate_backend(eval_cfg.model.backend)
     configure_openai(eval_cfg.model.api_key)
     ensure_api_key()
@@ -58,6 +69,7 @@ async def run_async(cfg: DictConfig) -> None:
         metrics = basic_metrics(result)
         row = {"task_id": task.task_id, "method": eval_cfg.method, "metrics": metrics}
         append_jsonl(summary_path, row)
+    log_event("RUN", "done", "completed eval", data={"count": len(tasks)})
 
 
 if __name__ == "__main__":

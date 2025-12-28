@@ -8,8 +8,12 @@ from prompts import build_task_prompt
 
 
 async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
+    from utils import log_event, log_section
+
+    log_section("METHOD", "Baseline")
     worker = runtime.agent_pool["worker"]
     prompt = build_task_prompt("worker", task, task.goal, [])
+    log_event("METHOD", "start", "baseline run", data={"task_id": task.task_id})
     result = await run_agent(
         worker,
         prompt,
@@ -24,4 +28,5 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     if not isinstance(output_text, str):
         output_text = str(output_text)
     msg = Message(sender="worker", receiver="engine", content_type="text", content=output_text)
+    log_event("METHOD", "done", "baseline complete", data={"output_len": len(output_text)})
     return MethodResult(answer=output_text, state={"messages": [msg]})

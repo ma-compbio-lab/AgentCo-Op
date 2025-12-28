@@ -6,6 +6,12 @@ method: orchestrated
 log_dir: logs
 max_samples: null
 
+log:
+  enabled: true
+  level: info
+  use_color: true
+  use_icons: true
+
 model:
   backend: openai
   name: gpt-4o-mini

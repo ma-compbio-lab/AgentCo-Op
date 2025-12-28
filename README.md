@@ -47,3 +47,13 @@ Note: local agent builders live in `app_agents/` to avoid colliding with the SDK
 ```bash
 pytest -q
 ```
+
+### Logging
+
+Use Hydra config to control terminal logs:
+
+```bash
+python run.py log.level=debug log.use_color=true log.use_icons=true
+```
+
+`log.level=debug` shows step inputs and output previews.

@@ -30,6 +30,15 @@ class AppConfig:
     method: str = "orchestrated"
     model: ModelConfig = field(default_factory=ModelConfig)
     log_dir: str = "logs"
+    log: "LogConfig" = field(default_factory=lambda: LogConfig())
+
+
+@dataclass
+class LogConfig:
+    enabled: bool = True
+    level: str = "info"
+    use_color: bool = True
+    use_icons: bool = True
 
 
 @dataclass
@@ -38,4 +47,5 @@ class EvalConfig:
     method: str = "orchestrated"
     model: ModelConfig = field(default_factory=ModelConfig)
     log_dir: str = "logs"
+    log: "LogConfig" = field(default_factory=lambda: LogConfig())
     max_samples: int | None = None

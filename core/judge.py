@@ -25,9 +25,13 @@ class Judge:
     async def evaluate_and_summarize(
         self, task: TaskSpec, plan: ExecutionPlan, state: dict, ctx, session=None
     ) -> tuple[JudgeReport, str]:
+        from utils import log_event, log_section
+
+        log_section("JUDGE", "Evaluation")
         state = self.hooks.before_judge(task, plan, state)
 
         judge_prompt = build_judge_prompt(task, plan, state.get("messages", []))
+        log_event("JUDGE", "start", "running judge", data={"plan_id": plan.plan_id})
         judge_result = await run_agent(
             self.judge_agent,
             judge_prompt,
@@ -48,11 +52,18 @@ class Judge:
         else:
             report = JudgeReport(ok=False, score=0.0, issues=["invalid_judge_output"])
         self.observability.event_from_result("judge_result", judge_result, {"plan_id": plan.plan_id})
+        log_event(
+            "JUDGE",
+            "report",
+            "judge report ready",
+            data={"ok": report.ok, "score": report.score, "issues": report.issues},
+        )
 
         if not report.ok:
             return report, ""
 
         agg_prompt = build_aggregate_prompt(task, plan, state.get("messages", []))
+        log_event("JUDGE", "aggregate", "running aggregator", data={"plan_id": plan.plan_id})
         agg_result = await run_agent(
             self.aggregator_agent,
             agg_prompt,
@@ -67,4 +78,17 @@ class Judge:
             final_answer = str(final_answer)
         final_answer = self.hooks.before_output(task, plan, state, final_answer)
         self.observability.event_from_result("aggregate_result", agg_result, {"plan_id": plan.plan_id})
+        log_event(
+            "JUDGE",
+            "done",
+            "final answer ready",
+            data={"output_len": len(final_answer)},
+        )
+        log_event(
+            "JUDGE",
+            "output_preview",
+            "final answer preview",
+            level="debug",
+            data={"preview": final_answer[:200]},
+        )
         return report, final_answer
