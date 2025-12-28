@@ -41,3 +41,9 @@ python run.py model.planner=gpt-4o model.worker=gpt-4o-mini model.judge=gpt-4o
 ```
 
 Note: local agent builders live in `app_agents/` to avoid colliding with the SDK's `agents` module.
+
+### Tests
+
+```bash
+pytest -q
+```

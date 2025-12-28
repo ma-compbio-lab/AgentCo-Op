@@ -66,6 +66,8 @@ HookManager supports:
   - `OPENAI_API_KEY=... python run.py task.goal="Your task here" method=orchestrated`
 - Batch eval:
   - `OPENAI_API_KEY=... python eval/harness.py tasks=path/to/tasks.jsonl method=orchestrated max_samples=10`
+- Tests:
+  - `pytest -q`
 
 ## Model Backends
 - openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
@@ -77,6 +79,7 @@ HookManager supports:
 - Protocols and hooks are minimal but structured for extension.
 - Hydra config files keep experiments reproducible and editable as YAML.
 - Hydra entrypoints normalize configs into typed dataclasses for safer access.
+- Tests use stubbed SDK calls to avoid network access during unit runs.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
@@ -87,3 +90,4 @@ HookManager supports:
 - 2025-12-22: added OpenAI API key wiring and Hydra eval config.
 - 2025-12-22: refactored to OpenAI Agents SDK, added context/cache/runtime services, and renamed local agents to app_agents/.
 - 2025-12-22: fixed mutable defaults in core contracts (lists/dicts via Field default_factory).
+- 2025-12-22: added unit tests for core modules and execution flow.
