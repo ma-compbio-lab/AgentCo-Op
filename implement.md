@@ -80,6 +80,7 @@ HookManager supports:
 - Hydra config files keep experiments reproducible and editable as YAML.
 - Hydra entrypoints normalize configs into typed dataclasses for safer access.
 - Tests use stubbed SDK calls to avoid network access during unit runs.
+- Prompts emphasize clear structure, explicit output formats, and minimal assumptions for predictable agent behavior.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
@@ -91,3 +92,4 @@ HookManager supports:
 - 2025-12-22: refactored to OpenAI Agents SDK, added context/cache/runtime services, and renamed local agents to app_agents/.
 - 2025-12-22: fixed mutable defaults in core contracts (lists/dicts via Field default_factory).
 - 2025-12-22: added unit tests for core modules and execution flow.
+- 2025-12-22: updated agent prompts per GPT-5 and prompt-engineering guidelines.

@@ -10,7 +10,9 @@ def build_judge_agent(model_name: str) -> Agent:
         name="Judge",
         instructions=(
             "Evaluate whether outputs satisfy success criteria. "
-            "Return JudgeReport JSON with ok/score/issues/suggested_patch."
+            "Return JudgeReport JSON with ok/score/issues/suggested_patch. "
+            "Be strict: list missing criteria and conflicts. "
+            "Return JSON only; no extra text."
         ),
         model=model_name,
         output_type=JudgeReport,
@@ -20,6 +22,9 @@ def build_judge_agent(model_name: str) -> Agent:
 def build_aggregator_agent(model_name: str) -> Agent:
     return Agent(
         name="Aggregator",
-        instructions="Fuse candidate outputs into a final response.",
+        instructions=(
+            "Fuse candidate outputs into a final response. "
+            "Resolve conflicts and align with constraints; if uncertainty remains, add a short Notes section."
+        ),
         model=model_name,
     )

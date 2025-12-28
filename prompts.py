@@ -4,7 +4,11 @@ from core.contracts import AgentSpec, Message, TaskSpec
 
 
 def build_system_prompt(role: str) -> str:
-    return f"You are a {role} agent. Be concise, correct, and follow the task constraints."
+    return (
+        f"You are a {role} agent. "
+        "Follow instructions in order: system > task > constraints > success criteria. "
+        "If instructions conflict, pick the higher-priority instruction and note the conflict briefly."
+    )
 
 
 def format_inbox(inbox: list[Message]) -> str:
@@ -19,13 +23,18 @@ def format_inbox(inbox: list[Message]) -> str:
 def build_task_prompt(role: str, task: TaskSpec, instructions: str, inbox: list[Message]) -> str:
     inbox_text = format_inbox(inbox)
     parts = [
-        f"Task goal: {task.goal}",
+        "### Task",
+        f"Goal: {task.goal}",
         f"Instructions: {instructions}",
         f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
         f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+        "### Execution",
+        "Depth: focus only on required items; avoid tangents.",
+        "Stop when the deliverable is complete; do not ask clarifying questions.",
+        "If assumptions are needed, state them briefly.",
     ]
     if inbox_text:
-        parts.append(f"Context:\n{inbox_text}")
+        parts.append(f"### Context\n{inbox_text}")
     return "\n".join(parts)
 
 
@@ -38,14 +47,19 @@ def build_plan_prompt(task: TaskSpec, candidates: list[AgentSpec]) -> str:
     agent_text = "\n".join(agent_lines) if agent_lines else "None"
     return "\n".join(
         [
-            "You are the orchestrator. Produce an ExecutionPlan JSON.",
-            f"Task goal: {task.goal}",
+            "### Planner Instructions",
+            "Produce an ExecutionPlan JSON only. Do not include extra text.",
+            "Choose a protocol from: pipeline, roundtable, debate, loop, hybrid.",
+            "Use only the agent IDs listed below in active_agents and subtasks.",
+            "Prefer minimal, executable steps; avoid redundant subtasks.",
+            "### Task",
+            f"Goal: {task.goal}",
             f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
             f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
             f"Budget tokens: {task.budget_tokens}",
             f"Input modalities: {', '.join(task.input_modalities)}",
             f"Output modalities: {', '.join(task.output_modalities)}",
-            "Available agents:",
+            "### Available agents",
             agent_text,
         ]
     )
@@ -55,11 +69,15 @@ def build_judge_prompt(task: TaskSpec, plan, messages: list[Message]) -> str:
     transcript = format_inbox(messages)
     return "\n".join(
         [
-            "You are the judge. Validate outputs against success criteria.",
-            f"Task goal: {task.goal}",
+            "### Judge Instructions",
+            "Return JudgeReport JSON only. No extra commentary.",
+            "Be strict: check success criteria and constraints; list gaps explicitly.",
+            "### Task",
+            f"Goal: {task.goal}",
+            f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
             f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
             f"Protocol: {getattr(plan, 'protocol', 'unknown')}",
-            "Agent outputs:",
+            "### Agent outputs",
             transcript or "None",
         ]
     )
@@ -69,10 +87,14 @@ def build_aggregate_prompt(task: TaskSpec, plan, messages: list[Message]) -> str
     transcript = format_inbox(messages)
     return "\n".join(
         [
-            "You are the aggregator. Produce the final answer.",
-            f"Task goal: {task.goal}",
+            "### Aggregator Instructions",
+            "Synthesize a final response aligned with constraints and success criteria.",
+            "Resolve conflicts; if uncertainty remains, add a short Notes section.",
+            "### Task",
+            f"Goal: {task.goal}",
             f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
-            "Agent outputs:",
+            f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+            "### Agent outputs",
             transcript or "None",
         ]
     )

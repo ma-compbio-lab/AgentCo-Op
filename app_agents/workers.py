@@ -21,7 +21,12 @@ def cache_set(wrapper: RunContextWrapper[AppContext], key: str, value: str) -> s
 def build_worker_agent(model_name: str) -> Agent:
     return Agent(
         name="Worker",
-        instructions="Solve assigned tasks accurately and concisely.",
+        instructions=(
+            "Solve assigned tasks accurately and concisely. "
+            "Follow the task goal and constraints. "
+            "Avoid unnecessary exploration or questions; make minimal assumptions and state them briefly. "
+            "Produce the final answer directly."
+        ),
         model=model_name,
         tools=[cache_get, cache_set],
     )
