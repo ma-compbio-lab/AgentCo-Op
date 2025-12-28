@@ -4,11 +4,13 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
+import asyncio
+
 from config import EvalConfig, ModelConfig
 from data import load_tasks
 from eval.metrics import basic_metrics
 from methods.dispatcher import run_method
-from models import get_model_backend
+from models import build_model_routing, configure_openai, ensure_api_key, validate_backend
 from runtime import build_runtime
 from utils import append_jsonl
 
@@ -35,13 +37,16 @@ ConfigStore.instance().store(name="eval", node=EvalConfig)
 
 @hydra.main(version_base=None, config_path="../conf", config_name="eval")
 def main(cfg: DictConfig) -> None:
+    asyncio.run(run_async(cfg))
+
+
+async def run_async(cfg: DictConfig) -> None:
     eval_cfg = to_eval_config(cfg)
-    model = get_model_backend(
-        eval_cfg.model.backend,
-        model=eval_cfg.model.name,
-        api_key=eval_cfg.model.api_key,
-    )
-    runtime = build_runtime(model, log_dir=eval_cfg.log_dir)
+    validate_backend(eval_cfg.model.backend)
+    configure_openai(eval_cfg.model.api_key)
+    ensure_api_key()
+    routing = build_model_routing(eval_cfg.model)
+    runtime = build_runtime(routing, log_dir=eval_cfg.log_dir)
 
     tasks = load_tasks(eval_cfg.tasks)
     if eval_cfg.max_samples:
@@ -49,7 +54,7 @@ def main(cfg: DictConfig) -> None:
 
     summary_path = f"{eval_cfg.log_dir}/eval_summary.jsonl"
     for task in tasks:
-        result = run_method(eval_cfg.method, task, runtime)
+        result = await run_method(eval_cfg.method, task, runtime)
         metrics = basic_metrics(result)
         row = {"task_id": task.task_id, "method": eval_cfg.method, "metrics": metrics}
         append_jsonl(summary_path, row)

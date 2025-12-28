@@ -7,8 +7,12 @@ log_dir: logs
 max_samples: null
 
 model:
-  backend: mock
-  name: null
+  backend: openai
+  name: gpt-4o-mini
+  planner: null
+  worker: null
+  judge: null
+  aggregator: null
   api_key: ${oc.env:OPENAI_API_KEY,null}
 
 hydra:

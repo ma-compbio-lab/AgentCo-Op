@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from core.contracts import ExecutionPlan, TaskSpec
+from core.contracts import ExecutionPlan, Message, TaskSpec
 from core.hooks import HookManager
 from core.observability import Observability
+from core.runtime import run_agent
 from engine.protocols import ProtocolBase
+from prompts import build_task_prompt
 
 
 class ExecutionEngine:
@@ -13,13 +15,15 @@ class ExecutionEngine:
         protocols: dict[str, ProtocolBase],
         hooks: HookManager,
         observability: Observability,
+        run_hooks: object | None = None,
     ) -> None:
         self.agent_pool = agent_pool
         self.protocols = protocols
         self.hooks = hooks
         self.obs = observability
+        self.run_hooks = run_hooks
 
-    def run(self, task: TaskSpec, plan: ExecutionPlan) -> dict:
+    async def run(self, task: TaskSpec, plan: ExecutionPlan, ctx, session=None) -> dict:
         state: dict = {"messages": [], "artifacts": [], "round": 0}
         protocol = self.protocols[plan.protocol]
         protocol_state = protocol.prepare(task, plan)
@@ -32,19 +36,39 @@ class ExecutionEngine:
                 break
             step = self.hooks.pre_step(task, plan, state, step)
 
-            agent = self.agent_pool[step["agent_id"]]
-            output_msg = agent.run(
-                task,
-                inbox=step.get("inbox", []),
-                instructions=step.get("instructions", ""),
-                **step.get("kwargs", {}),
+            agent_id = step["agent_id"]
+            if agent_id not in self.agent_pool:
+                agent_id = plan.active_agents[0]
+                step["agent_id"] = agent_id
+            agent = self.agent_pool[agent_id]
+            inbox = step.get("inbox", [])
+            instructions = step.get("instructions", "")
+            prompt = build_task_prompt(agent_id, task, instructions, inbox)
+            result = await run_agent(
+                agent,
+                prompt,
+                ctx,
+                session=session,
+                workflow_name=f"step:{agent_id}",
+                max_turns=plan.max_rounds,
+                hooks=self.run_hooks,
+            )
+            output_text = getattr(result, "final_output", "")
+            if not isinstance(output_text, str):
+                output_text = str(output_text)
+            output_msg = Message(
+                sender=agent_id,
+                receiver="engine",
+                content_type="text",
+                content=output_text,
             )
 
             state["messages"].append(output_msg)
             self.obs.event(
                 "agent_output",
-                {"agent_id": step["agent_id"], "msg": output_msg.model_dump(mode="json")},
+                {"agent_id": agent_id, "msg": output_msg.model_dump(mode="json")},
             )
+            self.obs.event_from_result("agent_usage", result, {"agent_id": agent_id})
 
             patch = self.hooks.post_step(task, plan, state, output_msg)
             if patch:

@@ -6,7 +6,7 @@ from methods.base import MethodResult
 from runtime import Runtime
 
 
-def run_method(method_name: str, task: TaskSpec, runtime: Runtime) -> MethodResult:
+async def run_method(method_name: str, task: TaskSpec, runtime: Runtime) -> MethodResult:
     if method_name not in METHODS:
         raise ValueError(f"Unknown method: {method_name}")
-    return METHODS[method_name](task, runtime)
+    return await METHODS[method_name](task, runtime)

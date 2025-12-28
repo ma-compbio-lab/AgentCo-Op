@@ -15,8 +15,12 @@ class TaskConfig:
 
 @dataclass
 class ModelConfig:
-    backend: str = "mock"
+    backend: str = "openai"
     name: str | None = None
+    planner: str | None = None
+    worker: str | None = None
+    judge: str | None = None
+    aggregator: str | None = None
     api_key: str | None = None
 
 

@@ -1,23 +1,25 @@
 # Agent-Cop
 
 Minimal multi-agent workflow runner with an Orchestrator, Execution Engine, and Judge.
+Implemented using the OpenAI Agents SDK (no LangGraph).
 
 ## Quick start
 
 ```bash
+export OPENAI_API_KEY="your-key"
+pip install -r requirements.txt
 python run.py task.goal="Summarize the key risks in this plan." method=orchestrated
 ```
 
 ### Methods
 
 - `baseline`: single worker agent
-- `sequential`: planner -> worker -> verifier
+- `sequential`: planner -> worker
 - `orchestrated`: orchestrator + engine + judge
 
 ### Model backends
 
-- `mock` (default)
-- `openai` (requires `openai` package, `model.name=...`, and `model.api_key` or `OPENAI_API_KEY`)
+- `openai` (requires `openai-agents` and `OPENAI_API_KEY`)
 
 ### Config files (Hydra)
 
@@ -27,7 +29,15 @@ python run.py task.goal="Summarize the key risks in this plan." method=orchestra
 Example overrides:
 
 ```bash
-python run.py task.goal="Draft a checklist." model.backend=mock
+python run.py task.goal="Draft a checklist." model.backend=openai model.name=gpt-4o-mini
 python eval/harness.py tasks=data/tasks.jsonl method=sequential max_samples=10
 python run.py task.goal="Summarize" model.backend=openai model.name=gpt-4o-mini
 ```
+
+Role-specific overrides:
+
+```bash
+python run.py model.planner=gpt-4o model.worker=gpt-4o-mini model.judge=gpt-4o
+```
+
+Note: local agent builders live in `app_agents/` to avoid colliding with the SDK's `agents` module.

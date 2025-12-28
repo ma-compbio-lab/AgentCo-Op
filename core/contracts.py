@@ -12,13 +12,13 @@ ContentType = Literal["text", "json", "tool_call", "tool_result", "file_ref"]
 class TaskSpec(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid4()))
     goal: str
-    constraints: list[str] = []
-    success_criteria: list[str] = []
+    constraints: list[str] = Field(default_factory=list)
+    success_criteria: list[str] = Field(default_factory=list)
     budget_tokens: int = 8000
     budget_usd: Optional[float] = None
     max_latency_s: Optional[float] = None
-    input_modalities: list[str] = ["text"]
-    output_modalities: list[str] = ["text"]
+    input_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    output_modalities: list[str] = Field(default_factory=lambda: ["text"])
 
 
 class AgentSpec(BaseModel):
@@ -28,8 +28,8 @@ class AgentSpec(BaseModel):
     capabilities: list[str]
     input_types: list[str]
     output_types: list[str]
-    tool_allowlist: list[str] = []
-    cost_hint: dict[str, Any] = {}
+    tool_allowlist: list[str] = Field(default_factory=list)
+    cost_hint: dict[str, Any] = Field(default_factory=dict)
 
 
 class Message(BaseModel):
@@ -39,7 +39,7 @@ class Message(BaseModel):
     receiver: str
     content_type: ContentType
     content: Any
-    meta: dict[str, Any] = {}
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class SubTask(BaseModel):
@@ -47,7 +47,7 @@ class SubTask(BaseModel):
     title: str
     instructions: str
     assigned_to: str
-    depends_on: list[str] = []
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class ExecutionPlan(BaseModel):
@@ -55,19 +55,19 @@ class ExecutionPlan(BaseModel):
     protocol: Literal["pipeline", "roundtable", "debate", "loop", "hybrid"]
     active_agents: list[str]
     subtasks: list[SubTask]
-    edges: list[tuple[str, str]] = []
-    acceptance_tests: list[str] = []
+    edges: list[tuple[str, str]] = Field(default_factory=list)
+    acceptance_tests: list[str] = Field(default_factory=list)
     budget_tokens: int = 8000
     model_hint: Optional[str] = None
     max_rounds: int = 8
     hooks_enabled: bool = True
-    meta: dict[str, Any] = {}
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class JudgeReport(BaseModel):
     ok: bool
     score: float = 0.0
-    issues: list[str] = []
+    issues: list[str] = Field(default_factory=list)
     suggested_patch: Optional[dict[str, Any]] = None
 
 
@@ -75,4 +75,4 @@ class TraceEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     ts: datetime = Field(default_factory=datetime.utcnow)
     event_type: str
-    data: dict[str, Any] = {}
+    data: dict[str, Any] = Field(default_factory=dict)

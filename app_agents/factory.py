@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from agents.io_agents import PassthroughIOAgent
-from agents.reasoning_agents import LLMAgent
+from app_agents.io_agents import build_io_agent
+from app_agents.judge import build_aggregator_agent, build_judge_agent
+from app_agents.orchestrator import build_planner_agent
+from app_agents.workers import build_worker_agent
 from core.contracts import AgentSpec
 from core.registry import Registry
+from models import ModelRouting
 
 
-def build_default_agents(model_backend) -> tuple[dict[str, object], Registry]:
+def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Registry]:
     registry = Registry()
     agent_pool: dict[str, object] = {}
 
@@ -26,13 +29,13 @@ def build_default_agents(model_backend) -> tuple[dict[str, object], Registry]:
         input_types=["text"],
         output_types=["text"],
     )
-    verifier_spec = AgentSpec(
-        agent_id="verifier",
-        name="Verifier",
-        description="Checks outputs for compliance with criteria.",
+    judge_spec = AgentSpec(
+        agent_id="judge",
+        name="Judge",
+        description="Evaluates outputs for compliance with criteria.",
         capabilities=["verify"],
         input_types=["text"],
-        output_types=["text"],
+        output_types=["json"],
     )
     aggregator_spec = AgentSpec(
         agent_id="aggregator",
@@ -53,14 +56,14 @@ def build_default_agents(model_backend) -> tuple[dict[str, object], Registry]:
 
     registry.register_agent(planner_spec)
     registry.register_agent(worker_spec)
-    registry.register_agent(verifier_spec)
+    registry.register_agent(judge_spec)
     registry.register_agent(aggregator_spec)
     registry.register_agent(io_spec)
 
-    agent_pool["planner"] = LLMAgent(planner_spec, model_backend, role="planner")
-    agent_pool["worker"] = LLMAgent(worker_spec, model_backend, role="worker")
-    agent_pool["verifier"] = LLMAgent(verifier_spec, model_backend, role="verifier")
-    agent_pool["aggregator"] = LLMAgent(aggregator_spec, model_backend, role="aggregator")
-    agent_pool["io_agent"] = PassthroughIOAgent(io_spec, model_backend)
+    agent_pool["planner"] = build_planner_agent(routing.planner)
+    agent_pool["worker"] = build_worker_agent(routing.worker)
+    agent_pool["judge"] = build_judge_agent(routing.judge)
+    agent_pool["aggregator"] = build_aggregator_agent(routing.aggregator)
+    agent_pool["io_agent"] = build_io_agent(routing.worker)
 
     return agent_pool, registry

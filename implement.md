@@ -3,17 +3,18 @@
 ## Purpose
 This repo implements a simplified multi-agent workflow with three core modules:
 Orchestrator (plan/route/assign), Execution Engine (protocol-driven graph runner),
-and Judge (verify/repair/aggregate). It avoids LangGraph and uses a LatentMAS-like
-layout with `run.py`, `models.py`, `methods/`, and core services.
+and Judge (verify/repair/aggregate). It avoids LangGraph and uses the OpenAI
+Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 
 ## Architecture
 - Core modules:
-  - Orchestrator: builds an `ExecutionPlan` from `TaskSpec`.
-  - Execution Engine: runs a protocol over agents with hooks and tracing.
-  - Judge: verifies outputs and aggregates a final response.
+  - Orchestrator: uses an SDK planner agent to build an `ExecutionPlan`.
+  - Execution Engine: runs protocols in code and invokes SDK agents per step.
+  - Judge: uses SDK judge + aggregator agents to verify and finalize output.
 - Cross-cutting services:
   - Registry: agent capability catalog used for routing.
-  - BudgetRouter: simple model budget decision.
+  - BudgetRouter: model routing by role and budget.
+  - Cache: in-memory TTL cache for tool/agent reuse.
   - Hooks: pre/post plan/step/judge/output intervention points.
   - Observability: JSONL trace logging.
   - Memory/Safety: minimal stubs, ready for extension.
@@ -21,13 +22,13 @@ layout with `run.py`, `models.py`, `methods/`, and core services.
 ## Repo Layout
 - `run.py`: CLI entrypoint.
 - `config.py`: structured configs for Hydra/OmegaConf.
-- `models.py`: model backends with caching and token estimates.
+- `models.py`: model routing and API key configuration.
 - `prompts.py`: prompt construction helpers.
-- `utils.py`: JSONL logging, token estimation, time helpers.
-- `core/`: contracts, registry, orchestrator, hooks, judge, safety, budget, memory.
+- `utils.py`: JSONL logging and time helpers.
+- `core/`: contracts, registry, context, runtime, hooks, judge, safety, budget, cache, memory.
 - `engine/`: protocols and executor.
 - `engine/tool_runtime.py`: tool execution with allowlist and hooks.
-- `agents/`: base agent class, reasoning agents, IO agent, factory.
+- `app_agents/`: planner/worker/judge/io agent builders and factory (named to avoid SDK import collision).
 - `methods/`: baseline, sequential, orchestrated method implementations.
 - `eval/`: harness and metrics for batch evaluation.
 - `conf/`: Hydra YAML configs for single runs and eval.
@@ -41,10 +42,10 @@ layout with `run.py`, `models.py`, `methods/`, and core services.
 - TraceEvent: event stream for observability.
 
 ## Execution Flow
-1. CLI builds TaskSpec and runtime services.
-2. Orchestrator selects candidate agents, protocol, and subtasks (planner -> worker when available).
-3. Execution Engine runs the protocol with hooks and logs trace events.
-4. Judge verifies and aggregates the final answer.
+1. CLI builds TaskSpec and runtime services (context, cache, registry, budget).
+2. Orchestrator calls the SDK planner agent to produce an ExecutionPlan.
+3. Execution Engine executes the protocol and runs SDK worker agents per step.
+4. Judge runs SDK judge and aggregator agents, returning final output.
 
 ## Protocols
 - pipeline: sequential subtask execution.
@@ -62,18 +63,17 @@ HookManager supports:
 
 ## Usage
 - Single task:
-  - `python run.py task.goal="Your task here" method=orchestrated`
+  - `OPENAI_API_KEY=... python run.py task.goal="Your task here" method=orchestrated`
 - Batch eval:
-  - `python eval/harness.py tasks=path/to/tasks.jsonl method=orchestrated max_samples=10`
+  - `OPENAI_API_KEY=... python eval/harness.py tasks=path/to/tasks.jsonl method=orchestrated max_samples=10`
 
 ## Model Backends
-- mock: default, offline deterministic output.
-- openai: requires `openai` package, `model.name=...`, and `model.api_key` or `OPENAI_API_KEY`.
+- openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
 
 ## Key Points
 - `logs/traces.jsonl` stores trace events for each run.
-- `mock` backend is the default to keep runs offline and deterministic.
-- Planner/worker subtasks force pipeline execution when both agents are available.
+- Planner outputs ExecutionPlan via structured outputs.
+- Engine runs protocol steps in code and calls SDK agents via Runner.
 - Protocols and hooks are minimal but structured for extension.
 - Hydra config files keep experiments reproducible and editable as YAML.
 - Hydra entrypoints normalize configs into typed dataclasses for safer access.
@@ -85,3 +85,5 @@ HookManager supports:
 - 2025-12-22: replaced argparse with Hydra/OmegaConf configs and added YAML configs.
 - 2025-12-22: normalized Hydra configs into typed dataclasses in entrypoints.
 - 2025-12-22: added OpenAI API key wiring and Hydra eval config.
+- 2025-12-22: refactored to OpenAI Agents SDK, added context/cache/runtime services, and renamed local agents to app_agents/.
+- 2025-12-22: fixed mutable defaults in core contracts (lists/dicts via Field default_factory).
