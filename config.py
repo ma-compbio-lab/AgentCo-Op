@@ -31,6 +31,7 @@ class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     log_dir: str = "logs"
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
+    repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
 
 
 @dataclass
@@ -45,10 +46,18 @@ class LogConfig:
 
 
 @dataclass
+class RepairConfig:
+    enabled: bool = True
+    max_rounds: int = 1
+    template_mode: str = "auto"  # off | auto | force
+
+
+@dataclass
 class EvalConfig:
     tasks: str = "data/tasks.jsonl"
     method: str = "orchestrated"
     model: ModelConfig = field(default_factory=ModelConfig)
     log_dir: str = "logs"
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
+    repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     max_samples: int | None = None

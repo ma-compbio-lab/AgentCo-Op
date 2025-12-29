@@ -40,6 +40,11 @@ log:
   show_prompts: false
   show_outputs: false
 
+repair:
+  enabled: true
+  max_rounds: 1
+  template_mode: auto
+
 hydra:
   job:
     chdir: false

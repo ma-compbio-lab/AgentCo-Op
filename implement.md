@@ -46,6 +46,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 2. Orchestrator calls the SDK planner agent to produce an ExecutionPlan.
 3. Execution Engine executes the protocol and runs SDK worker agents per step.
 4. Judge runs SDK judge and aggregator agents, returning final output.
+5. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
 
 ## Protocols
 - pipeline: sequential subtask execution.
@@ -83,6 +84,7 @@ HookManager supports:
 - Prompts emphasize clear structure, explicit output formats, and minimal assumptions for predictable agent behavior.
 - Terminal logging uses colored module/step output with icons; configure via `log.*` in Hydra config.
 - Set `log.show_prompts=true` and `log.show_outputs=true` for more intermediate debug output.
+- Repair loop is controlled via `repair.enabled` and `repair.max_rounds`; template enforcement uses `repair.template_mode`.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
@@ -98,3 +100,4 @@ HookManager supports:
 - 2025-12-22: added colored per-module/step terminal logging for debugging.
 - 2025-12-22: disabled strict JSON schema for SDK structured outputs to allow dict fields.
 - 2025-12-22: replaced ExecutionPlan.edges tuple list with Edge objects for valid JSON schema.
+- 2025-12-29: added repair loop with judge-issue injection and optional output template enforcement.

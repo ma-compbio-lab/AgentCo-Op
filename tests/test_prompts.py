@@ -1,5 +1,11 @@
 from core.contracts import AgentSpec, Message, TaskSpec
-from prompts import build_aggregate_prompt, build_judge_prompt, build_plan_prompt
+from prompts import (
+    build_aggregate_prompt,
+    build_judge_prompt,
+    build_plan_prompt,
+    build_repair_prompt,
+    derive_output_template,
+)
 
 
 def test_plan_prompt_includes_modalities_and_agents():
@@ -27,3 +33,27 @@ def test_judge_and_aggregate_prompts_include_transcript():
     agg_prompt = build_aggregate_prompt(task, plan=None, messages=[msg])
     assert "worker" in judge_prompt
     assert "out" in agg_prompt
+
+
+def test_repair_prompt_includes_issues_and_template():
+    task = TaskSpec(goal="Implement a Python function", success_criteria=["Provide tests"])
+    msg = Message(sender="worker", receiver="engine", content_type="text", content="bad output")
+    prompt = build_repair_prompt(
+        task,
+        issues=["Missing tests"],
+        messages=[msg],
+        template_sections=["Function", "Explanation", "Tests"],
+    )
+    assert "Missing tests" in prompt
+    assert "Output Format" in prompt
+    assert "Function" in prompt
+    assert "Previous Output" in prompt
+
+
+def test_derive_output_template_auto_detects_code():
+    task = TaskSpec(
+        goal="Implement a Python function foo()",
+        success_criteria=["Provide tests"],
+    )
+    sections = derive_output_template(task, mode="auto")
+    assert sections == ["Function", "Explanation", "Tests"]

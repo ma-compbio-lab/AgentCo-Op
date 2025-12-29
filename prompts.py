@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from core.contracts import AgentSpec, Message, TaskSpec
 
 
@@ -20,7 +22,36 @@ def format_inbox(inbox: list[Message]) -> str:
     return "\n".join(lines)
 
 
-def build_task_prompt(role: str, task: TaskSpec, instructions: str, inbox: list[Message]) -> str:
+_CODE_TEMPLATE_SECTIONS = ["Function", "Explanation", "Tests"]
+
+
+def derive_output_template(task: TaskSpec, mode: str) -> list[str]:
+    normalized = (mode or "off").strip().lower()
+    if normalized == "off":
+        return []
+    if normalized == "force":
+        return list(_CODE_TEMPLATE_SECTIONS)
+    if normalized != "auto":
+        return []
+    text = " ".join([task.goal, *task.constraints, *task.success_criteria]).lower()
+    keywords = ("function", "def ", "python", "code", "test", "tests", "unit test", "algorithm")
+    if any(keyword in text for keyword in keywords):
+        return list(_CODE_TEMPLATE_SECTIONS)
+    return []
+
+
+def format_output_template(sections: list[str]) -> str:
+    if not sections or not isinstance(sections, list):
+        return ""
+    lines = ["### Output Format", "Use the following section headers in order:"]
+    lines.extend(f"- {section}" for section in sections)
+    lines.append("Do not omit sections; if a section is not applicable, write 'N/A'.")
+    return "\n".join(lines)
+
+
+def build_task_prompt(
+    role: str, task: TaskSpec, instructions: str, inbox: list[Message], template_sections: list[str] | None = None
+) -> str:
     inbox_text = format_inbox(inbox)
     parts = [
         "### Task",
@@ -33,6 +64,8 @@ def build_task_prompt(role: str, task: TaskSpec, instructions: str, inbox: list[
         "Stop when the deliverable is complete; do not ask clarifying questions.",
         "If assumptions are needed, state them briefly.",
     ]
+    if template_sections and isinstance(template_sections, list):
+        parts.append(format_output_template(template_sections))
     if inbox_text:
         parts.append(f"### Context\n{inbox_text}")
     return "\n".join(parts)
@@ -83,18 +116,56 @@ def build_judge_prompt(task: TaskSpec, plan, messages: list[Message]) -> str:
     )
 
 
-def build_aggregate_prompt(task: TaskSpec, plan, messages: list[Message]) -> str:
+def build_aggregate_prompt(
+    task: TaskSpec, plan, messages: list[Message], template_sections: list[str] | None = None
+) -> str:
     transcript = format_inbox(messages)
-    return "\n".join(
+    if template_sections is None and plan is not None:
+        template_sections = getattr(plan, "meta", {}).get("output_template")
+    parts = [
+        "### Aggregator Instructions",
+        "Synthesize a final response aligned with constraints and success criteria.",
+        "Resolve conflicts; if uncertainty remains, add a short Notes section.",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+    ]
+    if template_sections and isinstance(template_sections, list):
+        parts.append(format_output_template(template_sections))
+    parts.extend(["### Agent outputs", transcript or "None"])
+    return "\n".join(parts)
+
+
+def build_repair_prompt(
+    task: TaskSpec,
+    issues: list[str],
+    messages: list[Message],
+    *,
+    template_sections: list[str] | None = None,
+    suggested_patch: dict | None = None,
+) -> str:
+    transcript = format_inbox(messages)
+    issue_lines = "\n".join(f"- {issue}" for issue in issues) if issues else "- None"
+    parts = [
+        "### Repair Instructions",
+        "Revise the previous output to satisfy all constraints and success criteria.",
+        "Fix the issues below and return a complete corrected answer (not a diff).",
+        "### Issues",
+        issue_lines,
+    ]
+    if suggested_patch:
+        parts.extend(["### Suggested Patch", json.dumps(suggested_patch, ensure_ascii=True, default=str)])
+    parts.extend(
         [
-            "### Aggregator Instructions",
-            "Synthesize a final response aligned with constraints and success criteria.",
-            "Resolve conflicts; if uncertainty remains, add a short Notes section.",
             "### Task",
             f"Goal: {task.goal}",
             f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
             f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
-            "### Agent outputs",
-            transcript or "None",
         ]
     )
+    if template_sections and isinstance(template_sections, list):
+        parts.append(format_output_template(template_sections))
+    if transcript:
+        parts.extend(["### Previous Output", transcript])
+    return "\n".join(part for part in parts if part)

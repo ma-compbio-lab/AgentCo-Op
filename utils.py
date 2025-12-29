@@ -54,6 +54,7 @@ _MODULE_STYLE = {
     "ORCH": ("magenta", "[ORCH]"),
     "ENGINE": ("cyan", "[ENG]"),
     "JUDGE": ("magenta", "[JUDGE]"),
+    "REPAIR": ("red", "[REPAIR]"),
     "METHOD": ("yellow", "[METHOD]"),
     "RUNTIME": ("green", "[RT]"),
     "IO": ("gray", "[IO]"),

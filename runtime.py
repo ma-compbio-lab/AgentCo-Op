@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from app_agents.factory import build_default_agents
+from config import RepairConfig
 from core.budget import BudgetRouter
 from core.cache import Cache
 from core.context import AppContext
@@ -25,9 +26,10 @@ class Runtime:
     context: AppContext
     session: object | None
     run_hooks: object | None
+    repair: RepairConfig
 
 
-def build_runtime(model_routing: ModelRouting, log_dir: str) -> Runtime:
+def build_runtime(model_routing: ModelRouting, log_dir: str, repair: RepairConfig | None = None) -> Runtime:
     from utils import log_event
 
     registry = Registry()
@@ -67,4 +69,5 @@ def build_runtime(model_routing: ModelRouting, log_dir: str) -> Runtime:
         context=context,
         session=None,
         run_hooks=None,
+        repair=repair or RepairConfig(),
     )

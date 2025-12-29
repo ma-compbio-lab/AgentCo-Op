@@ -15,6 +15,11 @@ log:
   show_prompts: false
   show_outputs: false
 
+repair:
+  enabled: true
+  max_rounds: 1
+  template_mode: auto
+
 model:
   backend: openai
   name: gpt-4o-mini
