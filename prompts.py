@@ -83,6 +83,8 @@ def build_plan_prompt(task: TaskSpec, candidates: list[AgentSpec]) -> str:
             "### Planner Instructions",
             "Produce an ExecutionPlan JSON only. Do not include extra text.",
             "Choose a protocol from: pipeline, roundtable, debate, loop, hybrid.",
+            "If the task requires external or up-to-date facts, set needs_web_search=true and add evidence_requests.",
+            "Otherwise set needs_web_search=false and leave evidence_requests empty.",
             "Use only the agent IDs listed below in active_agents and subtasks.",
             "Prefer minimal, executable steps; avoid redundant subtasks.",
             "### Task",
@@ -105,6 +107,7 @@ def build_judge_prompt(task: TaskSpec, plan, messages: list[Message]) -> str:
             "### Judge Instructions",
             "Return JudgeReport JSON only. No extra commentary.",
             "Be strict: check success criteria and constraints; list gaps explicitly.",
+            "If evidence is provided, verify claims against it and require citations when needed.",
             "### Task",
             f"Goal: {task.goal}",
             f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
@@ -135,6 +138,20 @@ def build_aggregate_prompt(
         parts.append(format_output_template(template_sections))
     parts.extend(["### Agent outputs", transcript or "None"])
     return "\n".join(parts)
+
+
+def build_evidence_prompt(request) -> str:
+    return "\n".join(
+        [
+            "### Evidence Request",
+            "Return EvidencePack JSON only. No extra text.",
+            f"Query: {request.query}",
+            f"Freshness: {request.freshness}",
+            f"Allowed domains: {', '.join(request.allowed_domains) if request.allowed_domains else 'None'}",
+            f"Max sources: {request.max_sources}",
+            f"Require citations: {request.require_citations}",
+        ]
+    )
 
 
 def build_repair_prompt(

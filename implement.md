@@ -38,13 +38,14 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - AgentSpec: capabilities and IO metadata.
 - Message: standardized inter-agent envelope.
 - ExecutionPlan/SubTask: protocol + task DAG + constraints + model_hint/meta (edges as Edge objects).
+- EvidenceRequest/EvidencePack: web search inputs and structured evidence summaries + citations.
 - JudgeReport: pass/fail, score, issues, optional patch.
 - TraceEvent: event stream for observability.
 
 ## Execution Flow
 1. CLI builds TaskSpec and runtime services (context, cache, registry, budget).
 2. Orchestrator calls the SDK planner agent to produce an ExecutionPlan.
-3. Execution Engine executes the protocol and runs SDK worker agents per step.
+3. Execution Engine runs evidence steps (if requested) and executes protocol steps.
 4. Judge runs SDK judge and aggregator agents, returning final output.
 5. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
 
@@ -77,6 +78,7 @@ HookManager supports:
 - `logs/traces.jsonl` stores trace events for each run.
 - Planner outputs ExecutionPlan via structured outputs.
 - Engine runs protocol steps in code and calls SDK agents via Runner.
+- Web search is handled by a dedicated Researcher agent that returns EvidencePack summaries and citations.
 - Protocols and hooks are minimal but structured for extension.
 - Hydra config files keep experiments reproducible and editable as YAML.
 - Hydra entrypoints normalize configs into typed dataclasses for safer access.
@@ -104,3 +106,4 @@ HookManager supports:
 - 2025-12-29: added repair loop with judge-issue injection and optional output template enforcement.
 - 2025-12-29: added pytest `tests/conftest.py` to fix module import paths during test collection.
 - 2025-12-29: switched datetime defaults to timezone-aware UTC to silence deprecation warnings.
+- 2025-12-29: added EvidencePack web search flow with researcher agent, caching, and evidence injection.

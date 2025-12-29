@@ -32,6 +32,27 @@ class AgentSpec(BaseModel):
     cost_hint: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvidenceRequest(BaseModel):
+    query: str
+    freshness: str = "any"
+    allowed_domains: list[str] = Field(default_factory=list)
+    max_sources: int = 10
+    require_citations: bool = True
+
+
+class EvidenceItem(BaseModel):
+    title: Optional[str] = None
+    url: str
+    snippet: Optional[str] = None
+    source_type: Optional[str] = None
+
+
+class EvidencePack(BaseModel):
+    request: EvidenceRequest
+    summary: str
+    citations: list[EvidenceItem] = Field(default_factory=list)
+
+
 class Message(BaseModel):
     msg_id: str = Field(default_factory=lambda: str(uuid4()))
     ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -61,6 +82,8 @@ class ExecutionPlan(BaseModel):
     active_agents: list[str]
     subtasks: list[SubTask]
     edges: list[Edge] = Field(default_factory=list)
+    needs_web_search: bool = False
+    evidence_requests: list[EvidenceRequest] = Field(default_factory=list)
     acceptance_tests: list[str] = Field(default_factory=list)
     budget_tokens: int = 8000
     model_hint: Optional[str] = None

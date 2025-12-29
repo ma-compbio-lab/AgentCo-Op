@@ -48,6 +48,8 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     )
     report, answer = await judge.evaluate_and_summarize(task, plan, state, runtime.context, session=runtime.session)
     repair_history: list[dict] = []
+    evidence_artifacts = dict(state.get("artifacts") or {})
+    evidence_messages = list(evidence_artifacts.get("evidence_messages") or [])
     # If the judge fails, run a bounded repair loop and re-evaluate.
     if not report.ok and runtime.repair.enabled and runtime.repair.max_rounds > 0:
         issues = list(report.issues)
@@ -92,8 +94,9 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
                 )
             repair_history.append({"attempt": attempt, "issues": issues, "output_len": len(repair_text)})
             state = {
-                "messages": [Message(sender="worker", receiver="engine", content_type="text", content=repair_text)],
-                "artifacts": [],
+                "messages": evidence_messages
+                + [Message(sender="worker", receiver="engine", content_type="text", content=repair_text)],
+                "artifacts": evidence_artifacts,
                 "round": attempt,
                 "repair_history": repair_history,
             }

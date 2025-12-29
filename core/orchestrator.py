@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.contracts import ExecutionPlan, SubTask, TaskSpec
+from core.contracts import EvidenceRequest, ExecutionPlan, SubTask, TaskSpec
 from core.budget import BudgetRouter
 from core.hooks import HookManager
 from core.observability import Observability
@@ -82,6 +82,7 @@ class Orchestrator:
         if plan.protocol not in {"pipeline", "roundtable", "debate", "loop", "hybrid"}:
             plan.protocol = "pipeline"
 
+        plan = self._apply_evidence_defaults(task, plan)
         budget_decision = self.budget_router.choose(task.budget_tokens)
         if plan.model_hint is None:
             plan.model_hint = budget_decision.model_hint
@@ -121,3 +122,37 @@ class Orchestrator:
             model_hint=budget_decision.model_hint,
             meta={"budget_reason": budget_decision.reason},
         )
+
+    def _apply_evidence_defaults(self, task: TaskSpec, plan: ExecutionPlan) -> ExecutionPlan:
+        needs_evidence = plan.needs_web_search or bool(plan.evidence_requests)
+        if self._should_use_web_search(task):
+            needs_evidence = True
+        if needs_evidence and not plan.evidence_requests:
+            plan.evidence_requests = [EvidenceRequest(query=task.goal)]
+        if plan.evidence_requests and not plan.needs_web_search:
+            plan.needs_web_search = True
+        return plan
+
+    @staticmethod
+    def _should_use_web_search(task: TaskSpec) -> bool:
+        text = " ".join([task.goal, *task.constraints, *task.success_criteria]).lower()
+        keywords = (
+            "latest",
+            "recent",
+            "today",
+            "current",
+            "new",
+            "news",
+            "2024",
+            "2025",
+            "citation",
+            "reference",
+            "source",
+            "web",
+            "internet",
+            "policy",
+            "price",
+            "release",
+            "report",
+        )
+        return any(keyword in text for keyword in keywords)
