@@ -85,6 +85,7 @@ HookManager supports:
 - Terminal logging uses colored module/step output with icons; configure via `log.*` in Hydra config.
 - Set `log.show_prompts=true` and `log.show_outputs=true` for more intermediate debug output.
 - Repair loop is controlled via `repair.enabled` and `repair.max_rounds`; template enforcement uses `repair.template_mode`.
+- Pytest imports are anchored via `tests/conftest.py` to ensure repo root is on `sys.path`.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
@@ -101,3 +102,5 @@ HookManager supports:
 - 2025-12-22: disabled strict JSON schema for SDK structured outputs to allow dict fields.
 - 2025-12-22: replaced ExecutionPlan.edges tuple list with Edge objects for valid JSON schema.
 - 2025-12-29: added repair loop with judge-issue injection and optional output template enforcement.
+- 2025-12-29: added pytest `tests/conftest.py` to fix module import paths during test collection.
+- 2025-12-29: switched datetime defaults to timezone-aware UTC to silence deprecation warnings.

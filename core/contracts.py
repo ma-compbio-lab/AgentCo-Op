@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
@@ -34,7 +34,7 @@ class AgentSpec(BaseModel):
 
 class Message(BaseModel):
     msg_id: str = Field(default_factory=lambda: str(uuid4()))
-    ts: datetime = Field(default_factory=datetime.utcnow)
+    ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     sender: str
     receiver: str
     content_type: ContentType
@@ -78,6 +78,6 @@ class JudgeReport(BaseModel):
 
 class TraceEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
-    ts: datetime = Field(default_factory=datetime.utcnow)
+    ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_type: str
     data: dict[str, Any] = Field(default_factory=dict)
