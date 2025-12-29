@@ -82,6 +82,7 @@ HookManager supports:
 - Tests use stubbed SDK calls to avoid network access during unit runs.
 - Prompts emphasize clear structure, explicit output formats, and minimal assumptions for predictable agent behavior.
 - Terminal logging uses colored module/step output with icons; configure via `log.*` in Hydra config.
+- Set `log.show_prompts=true` and `log.show_outputs=true` for more intermediate debug output.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,

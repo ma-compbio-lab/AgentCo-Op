@@ -24,7 +24,7 @@ class ExecutionEngine:
         self.run_hooks = run_hooks
 
     async def run(self, task: TaskSpec, plan: ExecutionPlan, ctx, session=None) -> dict:
-        from utils import log_event, log_section
+        from utils import clip_text, log_event, log_section, should_show_outputs, should_show_prompts
 
         log_section("ENGINE", "Execution")
         state: dict = {"messages": [], "artifacts": [], "round": 0}
@@ -65,6 +65,14 @@ class ExecutionEngine:
                 },
             )
             prompt = build_task_prompt(agent_id, task, instructions, inbox)
+            if should_show_prompts():
+                log_event(
+                    "ENGINE",
+                    "prompt",
+                    "prompt preview",
+                    level="debug",
+                    data={"agent_id": agent_id, "preview": clip_text(prompt)},
+                )
             result = await run_agent(
                 agent,
                 prompt,
@@ -96,13 +104,14 @@ class ExecutionEngine:
                 "step complete",
                 data={"agent_id": agent_id, "output_len": len(output_text)},
             )
-            log_event(
-                "ENGINE",
-                "step_output",
-                "output preview",
-                level="debug",
-                data={"agent_id": agent_id, "preview": output_text[:200]},
-            )
+            if should_show_outputs():
+                log_event(
+                    "ENGINE",
+                    "step_output",
+                    "output preview",
+                    level="debug",
+                    data={"agent_id": agent_id, "preview": clip_text(output_text)},
+                )
 
             patch = self.hooks.post_step(task, plan, state, output_msg)
             if patch:

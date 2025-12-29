@@ -31,6 +31,9 @@ _LOG_CONFIG = {
     "level": "info",
     "use_color": True,
     "use_icons": True,
+    "preview_chars": 200,
+    "show_prompts": False,
+    "show_outputs": False,
 }
 
 
@@ -58,11 +61,22 @@ _MODULE_STYLE = {
 }
 
 
-def set_log_config(enabled: bool, level: str, use_color: bool = True, use_icons: bool = True) -> None:
+def set_log_config(
+    enabled: bool,
+    level: str,
+    use_color: bool = True,
+    use_icons: bool = True,
+    preview_chars: int = 200,
+    show_prompts: bool = False,
+    show_outputs: bool = False,
+) -> None:
     _LOG_CONFIG["enabled"] = enabled
     _LOG_CONFIG["level"] = level if level in _LOG_LEVELS else "info"
     _LOG_CONFIG["use_color"] = use_color
     _LOG_CONFIG["use_icons"] = use_icons
+    _LOG_CONFIG["preview_chars"] = max(50, preview_chars)
+    _LOG_CONFIG["show_prompts"] = show_prompts
+    _LOG_CONFIG["show_outputs"] = show_outputs
 
 
 def _colorize(text: str, color: str) -> str:
@@ -78,6 +92,21 @@ def _format_data(data: dict | None) -> str:
     if len(payload) > 600:
         payload = payload[:600] + "..."
     return payload
+
+
+def clip_text(text: str) -> str:
+    limit = _LOG_CONFIG["preview_chars"]
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def should_show_prompts() -> bool:
+    return bool(_LOG_CONFIG["show_prompts"])
+
+
+def should_show_outputs() -> bool:
+    return bool(_LOG_CONFIG["show_outputs"])
 
 
 def log_event(module: str, step: str, message: str, *, level: str = "info", data: dict | None = None) -> None:

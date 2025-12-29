@@ -57,3 +57,9 @@ python run.py log.level=debug log.use_color=true log.use_icons=true
 ```
 
 `log.level=debug` shows step inputs and output previews.
+
+Show more debug payloads:
+
+```bash
+python run.py log.level=debug log.show_prompts=true log.show_outputs=true log.preview_chars=600
+```

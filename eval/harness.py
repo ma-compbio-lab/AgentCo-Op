@@ -51,6 +51,9 @@ async def run_async(cfg: DictConfig) -> None:
         level=eval_cfg.log.level,
         use_color=eval_cfg.log.use_color,
         use_icons=eval_cfg.log.use_icons,
+        preview_chars=eval_cfg.log.preview_chars,
+        show_prompts=eval_cfg.log.show_prompts,
+        show_outputs=eval_cfg.log.show_outputs,
     )
     log_event("RUN", "start", "starting eval", data={"method": eval_cfg.method})
     validate_backend(eval_cfg.model.backend)

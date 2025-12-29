@@ -49,6 +49,9 @@ async def run_async(cfg: DictConfig) -> None:
         level=app_cfg.log.level,
         use_color=app_cfg.log.use_color,
         use_icons=app_cfg.log.use_icons,
+        preview_chars=app_cfg.log.preview_chars,
+        show_prompts=app_cfg.log.show_prompts,
+        show_outputs=app_cfg.log.show_outputs,
     )
     log_event("RUN", "start", "starting run", data={"method": app_cfg.method})
 

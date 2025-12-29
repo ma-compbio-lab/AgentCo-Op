@@ -27,7 +27,7 @@ class Orchestrator:
         self.run_hooks = run_hooks
 
     async def plan(self, task: TaskSpec, ctx, session=None) -> ExecutionPlan:
-        from utils import log_event, log_section
+        from utils import clip_text, log_event, log_section, should_show_prompts
 
         log_section("ORCH", "Planning")
         task = self.hooks.pre_plan(task)
@@ -39,6 +39,14 @@ class Orchestrator:
 
         prompt = build_plan_prompt(task, candidates)
         log_event("ORCH", "input", "planning input prepared", data={"candidates": [c.agent_id for c in candidates]})
+        if should_show_prompts():
+            log_event(
+                "ORCH",
+                "prompt",
+                "plan prompt preview",
+                level="debug",
+                data={"preview": clip_text(prompt)},
+            )
         result = await run_agent(
             self.planner_agent,
             prompt,

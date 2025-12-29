@@ -39,6 +39,9 @@ class LogConfig:
     level: str = "info"
     use_color: bool = True
     use_icons: bool = True
+    preview_chars: int = 200
+    show_prompts: bool = False
+    show_outputs: bool = False
 
 
 @dataclass

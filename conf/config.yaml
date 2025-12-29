@@ -36,6 +36,9 @@ log:
   level: info
   use_color: true
   use_icons: true
+  preview_chars: 200
+  show_prompts: false
+  show_outputs: false
 
 hydra:
   job:
