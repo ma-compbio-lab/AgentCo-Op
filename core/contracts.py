@@ -42,6 +42,11 @@ class Message(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class Edge(BaseModel):
+    from_node: str
+    to_node: str
+
+
 class SubTask(BaseModel):
     sub_id: str = Field(default_factory=lambda: str(uuid4()))
     title: str
@@ -55,7 +60,7 @@ class ExecutionPlan(BaseModel):
     protocol: Literal["pipeline", "roundtable", "debate", "loop", "hybrid"]
     active_agents: list[str]
     subtasks: list[SubTask]
-    edges: list[tuple[str, str]] = Field(default_factory=list)
+    edges: list[Edge] = Field(default_factory=list)
     acceptance_tests: list[str] = Field(default_factory=list)
     budget_tokens: int = 8000
     model_hint: Optional[str] = None

@@ -37,7 +37,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - TaskSpec: user goal, constraints, criteria, budgets, modalities.
 - AgentSpec: capabilities and IO metadata.
 - Message: standardized inter-agent envelope.
-- ExecutionPlan/SubTask: protocol + task DAG + constraints + model_hint/meta.
+- ExecutionPlan/SubTask: protocol + task DAG + constraints + model_hint/meta (edges as Edge objects).
 - JudgeReport: pass/fail, score, issues, optional patch.
 - TraceEvent: event stream for observability.
 
@@ -96,3 +96,4 @@ HookManager supports:
 - 2025-12-22: updated agent prompts per GPT-5 and prompt-engineering guidelines.
 - 2025-12-22: added colored per-module/step terminal logging for debugging.
 - 2025-12-22: disabled strict JSON schema for SDK structured outputs to allow dict fields.
+- 2025-12-22: replaced ExecutionPlan.edges tuple list with Edge objects for valid JSON schema.
