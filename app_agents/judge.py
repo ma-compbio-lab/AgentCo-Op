@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agents import Agent
+from agents.agent_output import AgentOutputSchema
 
 from core.contracts import JudgeReport
 
@@ -15,7 +16,7 @@ def build_judge_agent(model_name: str) -> Agent:
             "Return JSON only; no extra text."
         ),
         model=model_name,
-        output_type=JudgeReport,
+        output_type=AgentOutputSchema(JudgeReport, strict_json_schema=False),
     )
 
 

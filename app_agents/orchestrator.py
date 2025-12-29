@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agents import Agent
+from agents.agent_output import AgentOutputSchema
 
 from core.contracts import ExecutionPlan
 
@@ -18,5 +19,5 @@ def build_planner_agent(model_name: str) -> Agent:
             "Return JSON only; do not add commentary."
         ),
         model=model_name,
-        output_type=ExecutionPlan,
+        output_type=AgentOutputSchema(ExecutionPlan, strict_json_schema=False),
     )

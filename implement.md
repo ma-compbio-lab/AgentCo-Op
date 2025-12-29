@@ -95,3 +95,4 @@ HookManager supports:
 - 2025-12-22: added unit tests for core modules and execution flow.
 - 2025-12-22: updated agent prompts per GPT-5 and prompt-engineering guidelines.
 - 2025-12-22: added colored per-module/step terminal logging for debugging.
+- 2025-12-22: disabled strict JSON schema for SDK structured outputs to allow dict fields.

@@ -2,9 +2,16 @@ defaults:
   - _self_
 
 task:
-  goal: "Describe the risk factors in the plan."
-  constraints: []
-  success_criteria: []
+  goal: "Implement a Python function levenshtein_distance(a: str, b: str) -> int that returns the edit distance between two strings."
+  constraints:
+    - "Use Python 3.10 syntax."
+    - "Do not use external libraries."
+    - "Time complexity O(n*m), space complexity O(min(n, m))."
+    - "Handle empty strings correctly."
+  success_criteria:
+    - "Function signature is exactly levenshtein_distance(a: str, b: str) -> int."
+    - "Includes a short explanation of the algorithm."
+    - "Provides at least 3 test examples with expected outputs."
   budget_tokens: 8000
   input_modalities:
     - text
@@ -15,7 +22,7 @@ method: orchestrated
 
 model:
   backend: openai
-  name: gpt-4o-mini
+  name: gpt-5-nano-2025-08-07
   planner: null
   worker: null
   judge: null
