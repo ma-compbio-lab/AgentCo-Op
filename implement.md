@@ -76,6 +76,7 @@ HookManager supports:
 - Memory:
   - `python scripts/memory_init.py --db-path memory/agent_cop.db`
   - `python scripts/memory_clear.py --all`
+  - Dependencies: `memori` and `sqlalchemy` are required for SQLite-backed memory.
 
 ## Model Backends
 - openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
@@ -116,3 +117,6 @@ HookManager supports:
 - 2025-12-29: added EvidencePack web search flow with researcher agent, caching, and evidence injection.
 - 2025-12-29: added Memori-backed memory service with per-agent/global recall and judge write-back.
 - 2025-12-29: added memory scripts (init/clear) and memory configuration in Hydra.
+- 2025-12-29: added repo-root path injection in memory scripts to fix direct execution imports.
+- 2025-12-29: added sqlalchemy dependency note and guard for Memori initialization.
+- 2025-12-29: memory init uses a SQLite DBAPI connection factory for Memori v3 compatibility.

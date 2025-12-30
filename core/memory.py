@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import os
+import sqlite3
 from typing import Any
 
 from utils import ensure_dir
@@ -85,21 +87,42 @@ class Memory:
             return
 
         ensure_dir(os.path.dirname(self.db_path) or ".")
-        url = f"sqlite:///{self.db_path}"
         mem = None
-        for kwargs in (
-            {"storage_url": url},
-            {"storage": {"url": url}},
-            {"config": {"storage": {"url": url}}},
-        ):
+        try:
+            sig = inspect.signature(Memori.__init__)
+        except Exception:
+            sig = None
+
+        if sig and "conn" in sig.parameters:
+            conn_factory = lambda: sqlite3.connect(self.db_path)
             try:
-                mem = Memori(**kwargs)
-                break
-            except TypeError:
-                continue
+                mem = Memori(conn=conn_factory)
             except Exception:
                 mem = None
-                break
+        elif sig and "database_connect" in sig.parameters:
+            url = f"sqlite:///{self.db_path}"
+            kwargs = {"database_connect": url}
+            if "schema_init" in sig.parameters:
+                kwargs["schema_init"] = self.auto_build
+            try:
+                mem = Memori(**kwargs)
+            except Exception:
+                mem = None
+        else:
+            url = f"sqlite:///{self.db_path}"
+            for kwargs in (
+                {"storage_url": url},
+                {"storage": {"url": url}},
+                {"config": {"storage": {"url": url}}},
+            ):
+                try:
+                    mem = Memori(**kwargs)
+                    break
+                except TypeError:
+                    continue
+                except Exception:
+                    mem = None
+                    break
 
         if mem is None:
             try:
