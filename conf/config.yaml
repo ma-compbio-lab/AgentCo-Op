@@ -13,6 +13,8 @@ task:
     - "Includes a short explanation of the algorithm."
     - "Provides at least 3 test examples with expected outputs."
   budget_tokens: 8000
+  allow_web_search_for_spec: auto
+  spec_max_search_queries: 2
   input_modalities:
     - text
   output_modalities:

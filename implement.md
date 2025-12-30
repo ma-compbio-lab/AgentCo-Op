@@ -11,6 +11,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
   - Orchestrator: uses an SDK planner agent to build an `ExecutionPlan`.
   - Execution Engine: runs protocols in code and invokes SDK agents per step.
   - Judge: uses SDK judge + aggregator agents to verify and finalize output.
+- Spec Enrichment: fills missing constraints/success criteria via spec agents before planning.
 - Cross-cutting services:
   - Registry: agent capability catalog used for routing.
   - BudgetRouter: model routing by role and budget.
@@ -36,6 +37,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 
 ## Data Contracts (core/contracts.py)
 - TaskSpec: user goal, constraints, criteria, budgets, modalities.
+- TaskSpec includes spec metadata: `spec_source/spec_confidence/spec_notes/spec_evidence`.
 - AgentSpec: capabilities and IO metadata.
 - Message: standardized inter-agent envelope.
 - ExecutionPlan/SubTask: protocol + task DAG + constraints + model_hint/meta (edges as Edge objects).
@@ -46,11 +48,12 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 
 ## Execution Flow
 1. CLI builds TaskSpec and runtime services (context, cache, registry, budget).
-2. Orchestrator injects global memory hints into planning (when enabled) and produces an ExecutionPlan.
-3. Execution Engine runs evidence steps (if requested), injects per-agent memory, and executes protocol steps.
-4. Judge runs SDK judge and aggregator agents, returning final output.
-5. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
-6. Judge writes success/failure summaries into global memory when enabled.
+2. Spec enrichment fills missing constraints/success criteria (may use web search) and updates TaskSpec.
+3. Orchestrator injects global memory hints into planning (when enabled) and produces an ExecutionPlan.
+4. Execution Engine runs evidence steps (if requested), injects per-agent memory, and executes protocol steps.
+5. Judge runs SDK judge and aggregator agents, returning final output.
+6. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
+7. Judge writes success/failure summaries into global memory when enabled.
 
 ## Protocols
 - pipeline: sequential subtask execution.
@@ -77,6 +80,9 @@ HookManager supports:
   - `python scripts/memory_init.py --db-path memory/agent_cop.db`
   - `python scripts/memory_clear.py --all`
   - Dependencies: `memori` and `sqlalchemy` are required for SQLite-backed memory.
+- Spec enrichment:
+  - `task.allow_web_search_for_spec=auto` (auto|on|off)
+  - `task.spec_max_search_queries=2`
 
 ## Model Backends
 - openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
@@ -96,6 +102,7 @@ HookManager supports:
 - Repair loop is controlled via `repair.enabled` and `repair.max_rounds`; template enforcement uses `repair.template_mode`.
 - Pytest imports are anchored via `tests/conftest.py` to ensure repo root is on `sys.path`.
 - Memory is optional; enable via `memory.enabled=true` and initialize storage with `scripts/memory_init.py`.
+- Spec enrichment uses `spec_designer` and `spec_critic` agents when constraints/criteria are missing.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
@@ -120,3 +127,4 @@ HookManager supports:
 - 2025-12-29: added repo-root path injection in memory scripts to fix direct execution imports.
 - 2025-12-29: added sqlalchemy dependency note and guard for Memori initialization.
 - 2025-12-29: memory init uses a SQLite DBAPI connection factory for Memori v3 compatibility.
+- 2025-12-29: added spec enrichment with optional web search when constraints/criteria are missing.

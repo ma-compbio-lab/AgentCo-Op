@@ -185,6 +185,50 @@ def build_evidence_prompt(request, memory_block: str | None = None) -> str:
     return "\n".join(parts)
 
 
+def build_spec_designer_prompt(
+    task: TaskSpec,
+    memory_block: str | None = None,
+    evidence_summary: str | None = None,
+) -> str:
+    parts = [
+        "### Spec Designer Instructions",
+        "Return TaskSpecPatch JSON only; no extra text.",
+        "Fill missing constraints and success criteria with clear, testable items.",
+        "Avoid over-constraining and avoid contradictions.",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Existing constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Existing success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+    ]
+    if memory_block:
+        parts.append(memory_block)
+    if evidence_summary:
+        parts.extend(["### Evidence Summary", evidence_summary])
+    return "\n".join(parts)
+
+
+def build_spec_critic_prompt(
+    task: TaskSpec,
+    proposed_patch: dict,
+    memory_block: str | None = None,
+) -> str:
+    parts = [
+        "### Spec Critic Instructions",
+        "Return TaskSpecPatch JSON only; no extra text.",
+        "Check that constraints and success criteria are testable and non-contradictory.",
+        "Add missing edge cases or clarify ambiguous items.",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Existing constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Existing success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+        "### Proposed Patch",
+        json.dumps(proposed_patch, ensure_ascii=True, default=str),
+    ]
+    if memory_block:
+        parts.append(memory_block)
+    return "\n".join(parts)
+
+
 def build_repair_prompt(
     task: TaskSpec,
     issues: list[str],

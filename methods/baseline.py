@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from core.contracts import Message, TaskSpec
 from core.runtime import run_agent
+from core.spec_enricher import ensure_spec
 from methods.base import MethodResult
 from runtime import Runtime
 from prompts import build_task_prompt
@@ -11,6 +12,7 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     from utils import log_event, log_section
 
     log_section("METHOD", "Baseline")
+    task = await ensure_spec(task, runtime.context, runtime.agent_pool, session=runtime.session)
     worker = runtime.agent_pool["worker"]
     prompt = build_task_prompt("worker", task, task.goal, [])
     log_event("METHOD", "start", "baseline run", data={"task_id": task.task_id})

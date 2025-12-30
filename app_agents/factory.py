@@ -4,6 +4,8 @@ from app_agents.io_agents import build_io_agent
 from app_agents.judge import build_aggregator_agent, build_judge_agent
 from app_agents.orchestrator import build_planner_agent
 from app_agents.researcher import build_researcher_agent
+from app_agents.spec_critic import build_spec_critic_agent
+from app_agents.spec_designer import build_spec_designer_agent
 from app_agents.workers import build_worker_agent
 from core.contracts import AgentSpec
 from core.registry import Registry
@@ -62,6 +64,22 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
         input_types=["text"],
         output_types=["json"],
     )
+    spec_designer_spec = AgentSpec(
+        agent_id="spec_designer",
+        name="SpecDesigner",
+        description="Designs constraints and success criteria for tasks.",
+        capabilities=["spec"],
+        input_types=["text"],
+        output_types=["json"],
+    )
+    spec_critic_spec = AgentSpec(
+        agent_id="spec_critic",
+        name="SpecCritic",
+        description="Reviews and refines task specifications.",
+        capabilities=["spec"],
+        input_types=["text"],
+        output_types=["json"],
+    )
 
     registry.register_agent(planner_spec)
     registry.register_agent(worker_spec)
@@ -69,6 +87,8 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
     registry.register_agent(aggregator_spec)
     registry.register_agent(io_spec)
     registry.register_agent(researcher_spec)
+    registry.register_agent(spec_designer_spec)
+    registry.register_agent(spec_critic_spec)
 
     agent_pool["planner"] = build_planner_agent(routing.planner)
     agent_pool["worker"] = build_worker_agent(routing.worker)
@@ -76,5 +96,7 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
     agent_pool["aggregator"] = build_aggregator_agent(routing.aggregator)
     agent_pool["io_agent"] = build_io_agent(routing.worker)
     agent_pool["researcher"] = build_researcher_agent(routing.worker)
+    agent_pool["spec_designer"] = build_spec_designer_agent(routing.planner)
+    agent_pool["spec_critic"] = build_spec_critic_agent(routing.judge)
 
     return agent_pool, registry

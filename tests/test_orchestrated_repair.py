@@ -54,7 +54,8 @@ def test_orchestrated_repair_loop_injects_issues(monkeypatch):
             run_hooks=None,
             repair=RepairConfig(enabled=True, max_rounds=1, template_mode="off"),
         )
-        result = asyncio.run(orchestrated_mas.run(TaskSpec(goal="go"), runtime))
+        task = TaskSpec(goal="go", constraints=["c1"], success_criteria=["s1"])
+        result = asyncio.run(orchestrated_mas.run(task, runtime))
 
     assert result.answer == "final answer"
     assert "Missing tests" in captured["prompt"]

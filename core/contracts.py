@@ -19,6 +19,20 @@ class TaskSpec(BaseModel):
     max_latency_s: Optional[float] = None
     input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     output_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    allow_web_search_for_spec: Literal["auto", "on", "off"] = "auto"
+    spec_max_search_queries: int = 2
+    spec_source: Literal["user", "auto", "mixed"] = "user"
+    spec_confidence: float = 0.0
+    spec_notes: Optional[str] = None
+    spec_evidence: list["EvidencePack"] = Field(default_factory=list)
+
+
+class TaskSpecPatch(BaseModel):
+    constraints: list[str] = Field(default_factory=list)
+    success_criteria: list[str] = Field(default_factory=list)
+    spec_notes: str = ""
+    spec_confidence: float = 0.7
+    used_web_search: bool = False
 
 
 class AgentSpec(BaseModel):
@@ -104,3 +118,6 @@ class TraceEvent(BaseModel):
     ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_type: str
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+TaskSpec.model_rebuild()

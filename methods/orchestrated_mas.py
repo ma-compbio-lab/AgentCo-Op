@@ -4,6 +4,7 @@ from core.contracts import Message, TaskSpec
 from core.judge import Judge
 from core.orchestrator import Orchestrator
 from core.runtime import run_agent
+from core.spec_enricher import ensure_spec
 from engine.executor import ExecutionEngine
 from engine.protocols import default_protocols
 from methods.base import MethodResult
@@ -15,6 +16,7 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     from utils import clip_text, log_event, log_section, should_show_outputs, should_show_prompts
 
     log_section("METHOD", "Orchestrated")
+    task = await ensure_spec(task, runtime.context, runtime.agent_pool, session=runtime.session)
     orchestrator = Orchestrator(
         registry=runtime.registry,
         budget_router=runtime.budget_router,

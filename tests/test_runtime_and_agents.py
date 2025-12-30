@@ -12,5 +12,7 @@ def test_build_runtime_and_agent_pool():
         assert "worker" in runtime.agent_pool
         assert "judge" in runtime.agent_pool
         assert "researcher" in runtime.agent_pool
+        assert "spec_designer" in runtime.agent_pool
+        assert "spec_critic" in runtime.agent_pool
         assert runtime.context.registry is runtime.registry
         assert runtime.repair.enabled is True
