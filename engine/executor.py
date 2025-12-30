@@ -48,7 +48,13 @@ class ExecutionEngine:
 
             agent_id = step["agent_id"]
             if agent_id not in self.agent_pool:
-                agent_id = plan.active_agents[0]
+                if plan.active_agents:
+                    agent_id = plan.active_agents[0]
+                elif self.agent_pool:
+                    agent_id = next(iter(self.agent_pool))
+                else:
+                    log_event("ENGINE", "step_error", "no agents available", level="error")
+                    break
                 step["agent_id"] = agent_id
             agent = self.agent_pool[agent_id]
             inbox = self._merge_evidence_inbox(state, step.get("inbox", []))

@@ -85,6 +85,7 @@ class Memory:
         try:
             from memori import Memori
         except Exception:
+            self._log_init_issue("memori import failed")
             return
 
         ensure_dir(os.path.dirname(self.db_path) or ".")
@@ -130,6 +131,7 @@ class Memory:
             try:
                 mem = Memori()
             except Exception:
+                self._log_init_issue("memori init failed")
                 return
 
         self._mem = mem
@@ -148,6 +150,13 @@ class Memory:
                 build()
             except Exception:
                 return
+
+    def _log_init_issue(self, message: str) -> None:
+        try:
+            from utils import log_event
+        except Exception:
+            return
+        log_event("RUNTIME", "memory_init", message, level="warn")
 
     def _apply_attribution(self, process_id: str) -> None:
         if not self._mem_available:

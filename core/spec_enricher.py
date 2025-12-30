@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Iterable
 
 from core.contracts import EvidencePack, EvidenceRequest, TaskSpec, TaskSpecPatch
@@ -139,7 +140,7 @@ async def _collect_spec_evidence(
     evidence: list[EvidencePack] = []
     for idx, query in enumerate(queries, start=1):
         request = EvidenceRequest(query=query, max_sources=6, require_citations=True)
-        cache_key = f"spec_evidence:{query}"
+        cache_key = _spec_cache_key(request)
         cached = ctx.cache.get(cache_key)
         if isinstance(cached, EvidencePack):
             evidence.append(cached)
@@ -185,6 +186,13 @@ def _spec_queries(task: TaskSpec, limit: int) -> list[str]:
     return queries[: max(1, limit)]
 
 
+def _spec_cache_key(request: EvidenceRequest) -> str:
+    payload = request.model_dump()
+    if payload.get("allowed_domains"):
+        payload["allowed_domains"] = sorted(payload["allowed_domains"])
+    return f"spec_evidence:{json.dumps(payload, sort_keys=True, ensure_ascii=True)}"
+
+
 async def _run_patch_agent(agent, prompt: str, ctx, session=None, workflow_name: str = "spec_patch") -> TaskSpecPatch:
     if agent is None:
         return TaskSpecPatch()
@@ -212,11 +220,16 @@ def _coerce_patch(obj: object | None) -> TaskSpecPatch:
 
 def _merge_patches(designer: TaskSpecPatch, critic: TaskSpecPatch) -> TaskSpecPatch:
     # Critic refines or overrides designer suggestions when present.
+    merged_constraints = _merge_list(designer.constraints, critic.constraints)
+    merged_criteria = _merge_list(designer.success_criteria, critic.success_criteria)
+    confidence = critic.spec_confidence or designer.spec_confidence
+    if not merged_constraints and not merged_criteria:
+        confidence = 0.0
     merged = TaskSpecPatch(
-        constraints=_merge_list(designer.constraints, critic.constraints),
-        success_criteria=_merge_list(designer.success_criteria, critic.success_criteria),
+        constraints=merged_constraints,
+        success_criteria=merged_criteria,
         spec_notes=critic.spec_notes or designer.spec_notes,
-        spec_confidence=critic.spec_confidence or designer.spec_confidence,
+        spec_confidence=confidence,
         used_web_search=designer.used_web_search or critic.used_web_search,
     )
     return merged

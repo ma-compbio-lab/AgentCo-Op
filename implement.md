@@ -129,3 +129,4 @@ HookManager supports:
 - 2025-12-29: memory init uses a SQLite DBAPI connection factory for Memori v3 compatibility.
 - 2025-12-29: added spec enrichment with optional web search when constraints/criteria are missing.
 - 2025-12-29: expanded README with full feature usage and added inline code comments for clarity.
+- 2025-12-29: hardened executor agent fallback, spec evidence cache key, and memory init logging; deduped requirements.
