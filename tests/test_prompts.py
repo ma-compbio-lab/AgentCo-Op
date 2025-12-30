@@ -5,6 +5,7 @@ from prompts import (
     build_plan_prompt,
     build_repair_prompt,
     derive_output_template,
+    format_memory_block,
 )
 
 
@@ -57,3 +58,9 @@ def test_derive_output_template_auto_detects_code():
     )
     sections = derive_output_template(task, mode="auto")
     assert sections == ["Function", "Explanation", "Tests"]
+
+
+def test_memory_block_injected():
+    block = format_memory_block([{"text": "Remember to cite sources", "score": 0.9}])
+    assert "Retrieved Memory" in block
+    assert "cite sources" in block

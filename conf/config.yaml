@@ -45,6 +45,15 @@ repair:
   max_rounds: 1
   template_mode: auto
 
+memory:
+  enabled: false
+  db_path: memory/agent_cop.db
+  entity_id: default
+  top_k: 3
+  store_agent_outputs: true
+  store_judge_reports: true
+  auto_build: false
+
 hydra:
   job:
     chdir: false

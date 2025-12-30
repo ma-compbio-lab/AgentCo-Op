@@ -17,7 +17,8 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
   - Cache: in-memory TTL cache for tool/agent reuse.
   - Hooks: pre/post plan/step/judge/output intervention points.
   - Observability: JSONL trace logging.
-  - Memory/Safety: minimal stubs, ready for extension.
+- Memory/Safety: minimal stubs, ready for extension.
+- Memory: Memori-backed long-term memory with per-agent and global scopes (optional).
 
 ## Repo Layout
 - `run.py`: CLI entrypoint.
@@ -39,15 +40,17 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - Message: standardized inter-agent envelope.
 - ExecutionPlan/SubTask: protocol + task DAG + constraints + model_hint/meta (edges as Edge objects).
 - EvidenceRequest/EvidencePack: web search inputs and structured evidence summaries + citations.
+- Memory items: stored via Memori in agent/global scopes (see core/memory.py).
 - JudgeReport: pass/fail, score, issues, optional patch.
 - TraceEvent: event stream for observability.
 
 ## Execution Flow
 1. CLI builds TaskSpec and runtime services (context, cache, registry, budget).
-2. Orchestrator calls the SDK planner agent to produce an ExecutionPlan.
-3. Execution Engine runs evidence steps (if requested) and executes protocol steps.
+2. Orchestrator injects global memory hints into planning (when enabled) and produces an ExecutionPlan.
+3. Execution Engine runs evidence steps (if requested), injects per-agent memory, and executes protocol steps.
 4. Judge runs SDK judge and aggregator agents, returning final output.
 5. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
+6. Judge writes success/failure summaries into global memory when enabled.
 
 ## Protocols
 - pipeline: sequential subtask execution.
@@ -70,6 +73,9 @@ HookManager supports:
   - `OPENAI_API_KEY=... python eval/harness.py tasks=path/to/tasks.jsonl method=orchestrated max_samples=10`
 - Tests:
   - `pytest -q`
+- Memory:
+  - `python scripts/memory_init.py --db-path memory/agent_cop.db`
+  - `python scripts/memory_clear.py --all`
 
 ## Model Backends
 - openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
@@ -88,6 +94,7 @@ HookManager supports:
 - Set `log.show_prompts=true` and `log.show_outputs=true` for more intermediate debug output.
 - Repair loop is controlled via `repair.enabled` and `repair.max_rounds`; template enforcement uses `repair.template_mode`.
 - Pytest imports are anchored via `tests/conftest.py` to ensure repo root is on `sys.path`.
+- Memory is optional; enable via `memory.enabled=true` and initialize storage with `scripts/memory_init.py`.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
@@ -107,3 +114,5 @@ HookManager supports:
 - 2025-12-29: added pytest `tests/conftest.py` to fix module import paths during test collection.
 - 2025-12-29: switched datetime defaults to timezone-aware UTC to silence deprecation warnings.
 - 2025-12-29: added EvidencePack web search flow with researcher agent, caching, and evidence injection.
+- 2025-12-29: added Memori-backed memory service with per-agent/global recall and judge write-back.
+- 2025-12-29: added memory scripts (init/clear) and memory configuration in Hydra.

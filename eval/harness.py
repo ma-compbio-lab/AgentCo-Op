@@ -6,7 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 
 import asyncio
 
-from config import EvalConfig, LogConfig, ModelConfig, RepairConfig
+from config import EvalConfig, LogConfig, MemoryConfig, ModelConfig, RepairConfig
 from data import load_tasks
 from eval.metrics import basic_metrics
 from methods.dispatcher import run_method
@@ -24,6 +24,7 @@ def to_eval_config(cfg: DictConfig) -> EvalConfig:
         model_dict = cfg_obj.get("model", {})
         log_dict = cfg_obj.get("log", {})
         repair_dict = cfg_obj.get("repair", {})
+        memory_dict = cfg_obj.get("memory", {})
         return EvalConfig(
             tasks=cfg_obj.get("tasks", "data/tasks.jsonl"),
             method=cfg_obj.get("method", "orchestrated"),
@@ -31,6 +32,7 @@ def to_eval_config(cfg: DictConfig) -> EvalConfig:
             log_dir=cfg_obj.get("log_dir", "logs"),
             log=LogConfig(**log_dict) if isinstance(log_dict, dict) else LogConfig(),
             repair=RepairConfig(**repair_dict) if isinstance(repair_dict, dict) else RepairConfig(),
+            memory=MemoryConfig(**memory_dict) if isinstance(memory_dict, dict) else MemoryConfig(),
             max_samples=cfg_obj.get("max_samples"),
         )
     raise TypeError("Config is not compatible with EvalConfig.")
@@ -62,7 +64,12 @@ async def run_async(cfg: DictConfig) -> None:
     configure_openai(eval_cfg.model.api_key)
     ensure_api_key()
     routing = build_model_routing(eval_cfg.model)
-    runtime = build_runtime(routing, log_dir=eval_cfg.log_dir, repair=eval_cfg.repair)
+    runtime = build_runtime(
+        routing,
+        log_dir=eval_cfg.log_dir,
+        repair=eval_cfg.repair,
+        memory_cfg=eval_cfg.memory,
+    )
 
     tasks = load_tasks(eval_cfg.tasks)
     if eval_cfg.max_samples:

@@ -66,6 +66,22 @@ class Judge:
             "judge report ready",
             data={"ok": report.ok, "score": report.score, "issues": report.issues},
         )
+        memory = getattr(ctx, "memory", None)
+        if memory and memory.enabled and memory.store_judge_reports:
+            status = "success" if report.ok else "failure"
+            note = [
+                f"STATUS: {status}",
+                f"TASK: {task.goal}",
+                f"PROTOCOL: {getattr(plan, 'protocol', 'unknown')}",
+                f"ISSUES: {', '.join(report.issues) if report.issues else 'None'}",
+            ]
+            if report.suggested_patch:
+                note.append(f"PATCH: {report.suggested_patch}")
+            memory.write_global(
+                "\n".join(note),
+                labels=[status, f"protocol:{getattr(plan, 'protocol', 'unknown')}"],
+                category="event",
+            )
 
         if not report.ok:
             return report, ""

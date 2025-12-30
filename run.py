@@ -6,7 +6,7 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
-from config import AppConfig, LogConfig, ModelConfig, RepairConfig, TaskConfig
+from config import AppConfig, LogConfig, MemoryConfig, ModelConfig, RepairConfig, TaskConfig
 from core.contracts import TaskSpec
 from methods.dispatcher import run_method
 from models import build_model_routing, configure_openai, ensure_api_key, validate_backend
@@ -23,6 +23,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
         model_dict = cfg_obj.get("model", {})
         log_dict = cfg_obj.get("log", {})
         repair_dict = cfg_obj.get("repair", {})
+        memory_dict = cfg_obj.get("memory", {})
         return AppConfig(
             task=TaskConfig(**task_dict),
             method=cfg_obj.get("method", "orchestrated"),
@@ -30,6 +31,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
             log_dir=cfg_obj.get("log_dir", "logs"),
             log=LogConfig(**log_dict) if isinstance(log_dict, dict) else LogConfig(),
             repair=RepairConfig(**repair_dict) if isinstance(repair_dict, dict) else RepairConfig(),
+            memory=MemoryConfig(**memory_dict) if isinstance(memory_dict, dict) else MemoryConfig(),
         )
     raise TypeError("Config is not compatible with AppConfig.")
 
@@ -71,7 +73,7 @@ async def run_async(cfg: DictConfig) -> None:
     configure_openai(app_cfg.model.api_key)
     ensure_api_key()
     routing = build_model_routing(app_cfg.model)
-    runtime = build_runtime(routing, log_dir=app_cfg.log_dir, repair=app_cfg.repair)
+    runtime = build_runtime(routing, log_dir=app_cfg.log_dir, repair=app_cfg.repair, memory_cfg=app_cfg.memory)
 
     result = await run_method(app_cfg.method, task, runtime)
     print(result.answer)

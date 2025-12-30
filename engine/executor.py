@@ -7,7 +7,7 @@ from core.hooks import HookManager
 from core.observability import Observability
 from core.runtime import run_agent
 from engine.protocols import ProtocolBase
-from prompts import build_evidence_prompt, build_task_prompt
+from prompts import build_evidence_prompt, build_task_prompt, format_memory_block
 
 
 class ExecutionEngine:
@@ -69,7 +69,19 @@ class ExecutionEngine:
                     "inbox_len": len(inbox),
                 },
             )
-            prompt = build_task_prompt(agent_id, task, instructions, inbox)
+            memory_block = None
+            memory = getattr(ctx, "memory", None)
+            if memory and memory.enabled:
+                recall = memory.recall_agent(agent_id, query=f"{task.goal} {instructions}", k=memory.top_k)
+                memory_block = format_memory_block(recall, title=f"Retrieved Memory ({agent_id})")
+
+            prompt = build_task_prompt(
+                agent_id,
+                task,
+                instructions,
+                inbox,
+                memory_block=memory_block,
+            )
             if should_show_prompts():
                 log_event(
                     "ENGINE",
@@ -118,6 +130,14 @@ class ExecutionEngine:
                     data={"agent_id": agent_id, "preview": clip_text(output_text)},
                 )
 
+            if memory and memory.enabled and memory.store_agent_outputs:
+                memory.write_agent(
+                    agent_id,
+                    clip_text(output_text),
+                    labels=["agent_output"],
+                    category="process",
+                )
+
             patch = self.hooks.post_step(task, plan, state, output_msg)
             if patch:
                 plan = plan.model_copy(update=patch)
@@ -147,7 +167,12 @@ class ExecutionEngine:
             if pack:
                 log_event("ENGINE", "evidence_cache", "evidence cache hit", data={"query": request.query})
             else:
-                prompt = build_evidence_prompt(request)
+                memory_block = None
+                memory = getattr(ctx, "memory", None)
+                if memory and memory.enabled:
+                    recall = memory.recall_agent("researcher", query=request.query, k=memory.top_k)
+                    memory_block = format_memory_block(recall, title="Retrieved Memory (researcher)")
+                prompt = build_evidence_prompt(request, memory_block=memory_block)
                 if should_show_prompts():
                     log_event(
                         "ENGINE",
@@ -170,6 +195,13 @@ class ExecutionEngine:
                 pack = self._coerce_evidence_pack(request, getattr(result, "final_output", None))
                 if pack:
                     ctx.cache.set(cache_key, pack)
+                    if memory and memory.enabled and memory.store_agent_outputs:
+                        memory.write_agent(
+                            "researcher",
+                            clip_text(pack.summary),
+                            labels=["evidence_summary"],
+                            category="process",
+                        )
             if not pack:
                 continue
             evidence_packs.append(pack)

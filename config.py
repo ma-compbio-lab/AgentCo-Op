@@ -25,6 +25,17 @@ class ModelConfig:
 
 
 @dataclass
+class MemoryConfig:
+    enabled: bool = False
+    db_path: str = "memory/agent_cop.db"
+    entity_id: str = "default"
+    top_k: int = 3
+    store_agent_outputs: bool = True
+    store_judge_reports: bool = True
+    auto_build: bool = False
+
+
+@dataclass
 class AppConfig:
     task: TaskConfig = field(default_factory=TaskConfig)
     method: str = "orchestrated"
@@ -32,6 +43,7 @@ class AppConfig:
     log_dir: str = "logs"
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 @dataclass
@@ -60,4 +72,5 @@ class EvalConfig:
     log_dir: str = "logs"
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     max_samples: int | None = None

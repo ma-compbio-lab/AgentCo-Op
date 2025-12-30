@@ -4,7 +4,7 @@ from core.contracts import Message, TaskSpec
 from core.runtime import run_agent
 from methods.base import MethodResult
 from runtime import Runtime
-from prompts import build_plan_prompt, build_task_prompt
+from prompts import build_plan_prompt, build_task_prompt, format_memory_block
 
 
 async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
@@ -16,7 +16,15 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
 
     candidates = runtime.context.registry.filter(required_caps=["reason"], input_types=task.input_modalities)
     candidates = [c for c in candidates if c.agent_id not in {"planner", "judge", "aggregator"}]
-    plan_prompt = build_plan_prompt(task, candidates)
+    memory_block = None
+    memory = getattr(runtime.context, "memory", None)
+    if memory and memory.enabled:
+        recall = memory.recall_global(
+            query=f"{task.goal} planning failures or best protocols",
+            k=memory.top_k,
+        )
+        memory_block = format_memory_block(recall, title="Historical Attempts")
+    plan_prompt = build_plan_prompt(task, candidates, memory_block=memory_block)
     log_event("METHOD", "start", "sequential run", data={"task_id": task.task_id})
     plan_result = await run_agent(
         planner,
@@ -33,7 +41,17 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
         plan_text = str(plan_text)
     plan_msg = Message(sender="planner", receiver="engine", content_type="text", content=str(plan_text))
 
-    worker_prompt = build_task_prompt("worker", task, task.goal, [plan_msg])
+    worker_memory_block = None
+    if memory and memory.enabled:
+        recall = memory.recall_agent("worker", query=f"{task.goal} {task.goal}", k=memory.top_k)
+        worker_memory_block = format_memory_block(recall, title="Retrieved Memory")
+    worker_prompt = build_task_prompt(
+        "worker",
+        task,
+        task.goal,
+        [plan_msg],
+        memory_block=worker_memory_block,
+    )
     worker_result = await run_agent(
         worker,
         worker_prompt,

@@ -6,7 +6,7 @@ from core.hooks import HookManager
 from core.observability import Observability
 from core.registry import Registry
 from core.runtime import run_agent
-from prompts import build_plan_prompt
+from prompts import build_plan_prompt, format_memory_block
 
 
 class Orchestrator:
@@ -37,7 +37,16 @@ class Orchestrator:
         if not candidates:
             raise ValueError("No agents available for the requested task input modalities.")
 
-        prompt = build_plan_prompt(task, candidates)
+        memory_block = None
+        memory = getattr(ctx, "memory", None)
+        if memory and memory.enabled:
+            recall = memory.recall_global(
+                query=f"{task.goal} planning failures or best protocols",
+                k=memory.top_k,
+            )
+            memory_block = format_memory_block(recall, title="Historical Attempts")
+
+        prompt = build_plan_prompt(task, candidates, memory_block=memory_block)
         log_event("ORCH", "input", "planning input prepared", data={"candidates": [c.agent_id for c in candidates]})
         if should_show_prompts():
             log_event(
