@@ -1,65 +1,195 @@
 # Agent-Cop
 
-Minimal multi-agent workflow runner with an Orchestrator, Execution Engine, and Judge.
-Implemented using the OpenAI Agents SDK (no LangGraph).
+Agent-Cop is a minimal, reproducible multi-agent workflow runner with three core modules:
+Orchestrator (plan/route/assign), Execution Engine (protocol runner), and Judge (verify/repair/aggregate).
+It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 
-## Quick start
+## Features
+
+- Multi-agent orchestration (planner + worker + judge + aggregator).
+- Protocols: pipeline, roundtable, debate, loop, hybrid.
+- Web search as evidence (researcher agent only) with caching.
+- Spec enrichment: auto-generate missing constraints/success criteria.
+- Auto repair: judge failure -> repair -> re-judge (multi-round).
+- Optional Memori-backed long-term memory (per-agent + global).
+- Hydra configs and CLI overrides for experiments.
+- Colored debug logging with prompt/output previews.
+
+## Requirements
+
+- Python 3.10 or 3.11 recommended.
+- OpenAI Agents SDK (`openai-agents`).
+- Optional memory: `memori` + `sqlalchemy`.
+
+Install:
+
+```bash
+pip install -r requirements.txt
+```
+
+Set your API key:
 
 ```bash
 export OPENAI_API_KEY="your-key"
-pip install -r requirements.txt
-python run.py task.goal="Summarize the key risks in this plan." method=orchestrated
 ```
 
-### Methods
+## Quick Start
+
+```bash
+python run.py \
+  method=orchestrated \
+  task.goal="Summarize key risks in this plan."
+```
+
+## CLI and Hydra Overrides
+
+Config files:
+
+- `conf/config.yaml`: single-run config
+- `conf/eval.yaml`: batch eval config
+
+Override examples:
+
+```bash
+python run.py task.goal="Draft a checklist." model.name=gpt-4o-mini
+python run.py model.planner=gpt-4o model.worker=gpt-4o-mini model.judge=gpt-4o
+python eval/harness.py tasks=data/tasks.jsonl method=sequential max_samples=10
+```
+
+### Note on zsh and list syntax
+
+If you want to pass empty lists, quote them to avoid zsh globbing errors:
+
+```bash
+python run.py \
+  task.goal="Implement a function" \
+  'task.constraints=[]' \
+  'task.success_criteria=[]'
+```
+
+## Methods
 
 - `baseline`: single worker agent
 - `sequential`: planner -> worker
-- `orchestrated`: orchestrator + engine + judge
+- `orchestrated`: orchestrator + engine + judge (recommended)
 
-### Model backends
+## Spec Enrichment (Auto Constraints / Success Criteria)
 
-- `openai` (requires `openai-agents` and `OPENAI_API_KEY`)
+When `constraints` or `success_criteria` are missing, the system runs a spec
+enrichment phase before planning:
 
-### Config files (Hydra)
+- `spec_designer` proposes constraints/criteria.
+- `spec_critic` refines them for testability and consistency.
+- Optional web search for spec design (researcher agent).
 
-- `conf/config.yaml` controls single runs.
-- `conf/eval.yaml` controls batch evaluation.
-
-Example overrides:
-
-```bash
-python run.py task.goal="Draft a checklist." model.backend=openai model.name=gpt-4o-mini
-python eval/harness.py tasks=data/tasks.jsonl method=sequential max_samples=10
-python run.py task.goal="Summarize" model.backend=openai model.name=gpt-4o-mini
-```
-
-Role-specific overrides:
+Controls:
 
 ```bash
-python run.py model.planner=gpt-4o model.worker=gpt-4o-mini model.judge=gpt-4o
+task.allow_web_search_for_spec=auto   # auto | on | off
+task.spec_max_search_queries=2
 ```
 
-Note: local agent builders live in `app_agents/` to avoid colliding with the SDK's `agents` module.
-
-### Tests
+Example:
 
 ```bash
-pytest -q
+python run.py \
+  method=orchestrated \
+  task.goal="Implement levenshtein_distance(a: str, b: str) -> int." \
+  'task.constraints=[]' \
+  'task.success_criteria=[]' \
+  task.allow_web_search_for_spec=auto \
+  task.spec_max_search_queries=1
 ```
 
-### Logging
+## Web Search (Evidence-First)
 
-Use Hydra config to control terminal logs:
+Web search is confined to the `researcher` agent and produces structured
+`EvidencePack` summaries + citations. Other agents consume evidence but do not
+search the web directly.
+
+Automatic gating uses heuristics (latest/current/2025/etc). You can also set
+`needs_web_search` via planning or by task wording.
+
+## Memory (Memori)
+
+Memori-backed long-term memory is optional and off by default.
+
+Initialize storage:
+
+```bash
+python scripts/memory_init.py --db-path memory/agent_cop.db
+```
+
+Enable memory:
+
+```bash
+python run.py \
+  memory.enabled=true \
+  memory.db_path=memory/agent_cop.db \
+  memory.entity_id=default \
+  memory.top_k=3
+```
+
+Clear memory:
+
+```bash
+python scripts/memory_clear.py --all
+```
+
+## Auto Repair (Judge -> Repair -> Re-judge)
+
+Enable multi-round repair when judge fails:
+
+```bash
+python run.py \
+  repair.enabled=true \
+  repair.max_rounds=3 \
+  repair.template_mode=auto
+```
+
+`repair.template_mode`:
+
+- `off`: no enforced output sections
+- `auto`: enforce template for code-like tasks
+- `force`: always enforce template
+
+## Logging and Debug
 
 ```bash
 python run.py log.level=debug log.use_color=true log.use_icons=true
 ```
 
-`log.level=debug` shows step inputs and output previews.
-
-Show more debug payloads:
+Prompt and output previews:
 
 ```bash
 python run.py log.level=debug log.show_prompts=true log.show_outputs=true log.preview_chars=600
 ```
+
+## Tests
+
+```bash
+pytest -q
+```
+
+## Project Layout
+
+```
+run.py              # CLI entrypoint
+config.py           # Hydra dataclasses
+models.py           # model routing + API key
+prompts.py          # prompt builders
+utils.py            # logging helpers + JSONL
+core/               # contracts, memory, orchestrator, judge, hooks, etc.
+engine/             # protocols + executor
+app_agents/         # agent builders (planner/worker/judge/researcher/spec)
+methods/            # baseline/sequential/orchestrated
+scripts/            # memory init/clear
+conf/               # Hydra configs
+```
+
+## Troubleshooting
+
+- If you see `no matches found: task.constraints=[]` in zsh, quote the override.
+- If memory init fails, ensure `memori` and `sqlalchemy` are installed.
+- If web search is not available, confirm your OpenAI account has tool access.
+
