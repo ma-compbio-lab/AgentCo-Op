@@ -37,6 +37,7 @@ class Orchestrator:
         if not candidates:
             raise ValueError("No agents available for the requested task input modalities.")
 
+        # Planner can use historical plans to avoid repeated failures.
         memory_block = None
         memory = getattr(ctx, "memory", None)
         if memory and memory.enabled:
@@ -91,6 +92,7 @@ class Orchestrator:
         if plan.protocol not in {"pipeline", "roundtable", "debate", "loop", "hybrid"}:
             plan.protocol = "pipeline"
 
+        # Ensure evidence requests are set when web search is likely required.
         plan = self._apply_evidence_defaults(task, plan)
         budget_decision = self.budget_router.choose(task.budget_tokens)
         if plan.model_hint is None:

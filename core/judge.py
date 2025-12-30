@@ -68,6 +68,7 @@ class Judge:
         )
         memory = getattr(ctx, "memory", None)
         if memory and memory.enabled and memory.store_judge_reports:
+            # Persist a compact summary of success/failure for future planning.
             status = "success" if report.ok else "failure"
             note = [
                 f"STATUS: {status}",

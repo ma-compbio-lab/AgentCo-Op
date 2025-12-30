@@ -20,10 +20,12 @@ async def ensure_spec(task: TaskSpec, ctx, agent_pool: dict[str, object], sessio
 
     log_section("ORCH", "Spec Enrichment")
     memory = getattr(ctx, "memory", None)
+    # Recall prior spec templates to keep auto-generated specs consistent.
     memory_block = _build_memory_block(task, memory)
 
     evidence_packs: list[EvidencePack] = []
     used_web_search = False
+    # Optional web search when the task likely depends on external or time-sensitive facts.
     if _should_use_web_search(task):
         used_web_search = True
         evidence_packs = await _collect_spec_evidence(task, ctx, agent_pool, session)
@@ -67,6 +69,7 @@ async def ensure_spec(task: TaskSpec, ctx, agent_pool: dict[str, object], sessio
     merged_patch = _merge_patches(designer_patch, critic_patch)
     merged_patch.used_web_search = used_web_search
 
+    # Apply the patch without overwriting user-provided specs.
     enriched = _apply_patch(task, merged_patch, evidence_packs)
     log_event(
         "ORCH",
@@ -131,6 +134,7 @@ async def _collect_spec_evidence(
     if "researcher" not in agent_pool:
         return []
 
+    # Cache evidence by query to avoid repeated searches within the same run.
     queries = _spec_queries(task, task.spec_max_search_queries)
     evidence: list[EvidencePack] = []
     for idx, query in enumerate(queries, start=1):
@@ -207,6 +211,7 @@ def _coerce_patch(obj: object | None) -> TaskSpecPatch:
 
 
 def _merge_patches(designer: TaskSpecPatch, critic: TaskSpecPatch) -> TaskSpecPatch:
+    # Critic refines or overrides designer suggestions when present.
     merged = TaskSpecPatch(
         constraints=_merge_list(designer.constraints, critic.constraints),
         success_criteria=_merge_list(designer.success_criteria, critic.success_criteria),
@@ -284,6 +289,7 @@ def _merge_list(a: list[str], b: list[str]) -> list[str]:
 
 
 def _write_spec_memory(task: TaskSpec, memory) -> None:
+    # Persist a concise spec template so future spec enrichment can recall it.
     note = [
         f"TASK: {task.goal}",
         f"CONSTRAINTS: {', '.join(task.constraints) if task.constraints else 'None'}",

@@ -128,3 +128,4 @@ HookManager supports:
 - 2025-12-29: added sqlalchemy dependency note and guard for Memori initialization.
 - 2025-12-29: memory init uses a SQLite DBAPI connection factory for Memori v3 compatibility.
 - 2025-12-29: added spec enrichment with optional web search when constraints/criteria are missing.
+- 2025-12-29: expanded README with full feature usage and added inline code comments for clarity.

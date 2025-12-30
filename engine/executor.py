@@ -33,6 +33,7 @@ class ExecutionEngine:
         protocol = self.protocols[plan.protocol]
         protocol_state = protocol.prepare(task, plan)
 
+        # Evidence is collected once up front to avoid repeated web searches per step.
         if plan.needs_web_search and plan.evidence_requests:
             await self._run_evidence_steps(plan.evidence_requests, state, ctx, session=session)
 
@@ -69,6 +70,7 @@ class ExecutionEngine:
                     "inbox_len": len(inbox),
                 },
             )
+            # Inject per-agent memory hints when enabled.
             memory_block = None
             memory = getattr(ctx, "memory", None)
             if memory and memory.enabled:
@@ -131,6 +133,7 @@ class ExecutionEngine:
                 )
 
             if memory and memory.enabled and memory.store_agent_outputs:
+                # Persist a short summary of outputs as agent memory.
                 memory.write_agent(
                     agent_id,
                     clip_text(output_text),
@@ -167,6 +170,7 @@ class ExecutionEngine:
             if pack:
                 log_event("ENGINE", "evidence_cache", "evidence cache hit", data={"query": request.query})
             else:
+                # Allow the researcher to leverage its own memory for consistent citations.
                 memory_block = None
                 memory = getattr(ctx, "memory", None)
                 if memory and memory.enabled:

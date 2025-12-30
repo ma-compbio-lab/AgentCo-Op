@@ -3,15 +3,15 @@ defaults:
 
 task:
   goal: "Implement a Python function levenshtein_distance(a: str, b: str) -> int that returns the edit distance between two strings."
-  constraints:
-    - "Use Python 3.10 syntax."
-    - "Do not use external libraries."
-    - "Time complexity O(n*m), space complexity O(min(n, m))."
-    - "Handle empty strings correctly."
-  success_criteria:
-    - "Function signature is exactly levenshtein_distance(a: str, b: str) -> int."
-    - "Includes a short explanation of the algorithm."
-    - "Provides at least 3 test examples with expected outputs."
+  constraints: []
+    # - "Use Python 3.10 syntax."
+    # - "Do not use external libraries."
+    # - "Time complexity O(n*m), space complexity O(min(n, m))."
+    # - "Handle empty strings correctly."
+  success_criteria: []
+    # - "Function signature is exactly levenshtein_distance(a: str, b: str) -> int."
+    # - "Includes a short explanation of the algorithm."
+    # - "Provides at least 3 test examples with expected outputs."
   budget_tokens: 8000
   allow_web_search_for_spec: auto
   spec_max_search_queries: 2
@@ -44,7 +44,7 @@ log:
 
 repair:
   enabled: true
-  max_rounds: 1
+  max_rounds: 2
   template_mode: auto
 
 memory:

@@ -26,6 +26,7 @@ _CODE_TEMPLATE_SECTIONS = ["Function", "Explanation", "Tests"]
 
 
 def format_memory_block(items: list[dict] | None, title: str = "Retrieved Memory") -> str:
+    # Keep memory blocks compact and explicitly marked as untrusted context.
     if not items:
         return ""
     lines = [
@@ -49,6 +50,7 @@ def format_memory_block(items: list[dict] | None, title: str = "Retrieved Memory
 
 
 def derive_output_template(task: TaskSpec, mode: str) -> list[str]:
+    # Lightweight heuristic to enforce structured outputs on code-like tasks.
     normalized = (mode or "off").strip().lower()
     if normalized == "off":
         return []

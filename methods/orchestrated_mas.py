@@ -96,6 +96,7 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
                 )
             repair_history.append({"attempt": attempt, "issues": issues, "output_len": len(repair_text)})
             state = {
+                # Preserve evidence context across repair attempts.
                 "messages": evidence_messages
                 + [Message(sender="worker", receiver="engine", content_type="text", content=repair_text)],
                 "artifacts": evidence_artifacts,

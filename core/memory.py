@@ -81,6 +81,7 @@ class Memory:
         self._write(text, process_id="global:workflow", labels=labels, category=category)
 
     def _init_memori(self) -> None:
+        # Initialize Memori lazily so the rest of the system works without it.
         try:
             from memori import Memori
         except Exception:
@@ -93,6 +94,7 @@ class Memory:
         except Exception:
             sig = None
 
+        # Memori v3 expects a DBAPI connection factory; v1/v2 accept a SQLite URL.
         if sig and "conn" in sig.parameters:
             conn_factory = lambda: sqlite3.connect(self.db_path)
             try:
@@ -202,6 +204,7 @@ class Memory:
 
     @staticmethod
     def _normalize_recall(results: Any) -> list[dict[str, Any]]:
+        # Normalize Memori recall results into a stable list of dicts.
         items: list[dict[str, Any]] = []
         if results is None:
             return items
