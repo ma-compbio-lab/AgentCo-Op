@@ -52,6 +52,13 @@ class ToolConfig:
     default_memory_mb: int | None = None
     default_pids: int | None = None
     run_dir: str = "logs/tool_runs"
+    docker_repair_max_rounds: int = 2
+    repo2run_enabled: bool = False
+    repo2run_path: str = "third_party/Repo2Run"
+    repo2run_python: str = "python"
+    repo2run_llm: str | None = None
+    repo2run_prefer_existing: bool = True
+    repo2run_work_dir: str = "logs/repo2run"
 
 
 @dataclass

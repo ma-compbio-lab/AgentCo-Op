@@ -49,6 +49,7 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
         hooks=runtime.hooks,
         observability=runtime.observability,
         docker_runtime=runtime.docker_runtime,
+        tool_cfg=runtime.tool_cfg,
         run_hooks=runtime.run_hooks,
     )
     state = await engine.run(task, plan, runtime.context, session=runtime.session)

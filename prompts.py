@@ -319,6 +319,7 @@ def build_tool_plan_prompt(
         "Provide install strategy, container spec, run commands, verify commands, and expected artifacts.",
         "Commands must be safe and deterministic; avoid destructive actions.",
         "Write outputs to /outputs when possible.",
+        "Set container_spec.workdir when the repo expects a specific working directory.",
         "Prefer minimal dependencies and keep commands short.",
         "### Task",
         f"Goal: {task.goal}",
@@ -329,4 +330,27 @@ def build_tool_plan_prompt(
     ]
     if memory_block:
         parts.append(memory_block)
+    return "\n".join(parts)
+
+
+def build_docker_repair_prompt(
+    task: TaskSpec,
+    tool_plan: dict,
+    dockerfile_text: str,
+    build_error: str,
+) -> str:
+    parts = [
+        "### Dockerfile Repair Instructions",
+        "Return the full corrected Dockerfile only. No extra text or code fences.",
+        "Fix errors using minimal, safe changes. If unsure, rewrite from scratch.",
+        "Avoid destructive actions; keep the image small when possible.",
+        "### Task",
+        f"Goal: {task.goal}",
+        "### Tool Plan",
+        json.dumps(tool_plan, ensure_ascii=True, default=str),
+        "### Dockerfile (current)",
+        dockerfile_text or "<empty>",
+        "### Build Error",
+        build_error or "None",
+    ]
     return "\n".join(parts)

@@ -6,6 +6,7 @@ from app_agents.orchestrator import build_planner_agent
 from app_agents.researcher import build_researcher_agent
 from app_agents.spec_critic import build_spec_critic_agent
 from app_agents.spec_designer import build_spec_designer_agent
+from app_agents.docker_repair import build_docker_repair_agent
 from app_agents.tool_doc_synth import build_tool_doc_synth_agent
 from app_agents.tool_evaluator import build_tool_evaluator_agent
 from app_agents.tool_scout import build_tool_scout_agent
@@ -107,6 +108,14 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
         input_types=["text"],
         output_types=["json"],
     )
+    docker_repair_spec = AgentSpec(
+        agent_id="docker_repair",
+        name="DockerRepair",
+        description="Repairs Dockerfiles based on build errors.",
+        capabilities=["docker_repair"],
+        input_types=["text"],
+        output_types=["text"],
+    )
 
     registry.register_agent(planner_spec)
     registry.register_agent(worker_spec)
@@ -119,6 +128,7 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
     registry.register_agent(tool_scout_spec)
     registry.register_agent(tool_evaluator_spec)
     registry.register_agent(tool_doc_synth_spec)
+    registry.register_agent(docker_repair_spec)
 
     agent_pool["planner"] = build_planner_agent(routing.planner)
     agent_pool["worker"] = build_worker_agent(routing.worker)
@@ -131,5 +141,6 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
     agent_pool["tool_scout"] = build_tool_scout_agent(routing.worker)
     agent_pool["tool_evaluator"] = build_tool_evaluator_agent(routing.judge)
     agent_pool["tool_doc_synth"] = build_tool_doc_synth_agent(routing.planner)
+    agent_pool["docker_repair"] = build_docker_repair_agent(routing.judge)
 
     return agent_pool, registry

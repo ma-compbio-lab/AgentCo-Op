@@ -17,5 +17,6 @@ def test_build_runtime_and_agent_pool():
         assert "tool_scout" in runtime.agent_pool
         assert "tool_evaluator" in runtime.agent_pool
         assert "tool_doc_synth" in runtime.agent_pool
+        assert "docker_repair" in runtime.agent_pool
         assert runtime.context.registry is runtime.registry
         assert runtime.repair.enabled is True

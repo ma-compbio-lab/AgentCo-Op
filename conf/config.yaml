@@ -70,6 +70,13 @@ tool:
   default_memory_mb: null
   default_pids: null
   run_dir: logs/tool_runs
+  docker_repair_max_rounds: 2
+  repo2run_enabled: false
+  repo2run_path: third_party/Repo2Run
+  repo2run_python: python
+  repo2run_llm: null
+  repo2run_prefer_existing: true
+  repo2run_work_dir: logs/repo2run
 
 hydra:
   job:

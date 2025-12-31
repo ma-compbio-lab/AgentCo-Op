@@ -97,6 +97,7 @@ class ContainerSpec(BaseModel):
     base_image: str = "python:3.10-slim"
     dockerfile_path: Optional[str] = None
     context_dir: Optional[str] = None
+    workdir: Optional[str] = "/workspace"
     build_args: dict[str, str] = Field(default_factory=dict)
     env: dict[str, str] = Field(default_factory=dict)
     limits: ContainerLimits = Field(default_factory=ContainerLimits)

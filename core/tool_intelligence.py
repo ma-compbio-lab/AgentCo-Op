@@ -6,6 +6,7 @@ from typing import Any
 
 from config import ToolConfig
 from core.contracts import TaskSpec, ToolCandidate, ToolCandidates, ToolPlan
+from core.repo2run_runtime import Repo2RunRunner
 from core.runtime import run_agent
 from prompts import (
     build_tool_eval_prompt,
@@ -101,6 +102,9 @@ async def prepare_tool_plan(
         )
         selected = _coerce_candidate(getattr(eval_result, "final_output", None)) or selected
 
+    repo_container_spec = None
+    if selected.kind == "github_repo" and tool_cfg.repo2run_enabled:
+        repo_container_spec = _run_repo2run(selected, ctx, tool_cfg)
     plan_prompt = build_tool_plan_prompt(task, selected, memory_block=memory_block)
     if should_show_prompts():
         log_event(
@@ -123,6 +127,9 @@ async def prepare_tool_plan(
     if not plan:
         log_event("TOOLS", "invalid", "tool plan output invalid", level="warn")
         return None
+
+    if repo_container_spec:
+        plan.container_spec = repo_container_spec
 
     plan = _apply_tool_defaults(plan, tool_cfg)
     if cache:
@@ -254,3 +261,27 @@ def _apply_tool_defaults(plan: ToolPlan, tool_cfg: ToolConfig) -> ToolPlan:
     if spec.limits.timeout_s is None:
         spec.limits.timeout_s = tool_cfg.default_timeout_s
     return plan
+
+
+def _run_repo2run(candidate: ToolCandidate, ctx, tool_cfg: ToolConfig):
+    from utils import log_event
+
+    runner = Repo2RunRunner(
+        repo2run_path=tool_cfg.repo2run_path,
+        work_dir=tool_cfg.repo2run_work_dir,
+        python_exe=tool_cfg.repo2run_python,
+        llm=tool_cfg.repo2run_llm,
+        prefer_existing=tool_cfg.repo2run_prefer_existing,
+        observability=getattr(ctx, "observability", None),
+    )
+    result = runner.prepare(candidate)
+    if not result:
+        log_event("TOOLS", "repo2run", "repo2run preparation failed", level="warn")
+        return None
+    log_event(
+        "TOOLS",
+        "repo2run",
+        "repo2run dockerfile ready",
+        data={"dockerfile": result.dockerfile_path},
+    )
+    return runner.to_container_spec(result)

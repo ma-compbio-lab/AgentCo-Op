@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 
-from core.contracts import EvidencePack, EvidenceRequest, ExecutionPlan, Message, TaskSpec, ToolExecutionResult, ToolPlan
+from core.contracts import (
+    EvidencePack,
+    EvidenceRequest,
+    ExecutionPlan,
+    Message,
+    TaskSpec,
+    ToolExecutionResult,
+    ToolPlan,
+)
 from core.hooks import HookManager
 from core.observability import Observability
 from core.runtime import run_agent
 from engine.protocols import ProtocolBase
-from prompts import build_evidence_prompt, build_task_prompt, format_memory_block
+from prompts import build_docker_repair_prompt, build_evidence_prompt, build_task_prompt, format_memory_block
 
 
 class ExecutionEngine:
@@ -18,6 +26,7 @@ class ExecutionEngine:
         hooks: HookManager,
         observability: Observability,
         docker_runtime: object | None = None,
+        tool_cfg: object | None = None,
         run_hooks: object | None = None,
     ) -> None:
         self.agent_pool = agent_pool
@@ -25,6 +34,7 @@ class ExecutionEngine:
         self.hooks = hooks
         self.obs = observability
         self.docker_runtime = docker_runtime
+        self.tool_cfg = tool_cfg
         self.run_hooks = run_hooks
 
     async def run(self, task: TaskSpec, plan: ExecutionPlan, ctx, session=None) -> dict:
@@ -39,7 +49,7 @@ class ExecutionEngine:
         if plan.needs_web_search and plan.evidence_requests:
             await self._run_evidence_steps(plan.evidence_requests, state, ctx, session=session)
         if plan.tool_plan:
-            await self._run_tool_plan(plan.tool_plan, state, ctx)
+            await self._run_tool_plan(task, plan.tool_plan, state, ctx)
 
         max_steps = max(plan.max_rounds, len(plan.subtasks), 1) * max(len(plan.active_agents), 1)
         log_event("ENGINE", "start", "executor started", data={"protocol": plan.protocol, "max_steps": max_steps})
@@ -164,7 +174,7 @@ class ExecutionEngine:
 
         return state
 
-    async def _run_tool_plan(self, tool_plan: ToolPlan, state: dict, ctx) -> None:
+    async def _run_tool_plan(self, task: TaskSpec, tool_plan: ToolPlan, state: dict, ctx) -> None:
         from utils import clip_text, log_event, log_section, should_show_outputs
 
         log_section("TOOLS", "Tool Execution")
@@ -178,6 +188,13 @@ class ExecutionEngine:
             log_event("TOOLS", "error", "tool execution failed", level="error", data={"error": str(exc)})
             self.hooks.on_tool_error(None, None, state, exc)
             return
+
+        if result.status != "success" and result.error_signature == "docker_build_failed":
+            result = await self._attempt_docker_repair(task, tool_plan, result, ctx, docker_runtime)
+            if not result:
+                return
+            if result.status != "success":
+                log_event("TOOLS", "error", "docker repair attempts exhausted", level="warn")
 
         if not isinstance(result, ToolExecutionResult):
             log_event("TOOLS", "error", "invalid tool execution result", level="warn")
@@ -209,6 +226,83 @@ class ExecutionEngine:
                 level="debug",
                 data={"preview": clip_text(summary)},
             )
+
+    async def _attempt_docker_repair(
+        self,
+        task: TaskSpec,
+        tool_plan: ToolPlan,
+        result: ToolExecutionResult,
+        ctx,
+        docker_runtime,
+    ):
+        from utils import clip_text, log_event, should_show_prompts
+
+        max_rounds = getattr(self.tool_cfg, "docker_repair_max_rounds", 0) if self.tool_cfg else 0
+        if max_rounds <= 0:
+            return result
+        dockerfile_path = tool_plan.container_spec.dockerfile_path
+        if not dockerfile_path:
+            return result
+        agent = self.agent_pool.get("docker_repair")
+        if agent is None:
+            return result
+        build_error = result.stderr or result.error_signature or ""
+        for attempt in range(1, max_rounds + 1):
+            try:
+                with open(dockerfile_path, "r", encoding="utf-8") as f:
+                    dockerfile_text = f.read()
+            except OSError:
+                dockerfile_text = ""
+            prompt = build_docker_repair_prompt(
+                task=task,
+                tool_plan=tool_plan.model_dump(mode="json"),
+                dockerfile_text=dockerfile_text,
+                build_error=build_error,
+            )
+            if should_show_prompts():
+                log_event(
+                    "TOOLS",
+                    "repair_prompt",
+                    "docker repair prompt preview",
+                    level="debug",
+                    data={"preview": clip_text(prompt)},
+                )
+            repair_result = await run_agent(
+                agent,
+                prompt,
+                ctx,
+                session=None,
+                workflow_name=f"docker_repair:{attempt}",
+                max_turns=4,
+                hooks=self.run_hooks,
+            )
+            dockerfile_fixed = getattr(repair_result, "final_output", "")
+            if not isinstance(dockerfile_fixed, str):
+                dockerfile_fixed = str(dockerfile_fixed)
+            dockerfile_fixed = self._sanitize_dockerfile(dockerfile_fixed)
+            if dockerfile_fixed:
+                with open(dockerfile_path, "w", encoding="utf-8") as f:
+                    f.write(dockerfile_fixed + "\n")
+            log_event(
+                "TOOLS",
+                "repair_attempt",
+                "retrying docker build after repair",
+                data={"attempt": attempt},
+            )
+            retry = docker_runtime.execute(tool_plan, run_id=getattr(ctx, "run_id", "run"))
+            if retry.status == "success":
+                return retry
+            build_error = retry.stderr or retry.error_signature or build_error
+            result = retry
+        return result
+
+    @staticmethod
+    def _sanitize_dockerfile(text: str) -> str:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.replace("dockerfile", "").replace("Dockerfile", "")
+        return cleaned.strip()
 
     async def _run_evidence_steps(self, requests: list[EvidenceRequest], state: dict, ctx, session=None) -> None:
         from utils import clip_text, log_event, should_show_outputs, should_show_prompts

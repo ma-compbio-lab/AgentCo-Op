@@ -22,6 +22,8 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - OpenAI Agents SDK (`openai-agents`).
 - Optional memory: `memori` + `sqlalchemy`.
 - Optional tool execution: Docker Engine for sandboxed tool runs.
+- Optional Repo2Run: `git+https://github.com/bytedance/Repo2Run.git`.
+  - macOS: install Docker Desktop and ensure `docker` is available on PATH.
 
 Install:
 
@@ -117,6 +119,7 @@ Automatic gating uses heuristics (latest/current/2025/etc). You can also set
 The orchestrated method can discover external tools or repos and (optionally)
 execute them inside a Docker sandbox. Tool discovery uses dedicated agents:
 `tool_scout` -> `tool_evaluator` -> `tool_doc_synth`.
+Repo execution can optionally use Repo2Run to generate Dockerfiles.
 
 Controls:
 
@@ -137,6 +140,17 @@ python run.py \
   task.goal="Find an existing Python package to extract tables from PDFs and outline a runnable plan."
 ```
 
+Repo example (Dockerfile via Repo2Run):
+
+```bash
+python run.py \
+  method=orchestrated \
+  tool.enabled=true \
+  tool.repo2run_enabled=true \
+  task.allow_tool_search=on \
+  task.goal="Use https://github.com/psf/requests and describe how to run its tests."
+```
+
 Docker defaults:
 
 ```bash
@@ -144,6 +158,22 @@ tool.use_docker=true
 tool.base_image=python:3.10-slim
 tool.run_allow_net=false
 tool.default_timeout_s=300
+tool.docker_repair_max_rounds=2
+```
+
+Repo2Run (optional):
+
+```bash
+tool.repo2run_enabled=true
+tool.repo2run_path=third_party/Repo2Run
+tool.repo2run_llm=gpt-4o-mini
+```
+
+Setup:
+
+```bash
+git clone https://github.com/bytedance/Repo2Run third_party/Repo2Run
+pip install -r third_party/Repo2Run/requirements.txt
 ```
 
 Notes:
@@ -151,6 +181,8 @@ Notes:
 - If `tool.enabled=false`, tool discovery is skipped.
 - Tool execution results are injected into the engine state as a message.
 - The default Dockerfile only installs PyPI/CLI tools; repo execution needs a ToolPlan with a Dockerfile or setup commands.
+- Repo2Run requires cloning the repo to `tool.repo2run_path` and installing its dependencies.
+- Docker build failures trigger a bounded repair loop (`tool.docker_repair_max_rounds`).
 
 ## Memory (Memori)
 

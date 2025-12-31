@@ -63,6 +63,7 @@ class DockerRuntime:
             dockerfile_path=dockerfile_path,
             context_dir=context_dir,
             log_dir=run_root,
+            build_args=plan.container_spec.build_args,
             allow_net=plan.container_spec.build_allow_net and self.build_allow_net,
         )
         if build_result is not None:
@@ -72,7 +73,8 @@ class DockerRuntime:
         if not commands:
             return ToolExecutionResult(status="fail", error_signature="no_commands")
 
-        run_script = self._write_run_script(run_root, commands)
+        workdir = plan.container_spec.workdir or "/workspace"
+        run_script = self._write_run_script(run_root, commands, workdir=workdir)
         return self._run_container(
             image_tag=image_tag,
             run_root=run_root,
@@ -81,6 +83,7 @@ class DockerRuntime:
             limits=self._merge_limits(plan.container_spec.limits),
             allow_net=plan.container_spec.run_allow_net and self.run_allow_net,
             env=plan.container_spec.env,
+            workdir=workdir,
         )
 
     def _resolve_container_paths(self, plan: ToolPlan, run_root: str) -> tuple[str, str]:
@@ -123,6 +126,7 @@ class DockerRuntime:
         dockerfile_path: str,
         context_dir: str,
         log_dir: str,
+        build_args: dict[str, str],
         allow_net: bool,
     ) -> ToolExecutionResult | None:
         cmd = [
@@ -133,6 +137,9 @@ class DockerRuntime:
             "-f",
             dockerfile_path,
         ]
+        if build_args:
+            for key, value in build_args.items():
+                cmd.extend(["--build-arg", f"{key}={value}"])
         if not allow_net:
             cmd.extend(["--network", "none"])
         cmd.append(context_dir)
@@ -170,6 +177,7 @@ class DockerRuntime:
         limits: ContainerLimits,
         allow_net: bool,
         env: dict[str, str],
+        workdir: str,
     ) -> ToolExecutionResult:
         container_name = f"{image_tag}-run"
         cmd = [
@@ -179,9 +187,9 @@ class DockerRuntime:
             "--name",
             container_name,
             "--workdir",
-            "/workspace",
+            workdir,
             "-v",
-            f"{run_root}:/workspace",
+            f"{run_root}:/agent",
             "-v",
             f"{outputs_dir}:/outputs",
         ]
@@ -235,14 +243,15 @@ class DockerRuntime:
         )
 
     @staticmethod
-    def _write_run_script(run_root: str, commands: list[str]) -> str:
+    def _write_run_script(run_root: str, commands: list[str], *, workdir: str) -> str:
         path = os.path.join(run_root, "run.sh")
         with open(path, "w", encoding="utf-8") as f:
             f.write("#!/usr/bin/env bash\nset -e\n")
+            f.write(f"cd {workdir}\n")
             for command in commands:
                 f.write(command)
                 f.write("\n")
-        return "/workspace/run.sh"
+        return "/agent/run.sh"
 
     @staticmethod
     def _collect_artifacts(outputs_dir: str) -> list[str]:

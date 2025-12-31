@@ -31,12 +31,14 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - `core/`: contracts, registry, context, runtime, hooks, judge, safety, budget, cache, memory.
 - `core/docker_runtime.py`: Docker build/run sandbox for tool execution.
 - `core/tool_intelligence.py`: tool discovery + plan synthesis orchestration.
+- `core/repo2run_runtime.py`: Repo2Run integration and Dockerfile generation.
 - `engine/`: protocols and executor.
 - `engine/tool_runtime.py`: tool execution with allowlist and hooks.
 - `app_agents/`: planner/worker/judge/io agent builders and factory (named to avoid SDK import collision).
 - `app_agents/tool_scout.py`: tool/repo discovery agent (web search).
 - `app_agents/tool_evaluator.py`: tool selection agent.
 - `app_agents/tool_doc_synth.py`: tool plan synthesis agent.
+- `app_agents/docker_repair.py`: Dockerfile repair agent.
 - `methods/`: baseline, sequential, orchestrated method implementations.
 - `eval/`: harness and metrics for batch evaluation.
 - `conf/`: Hydra YAML configs for single runs and eval.
@@ -97,6 +99,8 @@ HookManager supports:
   - `task.allow_tool_search=auto` (auto|on|off)
   - `task.tool_max_candidates=5`
   - `task.tool_max_search_queries=3`
+  - `tool.repo2run_enabled=true` to generate Dockerfiles for GitHub repos.
+  - `tool.docker_repair_max_rounds=2` to retry Dockerfile fixes on build failures.
 
 ## Model Backends
 - openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
@@ -107,7 +111,8 @@ HookManager supports:
 - Engine runs protocol steps in code and calls SDK agents via Runner.
 - Web search is handled by a dedicated Researcher agent that returns EvidencePack summaries and citations.
 - Tool discovery uses `tool_scout`/`tool_evaluator`/`tool_doc_synth` agents and can execute plans in Docker.
-- Docker runtime auto-generates a minimal Dockerfile for pip installs; repo execution should supply a Dockerfile/context.
+- Docker runtime auto-generates a minimal Dockerfile for pip installs; repo execution uses Repo2Run when enabled.
+- Docker build failures trigger a bounded LLM repair loop before falling back to manual execution.
 - Protocols and hooks are minimal but structured for extension.
 - Hydra config files keep experiments reproducible and editable as YAML.
 - Hydra entrypoints normalize configs into typed dataclasses for safer access.
@@ -147,3 +152,4 @@ HookManager supports:
 - 2025-12-29: expanded README with full feature usage and added inline code comments for clarity.
 - 2025-12-29: hardened executor agent fallback, spec evidence cache key, and memory init logging; deduped requirements.
 - 2025-12-30: added tool discovery agents, tool plan orchestration, and Docker sandbox execution support.
+- 2025-12-30: added Repo2Run integration, Dockerfile repair retries, and Docker workdir support.
