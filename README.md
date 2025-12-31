@@ -11,6 +11,7 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - Web search as evidence (researcher agent only) with caching.
 - Spec enrichment: auto-generate missing constraints/success criteria.
 - Auto repair: judge failure -> repair -> re-judge (multi-round).
+- Tool discovery + optional Docker sandbox execution (tool/repo planning).
 - Optional Memori-backed long-term memory (per-agent + global).
 - Hydra configs and CLI overrides for experiments.
 - Colored debug logging with prompt/output previews.
@@ -20,6 +21,7 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - Python 3.10 or 3.11 recommended.
 - OpenAI Agents SDK (`openai-agents`).
 - Optional memory: `memori` + `sqlalchemy`.
+- Optional tool execution: Docker Engine for sandboxed tool runs.
 
 Install:
 
@@ -110,6 +112,46 @@ search the web directly.
 Automatic gating uses heuristics (latest/current/2025/etc). You can also set
 `needs_web_search` via planning or by task wording.
 
+## Tool Discovery + Docker Sandbox
+
+The orchestrated method can discover external tools or repos and (optionally)
+execute them inside a Docker sandbox. Tool discovery uses dedicated agents:
+`tool_scout` -> `tool_evaluator` -> `tool_doc_synth`.
+
+Controls:
+
+```bash
+tool.enabled=true
+task.allow_tool_search=auto   # auto | on | off
+task.tool_max_candidates=5
+task.tool_max_search_queries=3
+```
+
+Example:
+
+```bash
+python run.py \
+  method=orchestrated \
+  tool.enabled=true \
+  task.allow_tool_search=on \
+  task.goal="Find an existing Python package to extract tables from PDFs and outline a runnable plan."
+```
+
+Docker defaults:
+
+```bash
+tool.use_docker=true
+tool.base_image=python:3.10-slim
+tool.run_allow_net=false
+tool.default_timeout_s=300
+```
+
+Notes:
+- Docker must be installed and available on PATH.
+- If `tool.enabled=false`, tool discovery is skipped.
+- Tool execution results are injected into the engine state as a message.
+- The default Dockerfile only installs PyPI/CLI tools; repo execution needs a ToolPlan with a Dockerfile or setup commands.
+
 ## Memory (Memori)
 
 Memori-backed long-term memory is optional and off by default.
@@ -192,4 +234,4 @@ conf/               # Hydra configs
 - If you see `no matches found: task.constraints=[]` in zsh, quote the override.
 - If memory init fails, ensure `memori` and `sqlalchemy` are installed.
 - If web search is not available, confirm your OpenAI account has tool access.
-
+- If tool execution fails, verify Docker is installed and `tool.enabled=true`.

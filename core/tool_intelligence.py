@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from config import ToolConfig
+from core.contracts import TaskSpec, ToolCandidate, ToolCandidates, ToolPlan
+from core.runtime import run_agent
+from prompts import (
+    build_tool_eval_prompt,
+    build_tool_plan_prompt,
+    build_tool_scout_prompt,
+    format_memory_block,
+)
+
+
+async def prepare_tool_plan(
+    task: TaskSpec,
+    ctx,
+    agent_pool: dict[str, object],
+    *,
+    session=None,
+    run_hooks=None,
+    tool_cfg: ToolConfig | None = None,
+) -> ToolPlan | None:
+    from utils import clip_text, log_event, log_section, should_show_prompts
+
+    tool_cfg = tool_cfg or ToolConfig()
+    hint = _extract_tool_hint(task)
+
+    if not tool_cfg.enabled:
+        return None
+    if not hint and not _should_search_tools(task):
+        return None
+
+    if "tool_doc_synth" not in agent_pool:
+        log_event("TOOLS", "skip", "tool_doc_synth agent not available", level="warn")
+        return None
+
+    cache_key = _tool_cache_key(task, hint)
+    cache = getattr(ctx, "cache", None)
+    cached_plan = _coerce_tool_plan(cache.get(cache_key) if cache else None)
+    if cached_plan:
+        log_event("TOOLS", "cache", "tool plan cache hit", data={"tool": cached_plan.selected_tool.name})
+        return _apply_tool_defaults(cached_plan, tool_cfg)
+
+    log_section("TOOLS", "Tool Discovery")
+    memory_block = _build_memory_block(task, ctx)
+
+    candidates: list[ToolCandidate] = []
+    if hint:
+        candidates = [hint]
+    elif "tool_scout" in agent_pool:
+        scout_prompt = build_tool_scout_prompt(task, memory_block=memory_block)
+        if should_show_prompts():
+            log_event(
+                "TOOLS",
+                "prompt",
+                "tool scout prompt preview",
+                level="debug",
+                data={"preview": clip_text(scout_prompt)},
+            )
+        scout_result = await run_agent(
+            agent_pool["tool_scout"],
+            scout_prompt,
+            ctx,
+            session=session,
+            workflow_name="tool_scout",
+            max_turns=6,
+            hooks=run_hooks,
+        )
+        candidates = _coerce_candidates(getattr(scout_result, "final_output", None))
+
+    if not candidates:
+        log_event("TOOLS", "empty", "no tool candidates found", level="warn")
+        return None
+
+    max_candidates = max(1, task.tool_max_candidates)
+    candidates = candidates[:max_candidates]
+    selected = candidates[0]
+
+    if len(candidates) > 1 and "tool_evaluator" in agent_pool:
+        eval_prompt = build_tool_eval_prompt(task, candidates, memory_block=memory_block)
+        if should_show_prompts():
+            log_event(
+                "TOOLS",
+                "prompt",
+                "tool evaluator prompt preview",
+                level="debug",
+                data={"preview": clip_text(eval_prompt)},
+            )
+        eval_result = await run_agent(
+            agent_pool["tool_evaluator"],
+            eval_prompt,
+            ctx,
+            session=session,
+            workflow_name="tool_eval",
+            max_turns=4,
+            hooks=run_hooks,
+        )
+        selected = _coerce_candidate(getattr(eval_result, "final_output", None)) or selected
+
+    plan_prompt = build_tool_plan_prompt(task, selected, memory_block=memory_block)
+    if should_show_prompts():
+        log_event(
+            "TOOLS",
+            "prompt",
+            "tool plan prompt preview",
+            level="debug",
+            data={"preview": clip_text(plan_prompt)},
+        )
+    plan_result = await run_agent(
+        agent_pool["tool_doc_synth"],
+        plan_prompt,
+        ctx,
+        session=session,
+        workflow_name="tool_plan",
+        max_turns=6,
+        hooks=run_hooks,
+    )
+    plan = _coerce_tool_plan(getattr(plan_result, "final_output", None))
+    if not plan:
+        log_event("TOOLS", "invalid", "tool plan output invalid", level="warn")
+        return None
+
+    plan = _apply_tool_defaults(plan, tool_cfg)
+    if cache:
+        cache.set(cache_key, plan)
+    log_event(
+        "TOOLS",
+        "plan",
+        "tool plan ready",
+        data={"tool": plan.selected_tool.name, "install": plan.install_strategy},
+    )
+    return plan
+
+
+def _build_memory_block(task: TaskSpec, ctx) -> str | None:
+    memory = getattr(ctx, "memory", None)
+    if not memory or not memory.enabled:
+        return None
+    recall = memory.recall_global(query=f"{task.goal} tool or repo plan", k=memory.top_k)
+    return format_memory_block(recall, title="Tool Memory")
+
+
+def _should_search_tools(task: TaskSpec) -> bool:
+    mode = (task.allow_tool_search or "auto").lower()
+    if mode == "off":
+        return False
+    if mode == "on":
+        return True
+    if _constraints_block_tools(task.constraints):
+        return False
+    text = " ".join([task.goal, *task.constraints, *task.success_criteria]).lower()
+    keywords = (
+        "library",
+        "package",
+        "pypi",
+        "github",
+        "repo",
+        "repository",
+        "cli",
+        "tool",
+        "install",
+        "docker",
+        "use",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _constraints_block_tools(constraints: list[str]) -> bool:
+    text = " ".join(constraints).lower()
+    blocked = ("no external", "do not use external", "no dependencies", "without external")
+    return any(term in text for term in blocked)
+
+
+def _extract_tool_hint(task: TaskSpec) -> ToolCandidate | None:
+    text = " ".join([task.goal, *task.constraints, *task.success_criteria])
+    match = re.search(r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", text)
+    if match:
+        org, repo = match.groups()
+        url = f"https://github.com/{org}/{repo}"
+        return ToolCandidate(kind="github_repo", name=f"{org}/{repo}", repo_url=url)
+    match = re.search(r"pip install ([A-Za-z0-9_.-]+)", text)
+    if match:
+        name = match.group(1)
+        return ToolCandidate(kind="pypi", name=name)
+    return None
+
+
+def _tool_cache_key(task: TaskSpec, hint: ToolCandidate | None) -> str:
+    payload = {
+        "goal": task.goal,
+        "constraints": task.constraints,
+        "criteria": task.success_criteria,
+        "hint": hint.model_dump(mode="json") if hint else None,
+    }
+    return f"tool_plan:{json.dumps(payload, sort_keys=True, ensure_ascii=True)}"
+
+
+def _coerce_candidates(obj: Any) -> list[ToolCandidate]:
+    if isinstance(obj, ToolCandidates):
+        return obj.candidates
+    if isinstance(obj, list):
+        out: list[ToolCandidate] = []
+        for item in obj:
+            candidate = _coerce_candidate(item)
+            if candidate:
+                out.append(candidate)
+        return out
+    if isinstance(obj, dict):
+        try:
+            return ToolCandidates(**obj).candidates
+        except Exception:
+            return []
+    return []
+
+
+def _coerce_candidate(obj: Any) -> ToolCandidate | None:
+    if isinstance(obj, ToolCandidate):
+        return obj
+    if isinstance(obj, dict):
+        try:
+            return ToolCandidate(**obj)
+        except Exception:
+            return None
+    return None
+
+
+def _coerce_tool_plan(obj: Any) -> ToolPlan | None:
+    if isinstance(obj, ToolPlan):
+        return obj
+    if isinstance(obj, dict):
+        try:
+            return ToolPlan(**obj)
+        except Exception:
+            return None
+    return None
+
+
+def _apply_tool_defaults(plan: ToolPlan, tool_cfg: ToolConfig) -> ToolPlan:
+    spec = plan.container_spec
+    if not spec.base_image:
+        spec.base_image = tool_cfg.base_image
+    spec.build_allow_net = spec.build_allow_net and tool_cfg.build_allow_net
+    spec.run_allow_net = spec.run_allow_net and tool_cfg.run_allow_net
+    if spec.limits.cpus is None:
+        spec.limits.cpus = tool_cfg.default_cpus
+    if spec.limits.memory_mb is None:
+        spec.limits.memory_mb = tool_cfg.default_memory_mb
+    if spec.limits.pids is None:
+        spec.limits.pids = tool_cfg.default_pids
+    if spec.limits.timeout_s is None:
+        spec.limits.timeout_s = tool_cfg.default_timeout_s
+    return plan

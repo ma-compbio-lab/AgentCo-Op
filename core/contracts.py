@@ -21,6 +21,9 @@ class TaskSpec(BaseModel):
     output_modalities: list[str] = Field(default_factory=lambda: ["text"])
     allow_web_search_for_spec: Literal["auto", "on", "off"] = "auto"
     spec_max_search_queries: int = 2
+    allow_tool_search: Literal["auto", "on", "off"] = "auto"
+    tool_max_candidates: int = 5
+    tool_max_search_queries: int = 3
     spec_source: Literal["user", "auto", "mixed"] = "user"
     spec_confidence: float = 0.0
     spec_notes: Optional[str] = None
@@ -67,6 +70,61 @@ class EvidencePack(BaseModel):
     citations: list[EvidenceItem] = Field(default_factory=list)
 
 
+class ToolCandidate(BaseModel):
+    kind: Literal["pypi", "github_repo", "cli", "api"]
+    name: str
+    version: Optional[str] = None
+    repo_url: Optional[str] = None
+    commit_sha: Optional[str] = None
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    license: Optional[str] = None
+    maintained_score: Optional[float] = None
+    risk_flags: list[str] = Field(default_factory=list)
+
+
+class ToolCandidates(BaseModel):
+    candidates: list[ToolCandidate] = Field(default_factory=list)
+
+
+class ContainerLimits(BaseModel):
+    cpus: Optional[float] = None
+    memory_mb: Optional[int] = None
+    pids: Optional[int] = None
+    timeout_s: Optional[int] = None
+
+
+class ContainerSpec(BaseModel):
+    base_image: str = "python:3.10-slim"
+    dockerfile_path: Optional[str] = None
+    context_dir: Optional[str] = None
+    build_args: dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict)
+    limits: ContainerLimits = Field(default_factory=ContainerLimits)
+    build_allow_net: bool = True
+    run_allow_net: bool = False
+
+
+class ToolPlan(BaseModel):
+    selected_tool: ToolCandidate
+    docs_links: list[str] = Field(default_factory=list)
+    install_strategy: str = "pip"
+    container_spec: ContainerSpec = Field(default_factory=ContainerSpec)
+    run_commands: list[str] = Field(default_factory=list)
+    verify_commands: list[str] = Field(default_factory=list)
+    expected_artifacts: list[str] = Field(default_factory=list)
+
+
+class ToolExecutionResult(BaseModel):
+    status: Literal["success", "fail"]
+    stdout: str = ""
+    stderr: str = ""
+    stdout_path: Optional[str] = None
+    stderr_path: Optional[str] = None
+    artifacts: list[str] = Field(default_factory=list)
+    error_signature: Optional[str] = None
+    cost: dict[str, Any] = Field(default_factory=dict)
+
+
 class Message(BaseModel):
     msg_id: str = Field(default_factory=lambda: str(uuid4()))
     ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -98,6 +156,7 @@ class ExecutionPlan(BaseModel):
     edges: list[Edge] = Field(default_factory=list)
     needs_web_search: bool = False
     evidence_requests: list[EvidenceRequest] = Field(default_factory=list)
+    tool_plan: Optional[ToolPlan] = None
     acceptance_tests: list[str] = Field(default_factory=list)
     budget_tokens: int = 8000
     model_hint: Optional[str] = None

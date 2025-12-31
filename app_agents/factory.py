@@ -6,6 +6,9 @@ from app_agents.orchestrator import build_planner_agent
 from app_agents.researcher import build_researcher_agent
 from app_agents.spec_critic import build_spec_critic_agent
 from app_agents.spec_designer import build_spec_designer_agent
+from app_agents.tool_doc_synth import build_tool_doc_synth_agent
+from app_agents.tool_evaluator import build_tool_evaluator_agent
+from app_agents.tool_scout import build_tool_scout_agent
 from app_agents.workers import build_worker_agent
 from core.contracts import AgentSpec
 from core.registry import Registry
@@ -80,6 +83,30 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
         input_types=["text"],
         output_types=["json"],
     )
+    tool_scout_spec = AgentSpec(
+        agent_id="tool_scout",
+        name="ToolScout",
+        description="Finds tools and repositories relevant to a task.",
+        capabilities=["tool_search"],
+        input_types=["text"],
+        output_types=["json"],
+    )
+    tool_evaluator_spec = AgentSpec(
+        agent_id="tool_evaluator",
+        name="ToolEvaluator",
+        description="Selects the best tool candidate.",
+        capabilities=["tool_eval"],
+        input_types=["text"],
+        output_types=["json"],
+    )
+    tool_doc_synth_spec = AgentSpec(
+        agent_id="tool_doc_synth",
+        name="ToolDocSynth",
+        description="Synthesizes runnable tool plans.",
+        capabilities=["tool_plan"],
+        input_types=["text"],
+        output_types=["json"],
+    )
 
     registry.register_agent(planner_spec)
     registry.register_agent(worker_spec)
@@ -89,6 +116,9 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
     registry.register_agent(researcher_spec)
     registry.register_agent(spec_designer_spec)
     registry.register_agent(spec_critic_spec)
+    registry.register_agent(tool_scout_spec)
+    registry.register_agent(tool_evaluator_spec)
+    registry.register_agent(tool_doc_synth_spec)
 
     agent_pool["planner"] = build_planner_agent(routing.planner)
     agent_pool["worker"] = build_worker_agent(routing.worker)
@@ -98,5 +128,8 @@ def build_default_agents(routing: ModelRouting) -> tuple[dict[str, object], Regi
     agent_pool["researcher"] = build_researcher_agent(routing.worker)
     agent_pool["spec_designer"] = build_spec_designer_agent(routing.planner)
     agent_pool["spec_critic"] = build_spec_critic_agent(routing.judge)
+    agent_pool["tool_scout"] = build_tool_scout_agent(routing.worker)
+    agent_pool["tool_evaluator"] = build_tool_evaluator_agent(routing.judge)
+    agent_pool["tool_doc_synth"] = build_tool_doc_synth_agent(routing.planner)
 
     return agent_pool, registry

@@ -13,6 +13,9 @@ class TaskConfig:
     output_modalities: list[str] = field(default_factory=lambda: ["text"])
     allow_web_search_for_spec: str = "auto"
     spec_max_search_queries: int = 2
+    allow_tool_search: str = "auto"
+    tool_max_candidates: int = 5
+    tool_max_search_queries: int = 3
 
 
 @dataclass
@@ -38,6 +41,20 @@ class MemoryConfig:
 
 
 @dataclass
+class ToolConfig:
+    enabled: bool = False
+    use_docker: bool = True
+    base_image: str = "python:3.10-slim"
+    build_allow_net: bool = True
+    run_allow_net: bool = False
+    default_timeout_s: int = 300
+    default_cpus: float | None = None
+    default_memory_mb: int | None = None
+    default_pids: int | None = None
+    run_dir: str = "logs/tool_runs"
+
+
+@dataclass
 class AppConfig:
     task: TaskConfig = field(default_factory=TaskConfig)
     method: str = "orchestrated"
@@ -46,6 +63,7 @@ class AppConfig:
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    tool: ToolConfig = field(default_factory=ToolConfig)
 
 
 @dataclass
@@ -75,4 +93,5 @@ class EvalConfig:
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    tool: ToolConfig = field(default_factory=ToolConfig)
     max_samples: int | None = None

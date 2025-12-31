@@ -29,6 +29,18 @@ memory:
   store_judge_reports: true
   auto_build: false
 
+tool:
+  enabled: false
+  use_docker: true
+  base_image: python:3.10-slim
+  build_allow_net: true
+  run_allow_net: false
+  default_timeout_s: 300
+  default_cpus: null
+  default_memory_mb: null
+  default_pids: null
+  run_dir: logs/tool_runs
+
 model:
   backend: openai
   name: gpt-4o-mini

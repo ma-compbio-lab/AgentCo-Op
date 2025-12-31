@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from app_agents.factory import build_default_agents
-from config import MemoryConfig, RepairConfig
+from config import MemoryConfig, RepairConfig, ToolConfig
 from core.budget import BudgetRouter
 from core.cache import Cache
 from core.context import AppContext
+from core.docker_runtime import DockerRuntime
 from core.hooks import HookManager
 from core.memory import Memory
 from core.observability import Observability
@@ -27,6 +28,8 @@ class Runtime:
     session: object | None
     run_hooks: object | None
     repair: RepairConfig
+    tool_cfg: ToolConfig
+    docker_runtime: DockerRuntime | None
 
 
 def build_runtime(
@@ -34,6 +37,7 @@ def build_runtime(
     log_dir: str,
     repair: RepairConfig | None = None,
     memory_cfg: MemoryConfig | None = None,
+    tool_cfg: ToolConfig | None = None,
 ) -> Runtime:
     from utils import log_event
 
@@ -44,6 +48,24 @@ def build_runtime(
     budget_router = BudgetRouter(model_routing)
     cache = Cache()
     safety = SafetyGate()
+    tool_cfg = tool_cfg or ToolConfig()
+    docker_runtime = None
+    if tool_cfg.enabled and tool_cfg.use_docker:
+        docker_runtime = DockerRuntime(
+            log_dir=log_dir,
+            run_dir=tool_cfg.run_dir,
+            default_base_image=tool_cfg.base_image,
+            default_limits={
+                "cpus": tool_cfg.default_cpus,
+                "memory_mb": tool_cfg.default_memory_mb,
+                "pids": tool_cfg.default_pids,
+                "timeout_s": tool_cfg.default_timeout_s,
+            },
+            build_allow_net=tool_cfg.build_allow_net,
+            run_allow_net=tool_cfg.run_allow_net,
+            observability=observability,
+            hooks=hooks,
+        )
 
     run_id = str(uuid4())
     session_id = run_id
@@ -66,6 +88,7 @@ def build_runtime(
         observability=observability,
         run_id=run_id,
         session_id=session_id,
+        docker_runtime=docker_runtime,
     )
     log_event(
         "RUNTIME",
@@ -84,4 +107,6 @@ def build_runtime(
         session=None,
         run_hooks=None,
         repair=repair or RepairConfig(),
+        tool_cfg=tool_cfg,
+        docker_runtime=docker_runtime,
     )

@@ -12,6 +12,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
   - Execution Engine: runs protocols in code and invokes SDK agents per step.
   - Judge: uses SDK judge + aggregator agents to verify and finalize output.
 - Spec Enrichment: fills missing constraints/success criteria via spec agents before planning.
+- Tool Intelligence: optional tool/repo discovery + plan synthesis before execution.
 - Cross-cutting services:
   - Registry: agent capability catalog used for routing.
   - BudgetRouter: model routing by role and budget.
@@ -28,9 +29,14 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - `prompts.py`: prompt construction helpers.
 - `utils.py`: JSONL logging and time helpers.
 - `core/`: contracts, registry, context, runtime, hooks, judge, safety, budget, cache, memory.
+- `core/docker_runtime.py`: Docker build/run sandbox for tool execution.
+- `core/tool_intelligence.py`: tool discovery + plan synthesis orchestration.
 - `engine/`: protocols and executor.
 - `engine/tool_runtime.py`: tool execution with allowlist and hooks.
 - `app_agents/`: planner/worker/judge/io agent builders and factory (named to avoid SDK import collision).
+- `app_agents/tool_scout.py`: tool/repo discovery agent (web search).
+- `app_agents/tool_evaluator.py`: tool selection agent.
+- `app_agents/tool_doc_synth.py`: tool plan synthesis agent.
 - `methods/`: baseline, sequential, orchestrated method implementations.
 - `eval/`: harness and metrics for batch evaluation.
 - `conf/`: Hydra YAML configs for single runs and eval.
@@ -42,6 +48,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - Message: standardized inter-agent envelope.
 - ExecutionPlan/SubTask: protocol + task DAG + constraints + model_hint/meta (edges as Edge objects).
 - EvidenceRequest/EvidencePack: web search inputs and structured evidence summaries + citations.
+- ToolCandidate/ToolPlan/ToolExecutionResult: tool discovery candidates, runnable plans, and execution results.
 - Memory items: stored via Memori in agent/global scopes (see core/memory.py).
 - JudgeReport: pass/fail, score, issues, optional patch.
 - TraceEvent: event stream for observability.
@@ -49,11 +56,13 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 ## Execution Flow
 1. CLI builds TaskSpec and runtime services (context, cache, registry, budget).
 2. Spec enrichment fills missing constraints/success criteria (may use web search) and updates TaskSpec.
-3. Orchestrator injects global memory hints into planning (when enabled) and produces an ExecutionPlan.
-4. Execution Engine runs evidence steps (if requested), injects per-agent memory, and executes protocol steps.
-5. Judge runs SDK judge and aggregator agents, returning final output.
-6. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
-7. Judge writes success/failure summaries into global memory when enabled.
+3. Tool Intelligence (optional) discovers tools and synthesizes a ToolPlan (cached).
+4. Orchestrator injects global memory hints into planning (when enabled) and produces an ExecutionPlan.
+5. Execution Engine runs evidence steps (if requested), executes ToolPlan in Docker (if enabled),
+   injects per-agent memory, and executes protocol steps.
+6. Judge runs SDK judge and aggregator agents, returning final output.
+7. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
+8. Judge writes success/failure summaries into global memory when enabled.
 
 ## Protocols
 - pipeline: sequential subtask execution.
@@ -83,6 +92,11 @@ HookManager supports:
 - Spec enrichment:
   - `task.allow_web_search_for_spec=auto` (auto|on|off)
   - `task.spec_max_search_queries=2`
+- Tool discovery:
+  - `tool.enabled=true`
+  - `task.allow_tool_search=auto` (auto|on|off)
+  - `task.tool_max_candidates=5`
+  - `task.tool_max_search_queries=3`
 
 ## Model Backends
 - openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
@@ -92,6 +106,8 @@ HookManager supports:
 - Planner outputs ExecutionPlan via structured outputs.
 - Engine runs protocol steps in code and calls SDK agents via Runner.
 - Web search is handled by a dedicated Researcher agent that returns EvidencePack summaries and citations.
+- Tool discovery uses `tool_scout`/`tool_evaluator`/`tool_doc_synth` agents and can execute plans in Docker.
+- Docker runtime auto-generates a minimal Dockerfile for pip installs; repo execution should supply a Dockerfile/context.
 - Protocols and hooks are minimal but structured for extension.
 - Hydra config files keep experiments reproducible and editable as YAML.
 - Hydra entrypoints normalize configs into typed dataclasses for safer access.
@@ -130,3 +146,4 @@ HookManager supports:
 - 2025-12-29: added spec enrichment with optional web search when constraints/criteria are missing.
 - 2025-12-29: expanded README with full feature usage and added inline code comments for clarity.
 - 2025-12-29: hardened executor agent fallback, spec evidence cache key, and memory init logging; deduped requirements.
+- 2025-12-30: added tool discovery agents, tool plan orchestration, and Docker sandbox execution support.

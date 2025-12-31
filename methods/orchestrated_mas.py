@@ -4,6 +4,7 @@ from core.contracts import Message, TaskSpec
 from core.judge import Judge
 from core.orchestrator import Orchestrator
 from core.runtime import run_agent
+from core.tool_intelligence import prepare_tool_plan
 from core.spec_enricher import ensure_spec
 from engine.executor import ExecutionEngine
 from engine.protocols import default_protocols
@@ -27,6 +28,16 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     )
     log_event("METHOD", "start", "orchestrated run", data={"task_id": task.task_id})
     plan = await orchestrator.plan(task, runtime.context, session=runtime.session)
+    tool_plan = await prepare_tool_plan(
+        task,
+        runtime.context,
+        runtime.agent_pool,
+        session=runtime.session,
+        run_hooks=runtime.run_hooks,
+        tool_cfg=runtime.tool_cfg,
+    )
+    if tool_plan:
+        plan.tool_plan = tool_plan
     template_sections = derive_output_template(task, runtime.repair.template_mode)
     if template_sections:
         if runtime.repair.template_mode == "force" or "output_template" not in plan.meta:
@@ -37,6 +48,7 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
         protocols=default_protocols(),
         hooks=runtime.hooks,
         observability=runtime.observability,
+        docker_runtime=runtime.docker_runtime,
         run_hooks=runtime.run_hooks,
     )
     state = await engine.run(task, plan, runtime.context, session=runtime.session)

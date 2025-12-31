@@ -20,3 +20,4 @@ class AppContext:
     observability: Observability
     run_id: str
     session_id: str
+    docker_runtime: object | None = None

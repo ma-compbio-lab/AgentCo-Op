@@ -2,7 +2,7 @@ import asyncio
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
-from config import RepairConfig
+from config import RepairConfig, ToolConfig
 from core.contracts import ExecutionPlan, JudgeReport, Message, SubTask, TaskSpec
 from core.hooks import HookManager
 from core.observability import Observability
@@ -53,6 +53,8 @@ def test_orchestrated_repair_loop_injects_issues(monkeypatch):
             session=None,
             run_hooks=None,
             repair=RepairConfig(enabled=True, max_rounds=1, template_mode="off"),
+            tool_cfg=ToolConfig(enabled=False),
+            docker_runtime=None,
         )
         task = TaskSpec(goal="go", constraints=["c1"], success_criteria=["s1"])
         result = asyncio.run(orchestrated_mas.run(task, runtime))

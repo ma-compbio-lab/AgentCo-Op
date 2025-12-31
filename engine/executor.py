@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from core.contracts import EvidencePack, EvidenceRequest, ExecutionPlan, Message, TaskSpec
+from core.contracts import EvidencePack, EvidenceRequest, ExecutionPlan, Message, TaskSpec, ToolExecutionResult, ToolPlan
 from core.hooks import HookManager
 from core.observability import Observability
 from core.runtime import run_agent
@@ -17,12 +17,14 @@ class ExecutionEngine:
         protocols: dict[str, ProtocolBase],
         hooks: HookManager,
         observability: Observability,
+        docker_runtime: object | None = None,
         run_hooks: object | None = None,
     ) -> None:
         self.agent_pool = agent_pool
         self.protocols = protocols
         self.hooks = hooks
         self.obs = observability
+        self.docker_runtime = docker_runtime
         self.run_hooks = run_hooks
 
     async def run(self, task: TaskSpec, plan: ExecutionPlan, ctx, session=None) -> dict:
@@ -36,6 +38,8 @@ class ExecutionEngine:
         # Evidence is collected once up front to avoid repeated web searches per step.
         if plan.needs_web_search and plan.evidence_requests:
             await self._run_evidence_steps(plan.evidence_requests, state, ctx, session=session)
+        if plan.tool_plan:
+            await self._run_tool_plan(plan.tool_plan, state, ctx)
 
         max_steps = max(plan.max_rounds, len(plan.subtasks), 1) * max(len(plan.active_agents), 1)
         log_event("ENGINE", "start", "executor started", data={"protocol": plan.protocol, "max_steps": max_steps})
@@ -159,6 +163,52 @@ class ExecutionEngine:
                 break
 
         return state
+
+    async def _run_tool_plan(self, tool_plan: ToolPlan, state: dict, ctx) -> None:
+        from utils import clip_text, log_event, log_section, should_show_outputs
+
+        log_section("TOOLS", "Tool Execution")
+        docker_runtime = getattr(ctx, "docker_runtime", None) or self.docker_runtime
+        if docker_runtime is None:
+            log_event("TOOLS", "skip", "docker runtime not available", level="warn")
+            return
+        try:
+            result = docker_runtime.execute(tool_plan, run_id=getattr(ctx, "run_id", "run"))
+        except Exception as exc:  # noqa: BLE001 - defensive runtime
+            log_event("TOOLS", "error", "tool execution failed", level="error", data={"error": str(exc)})
+            self.hooks.on_tool_error(None, None, state, exc)
+            return
+
+        if not isinstance(result, ToolExecutionResult):
+            log_event("TOOLS", "error", "invalid tool execution result", level="warn")
+            return
+        state.setdefault("artifacts", {})["tool_execution"] = result
+        state.setdefault("artifacts", {})["tool_plan"] = tool_plan
+
+        summary_lines = [
+            f"Tool: {tool_plan.selected_tool.name}",
+            f"Status: {result.status}",
+            f"Artifacts: {', '.join(result.artifacts) if result.artifacts else 'None'}",
+        ]
+        if result.stderr and result.status != "success":
+            summary_lines.append(f"Error: {clip_text(result.stderr)}")
+        if result.stdout and result.status == "success":
+            summary_lines.append(f"Output: {clip_text(result.stdout)}")
+        summary = "\n".join(summary_lines)
+        msg = Message(sender="tool_runtime", receiver="engine", content_type="text", content=summary)
+        state.setdefault("messages", []).append(msg)
+        self.obs.event(
+            "tool_execution",
+            {"status": result.status, "tool": tool_plan.selected_tool.name},
+        )
+        if should_show_outputs():
+            log_event(
+                "TOOLS",
+                "output",
+                "tool output summary",
+                level="debug",
+                data={"preview": clip_text(summary)},
+            )
 
     async def _run_evidence_steps(self, requests: list[EvidenceRequest], state: dict, ctx, session=None) -> None:
         from utils import clip_text, log_event, should_show_outputs, should_show_prompts

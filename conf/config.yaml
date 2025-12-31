@@ -15,6 +15,9 @@ task:
   budget_tokens: 8000
   allow_web_search_for_spec: auto
   spec_max_search_queries: 2
+  allow_tool_search: auto
+  tool_max_candidates: 5
+  tool_max_search_queries: 3
   input_modalities:
     - text
   output_modalities:
@@ -55,6 +58,18 @@ memory:
   store_agent_outputs: true
   store_judge_reports: true
   auto_build: false
+
+tool:
+  enabled: false
+  use_docker: true
+  base_image: python:3.10-slim
+  build_allow_net: true
+  run_allow_net: false
+  default_timeout_s: 300
+  default_cpus: null
+  default_memory_mb: null
+  default_pids: null
+  run_dir: logs/tool_runs
 
 hydra:
   job:

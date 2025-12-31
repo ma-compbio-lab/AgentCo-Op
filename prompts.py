@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from core.contracts import AgentSpec, Message, TaskSpec
+from core.contracts import AgentSpec, Message, TaskSpec, ToolCandidate
 
 
 def build_system_prompt(role: str) -> str:
@@ -263,3 +263,70 @@ def build_repair_prompt(
     if transcript:
         parts.extend(["### Previous Output", transcript])
     return "\n".join(part for part in parts if part)
+
+
+def build_tool_scout_prompt(task: TaskSpec, memory_block: str | None = None) -> str:
+    parts = [
+        "### Tool Scout Instructions",
+        "Return ToolCandidates JSON only. No extra text.",
+        "Find existing tools (PyPI packages, CLIs, GitHub repos, APIs) relevant to the task.",
+        "Prefer actively maintained and permissive-license tools.",
+        "If constraints forbid external libraries/tools, return an empty candidates list.",
+        f"Limit candidates to {task.tool_max_candidates}.",
+        f"Use at most {task.tool_max_search_queries} search queries.",
+        "Include evidence when possible (name, repo_url, license).",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+    ]
+    if memory_block:
+        parts.append(memory_block)
+    return "\n".join(parts)
+
+
+def build_tool_eval_prompt(
+    task: TaskSpec,
+    candidates: list[ToolCandidate],
+    memory_block: str | None = None,
+) -> str:
+    payload = [c.model_dump(mode="json") if isinstance(c, ToolCandidate) else c for c in candidates]
+    parts = [
+        "### Tool Evaluator Instructions",
+        "Return a single ToolCandidate JSON only. No extra text.",
+        "Pick the best candidate that satisfies constraints with lowest risk and highest maintainability.",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+        "### Candidates",
+        json.dumps(payload, ensure_ascii=True),
+    ]
+    if memory_block:
+        parts.append(memory_block)
+    return "\n".join(parts)
+
+
+def build_tool_plan_prompt(
+    task: TaskSpec,
+    candidate: ToolCandidate,
+    memory_block: str | None = None,
+) -> str:
+    payload = candidate.model_dump(mode="json") if isinstance(candidate, ToolCandidate) else candidate
+    parts = [
+        "### Tool Plan Instructions",
+        "Return ToolPlan JSON only. No extra text.",
+        "Provide install strategy, container spec, run commands, verify commands, and expected artifacts.",
+        "Commands must be safe and deterministic; avoid destructive actions.",
+        "Write outputs to /outputs when possible.",
+        "Prefer minimal dependencies and keep commands short.",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+        "### Selected Tool",
+        json.dumps(payload, ensure_ascii=True),
+    ]
+    if memory_block:
+        parts.append(memory_block)
+    return "\n".join(parts)
