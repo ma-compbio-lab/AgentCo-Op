@@ -14,6 +14,7 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - Tool discovery + optional Docker sandbox execution (tool/repo planning).
 - Optional Memori-backed long-term memory (per-agent + global).
 - Hydra configs and CLI overrides for experiments.
+- Multi-turn chat (terminal REPL + Streamlit UI) with live logs and streaming.
 - Colored debug logging with prompt/output previews.
 
 ## Requirements
@@ -22,8 +23,9 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - OpenAI Agents SDK (`openai-agents`).
 - Optional memory: `memori` + `sqlalchemy`.
 - Optional tool execution: Docker Engine for sandboxed tool runs.
-- Optional Repo2Run: `git+https://github.com/bytedance/Repo2Run.git`.
+- Optional Repo2Run: install in a separate env via `requirements-repo2run.txt`.
   - macOS: install Docker Desktop and ensure `docker` is available on PATH.
+- Optional UI: `streamlit`, `prompt_toolkit`, `rich` (already in `requirements.txt`).
 
 Install:
 
@@ -43,6 +45,34 @@ export OPENAI_API_KEY="your-key"
 python run.py \
   method=orchestrated \
   task.goal="Summarize key risks in this plan."
+```
+
+## Multi-Turn Chat (Terminal)
+
+```bash
+python cli/chat.py --config conf/config.yaml --session-id demo
+```
+
+Chat history is stored in `chat.db` (configurable via `chat.db_path`).
+
+You can pass Hydra-style overrides after the config:
+
+```bash
+python cli/chat.py --config conf/config.yaml model.name=gpt-4o-mini log.level=debug
+```
+
+Chat settings:
+
+```bash
+chat.db_path=data/chat.db
+chat.history_turns=8
+chat.stream=true
+```
+
+## Streamlit UI
+
+```bash
+streamlit run ui/app.py
 ```
 
 ## CLI and Hydra Overrides
@@ -259,6 +289,9 @@ app_agents/         # agent builders (planner/worker/judge/researcher/spec)
 methods/            # baseline/sequential/orchestrated
 scripts/            # memory init/clear
 conf/               # Hydra configs
+cli/                # terminal chat entrypoint
+chat/               # chat service wrapper
+ui/                 # Streamlit UI
 ```
 
 ## Troubleshooting

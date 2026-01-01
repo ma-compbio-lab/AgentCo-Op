@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.contracts import ExecutionPlan, JudgeReport, TaskSpec
 from core.hooks import HookManager
 from core.observability import Observability
-from core.runtime import run_agent
+from core.runtime import run_agent, run_agent_streamed
 from prompts import build_aggregate_prompt, build_judge_prompt
 
 
@@ -97,15 +97,27 @@ class Judge:
                 level="debug",
                 data={"preview": clip_text(agg_prompt)},
             )
-        agg_result = await run_agent(
-            self.aggregator_agent,
-            agg_prompt,
-            ctx,
-            session=session,
-            workflow_name="aggregate",
-            max_turns=4,
-            hooks=self.run_hooks,
-        )
+        if getattr(ctx, "stream_output", False) and getattr(ctx, "event_bus", None):
+            agg_result = await run_agent_streamed(
+                self.aggregator_agent,
+                agg_prompt,
+                ctx,
+                session=session,
+                workflow_name="aggregate",
+                max_turns=4,
+                hooks=self.run_hooks,
+                event_bus=ctx.event_bus,
+            )
+        else:
+            agg_result = await run_agent(
+                self.aggregator_agent,
+                agg_prompt,
+                ctx,
+                session=session,
+                workflow_name="aggregate",
+                max_turns=4,
+                hooks=self.run_hooks,
+            )
         final_answer = getattr(agg_result, "final_output", "")
         if not isinstance(final_answer, str):
             final_answer = str(final_answer)

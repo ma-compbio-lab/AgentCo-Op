@@ -14,6 +14,7 @@ class TaskSpec(BaseModel):
     goal: str
     constraints: list[str] = Field(default_factory=list)
     success_criteria: list[str] = Field(default_factory=list)
+    chat_context: Optional[str] = None
     budget_tokens: int = 8000
     budget_usd: Optional[float] = None
     max_latency_s: Optional[float] = None

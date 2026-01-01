@@ -6,7 +6,16 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
-from config import AppConfig, LogConfig, MemoryConfig, ModelConfig, RepairConfig, TaskConfig, ToolConfig
+from config import (
+    AppConfig,
+    ChatConfig,
+    LogConfig,
+    MemoryConfig,
+    ModelConfig,
+    RepairConfig,
+    TaskConfig,
+    ToolConfig,
+)
 from core.contracts import TaskSpec
 from methods.dispatcher import run_method
 from models import build_model_routing, configure_openai, ensure_api_key, validate_backend
@@ -25,6 +34,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
         repair_dict = cfg_obj.get("repair", {})
         memory_dict = cfg_obj.get("memory", {})
         tool_dict = cfg_obj.get("tool", {})
+        chat_dict = cfg_obj.get("chat", {})
         return AppConfig(
             task=TaskConfig(**task_dict),
             method=cfg_obj.get("method", "orchestrated"),
@@ -34,6 +44,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
             repair=RepairConfig(**repair_dict) if isinstance(repair_dict, dict) else RepairConfig(),
             memory=MemoryConfig(**memory_dict) if isinstance(memory_dict, dict) else MemoryConfig(),
             tool=ToolConfig(**tool_dict) if isinstance(tool_dict, dict) else ToolConfig(),
+            chat=ChatConfig(**chat_dict) if isinstance(chat_dict, dict) else ChatConfig(),
         )
     raise TypeError("Config is not compatible with AppConfig.")
 

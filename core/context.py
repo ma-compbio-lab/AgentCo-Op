@@ -21,3 +21,5 @@ class AppContext:
     run_id: str
     session_id: str
     docker_runtime: object | None = None
+    event_bus: object | None = None
+    stream_output: bool = False

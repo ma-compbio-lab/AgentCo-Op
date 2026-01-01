@@ -36,6 +36,13 @@ _LOG_CONFIG = {
     "show_outputs": False,
 }
 
+_EVENT_SINK = None
+
+
+def set_event_sink(sink) -> None:
+    global _EVENT_SINK
+    _EVENT_SINK = sink
+
 
 _COLORS = {
     "reset": "\033[0m",
@@ -111,6 +118,18 @@ def should_show_outputs() -> bool:
 
 
 def log_event(module: str, step: str, message: str, *, level: str = "info", data: dict | None = None) -> None:
+    if _EVENT_SINK:
+        _EVENT_SINK(
+            {
+                "type": "log",
+                "module": module,
+                "step": step,
+                "message": message,
+                "level": level,
+                "data": data or {},
+                "ts": now_iso(),
+            }
+        )
     if not _LOG_CONFIG["enabled"]:
         return
     if _LOG_LEVELS.get(level, 20) < _LOG_LEVELS.get(_LOG_CONFIG["level"], 20):
@@ -126,6 +145,15 @@ def log_event(module: str, step: str, message: str, *, level: str = "info", data
 
 
 def log_section(module: str, title: str) -> None:
+    if _EVENT_SINK:
+        _EVENT_SINK(
+            {
+                "type": "section",
+                "module": module,
+                "title": title,
+                "ts": now_iso(),
+            }
+        )
     if not _LOG_CONFIG["enabled"]:
         return
     color, icon = _MODULE_STYLE.get(module, ("gray", "[LOG]"))
