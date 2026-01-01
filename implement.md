@@ -168,4 +168,5 @@ HookManager supports:
 - 2025-12-30: added tool discovery agents, tool plan orchestration, and Docker sandbox execution support.
 - 2025-12-30: added Repo2Run integration, Dockerfile repair retries, and Docker workdir support.
 - 2025-12-30: moved Repo2Run dependencies to a separate requirements file; documented separate env setup.
+- 2025-12-30: removed Repo2Run from main requirements and added `requirements-repo2run.txt`.
 - 2025-12-30: added chat service, terminal REPL, Streamlit UI, and event bus for streaming logs/output.
