@@ -210,3 +210,4 @@ __marimo__/
 api_keys
 logs/
 third_party/
+data/

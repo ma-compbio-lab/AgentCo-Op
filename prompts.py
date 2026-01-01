@@ -94,6 +94,8 @@ def build_task_prompt(
         "Stop when the deliverable is complete; do not ask clarifying questions.",
         "If assumptions are needed, state them briefly.",
     ]
+    if task.chat_context:
+        parts.append(f"### Chat Context\n{task.chat_context}")
     if template_sections and isinstance(template_sections, list):
         parts.append(format_output_template(template_sections))
     if memory_block:
@@ -126,6 +128,8 @@ def build_plan_prompt(task: TaskSpec, candidates: list[AgentSpec], memory_block:
         f"Input modalities: {', '.join(task.input_modalities)}",
         f"Output modalities: {', '.join(task.output_modalities)}",
     ]
+    if task.chat_context:
+        parts.append(f"### Chat Context\n{task.chat_context}")
     if memory_block:
         parts.append(memory_block)
     parts.extend(["### Available agents", agent_text])
@@ -145,6 +149,7 @@ def build_judge_prompt(task: TaskSpec, plan, messages: list[Message]) -> str:
             f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
             f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
             f"Protocol: {getattr(plan, 'protocol', 'unknown')}",
+            f"Chat context: {task.chat_context}" if task.chat_context else "",
             "### Agent outputs",
             transcript or "None",
         ]
@@ -166,6 +171,8 @@ def build_aggregate_prompt(
         f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
         f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
     ]
+    if task.chat_context:
+        parts.append(f"### Chat Context\n{task.chat_context}")
     if template_sections and isinstance(template_sections, list):
         parts.append(format_output_template(template_sections))
     parts.extend(["### Agent outputs", transcript or "None"])
@@ -202,6 +209,8 @@ def build_spec_designer_prompt(
         f"Existing constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
         f"Existing success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
     ]
+    if task.chat_context:
+        parts.append(f"### Chat Context\n{task.chat_context}")
     if memory_block:
         parts.append(memory_block)
     if evidence_summary:
@@ -226,6 +235,8 @@ def build_spec_critic_prompt(
         "### Proposed Patch",
         json.dumps(proposed_patch, ensure_ascii=True, default=str),
     ]
+    if task.chat_context:
+        parts.append(f"### Chat Context\n{task.chat_context}")
     if memory_block:
         parts.append(memory_block)
     return "\n".join(parts)

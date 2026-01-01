@@ -78,6 +78,12 @@ tool:
   repo2run_prefer_existing: true
   repo2run_work_dir: logs/repo2run
 
+chat:
+  enabled: true
+  db_path: data/chat.db
+  history_turns: 8
+  stream: true
+
 hydra:
   job:
     chdir: false

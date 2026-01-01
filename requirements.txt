@@ -6,4 +6,7 @@ openai-agents>=0.1.0
 pytest>=8.0
 memori>=0.1.0
 sqlalchemy>=2.0
+streamlit>=1.35.0
+prompt_toolkit>=3.0
+rich>=13.0
 repo2run @ git+https://github.com/bytedance/Repo2Run.git

@@ -13,6 +13,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
   - Judge: uses SDK judge + aggregator agents to verify and finalize output.
 - Spec Enrichment: fills missing constraints/success criteria via spec agents before planning.
 - Tool Intelligence: optional tool/repo discovery + plan synthesis before execution.
+- Chat I/O layer: multi-turn chat wrapper for terminal and Streamlit UI.
 - Cross-cutting services:
   - Registry: agent capability catalog used for routing.
   - BudgetRouter: model routing by role and budget.
@@ -29,6 +30,9 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - `prompts.py`: prompt construction helpers.
 - `utils.py`: JSONL logging and time helpers.
 - `core/`: contracts, registry, context, runtime, hooks, judge, safety, budget, cache, memory.
+- `core/chat_store.py`: SQLite-backed chat history store (user/assistant only).
+- `core/event_bus.py`: simple event stream for logs and token deltas.
+- `core/observability_hooks.py`: RunHooks -> EventBus bridge.
 - `core/docker_runtime.py`: Docker build/run sandbox for tool execution.
 - `core/tool_intelligence.py`: tool discovery + plan synthesis orchestration.
 - `core/repo2run_runtime.py`: Repo2Run integration and Dockerfile generation.
@@ -39,12 +43,15 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - `app_agents/tool_evaluator.py`: tool selection agent.
 - `app_agents/tool_doc_synth.py`: tool plan synthesis agent.
 - `app_agents/docker_repair.py`: Dockerfile repair agent.
+- `chat/service.py`: chat session wrapper over the single-turn workflow.
+- `cli/chat.py`: terminal multi-turn REPL.
+- `ui/app.py`: Streamlit chat UI with live logs + streaming.
 - `methods/`: baseline, sequential, orchestrated method implementations.
 - `eval/`: harness and metrics for batch evaluation.
 - `conf/`: Hydra YAML configs for single runs and eval.
 
 ## Data Contracts (core/contracts.py)
-- TaskSpec: user goal, constraints, criteria, budgets, modalities.
+- TaskSpec: user goal, constraints, criteria, budgets, modalities, and optional chat_context.
 - TaskSpec includes spec metadata: `spec_source/spec_confidence/spec_notes/spec_evidence`.
 - AgentSpec: capabilities and IO metadata.
 - Message: standardized inter-agent envelope.
@@ -65,6 +72,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 6. Judge runs SDK judge and aggregator agents, returning final output.
 7. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
 8. Judge writes success/failure summaries into global memory when enabled.
+9. Chat wrapper calls the single-turn workflow repeatedly, injecting recent chat context.
 
 ## Protocols
 - pipeline: sequential subtask execution.
@@ -101,6 +109,11 @@ HookManager supports:
   - `task.tool_max_search_queries=3`
   - `tool.repo2run_enabled=true` to generate Dockerfiles for GitHub repos.
   - `tool.docker_repair_max_rounds=2` to retry Dockerfile fixes on build failures.
+  - install Repo2Run in a separate env via `requirements-repo2run.txt`
+  - set `tool.repo2run_python` to the Repo2Run venv Python
+- Chat:
+  - `python cli/chat.py --config conf/config.yaml --session-id demo`
+  - `streamlit run ui/app.py`
 
 ## Model Backends
 - openai: requires `openai-agents` and `OPENAI_API_KEY`, with optional role overrides.
@@ -113,6 +126,7 @@ HookManager supports:
 - Tool discovery uses `tool_scout`/`tool_evaluator`/`tool_doc_synth` agents and can execute plans in Docker.
 - Docker runtime auto-generates a minimal Dockerfile for pip installs; repo execution uses Repo2Run when enabled.
 - Docker build failures trigger a bounded LLM repair loop before falling back to manual execution.
+- Chat history is stored separately from agent traces and injected as `chat_context` for multi-turn continuity.
 - Protocols and hooks are minimal but structured for extension.
 - Hydra config files keep experiments reproducible and editable as YAML.
 - Hydra entrypoints normalize configs into typed dataclasses for safer access.
@@ -153,3 +167,5 @@ HookManager supports:
 - 2025-12-29: hardened executor agent fallback, spec evidence cache key, and memory init logging; deduped requirements.
 - 2025-12-30: added tool discovery agents, tool plan orchestration, and Docker sandbox execution support.
 - 2025-12-30: added Repo2Run integration, Dockerfile repair retries, and Docker workdir support.
+- 2025-12-30: moved Repo2Run dependencies to a separate requirements file; documented separate env setup.
+- 2025-12-30: added chat service, terminal REPL, Streamlit UI, and event bus for streaming logs/output.

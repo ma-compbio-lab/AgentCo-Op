@@ -62,6 +62,14 @@ class ToolConfig:
 
 
 @dataclass
+class ChatConfig:
+    enabled: bool = True
+    db_path: str = "data/chat.db"
+    history_turns: int = 8
+    stream: bool = True
+
+
+@dataclass
 class AppConfig:
     task: TaskConfig = field(default_factory=TaskConfig)
     method: str = "orchestrated"
@@ -71,6 +79,7 @@ class AppConfig:
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
+    chat: ChatConfig = field(default_factory=ChatConfig)
 
 
 @dataclass
