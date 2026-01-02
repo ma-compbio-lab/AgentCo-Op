@@ -170,3 +170,4 @@ HookManager supports:
 - 2025-12-30: moved Repo2Run dependencies to a separate requirements file; documented separate env setup.
 - 2025-12-30: removed Repo2Run from main requirements and added `requirements-repo2run.txt`.
 - 2025-12-30: added chat service, terminal REPL, Streamlit UI, and event bus for streaming logs/output.
+- 2025-12-30: fixed CLI/UI entrypoints by injecting repo root into `sys.path` for direct script runs.
