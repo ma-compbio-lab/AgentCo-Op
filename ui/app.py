@@ -39,12 +39,108 @@ def main() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Sora:wght@300;400;600&family=Space+Grotesk:wght@500;700&display=swap');
+        :root {
+            --bg-0: #0a0f16;
+            --bg-1: #0f1622;
+            --panel: rgba(18, 24, 36, 0.92);
+            --panel-2: rgba(14, 19, 30, 0.9);
+            --border: #223047;
+            --text: #e6edf7;
+            --muted: #9aa9c0;
+            --accent: #4fd1c5;
+            --accent-2: #f6c453;
+            --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+        }
         html, body, [class*="css"] {
-            font-family: 'Space Grotesk', sans-serif;
+            font-family: 'Sora', sans-serif;
+            color: var(--text);
         }
         .stApp {
-            background: linear-gradient(135deg, #f7f2e8 0%, #eef7ff 55%, #fdf7f0 100%);
+            background:
+                radial-gradient(900px 600px at 8% -10%, rgba(79, 209, 197, 0.18), transparent 60%),
+                radial-gradient(800px 520px at 92% 0%, rgba(246, 196, 83, 0.14), transparent 55%),
+                linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 40%, #0b1527 100%);
+        }
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
+        }
+        section[data-testid="stSidebar"] > div {
+            background: var(--panel-2);
+            border-right: 1px solid var(--border);
+        }
+        .stSidebar h1, .stSidebar h2, .stSidebar h3 {
+            font-family: 'Space Grotesk', sans-serif;
+            letter-spacing: 0.02em;
+        }
+        .stButton > button {
+            background: linear-gradient(120deg, rgba(79, 209, 197, 0.22), rgba(79, 209, 197, 0.08));
+            border: 1px solid rgba(79, 209, 197, 0.45);
+            color: var(--text);
+            box-shadow: var(--shadow);
+            transition: transform 0.12s ease, border 0.12s ease;
+        }
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            border-color: rgba(79, 209, 197, 0.75);
+        }
+        .stTextInput input {
+            background: rgba(12, 16, 26, 0.9);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        div[data-testid="stChatMessage"] {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 0.75rem 1rem;
+            box-shadow: var(--shadow);
+        }
+        div[data-testid="stChatMessage"][aria-label="user"] {
+            background: linear-gradient(120deg, rgba(79, 209, 197, 0.18), rgba(79, 209, 197, 0.06));
+            border-color: rgba(79, 209, 197, 0.45);
+        }
+        div[data-testid="stChatMessage"][aria-label="assistant"] {
+            background: linear-gradient(140deg, rgba(19, 26, 38, 0.95), rgba(15, 20, 32, 0.92));
+        }
+        div[data-testid="stChatInput"] textarea {
+            background: rgba(12, 16, 26, 0.95);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        div[data-testid="stChatInput"] textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(79, 209, 197, 0.2);
+        }
+        div[data-testid="stCode"] {
+            background: rgba(8, 12, 20, 0.95);
+            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            color: #cfe3ff;
+        }
+        .hero {
+            background: linear-gradient(120deg, rgba(79, 209, 197, 0.15), rgba(246, 196, 83, 0.1));
+            border: 1px solid rgba(79, 209, 197, 0.25);
+            border-radius: 18px;
+            padding: 1.1rem 1.4rem;
+            margin-bottom: 1.2rem;
+            box-shadow: var(--shadow);
+            animation: rise 0.5s ease;
+        }
+        .hero-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.8rem;
+            letter-spacing: 0.04em;
+        }
+        .hero-subtitle {
+            color: var(--muted);
+            margin-top: 0.35rem;
+            font-size: 0.95rem;
+        }
+        @keyframes rise {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         </style>
         """,
@@ -90,7 +186,15 @@ def main() -> None:
         st.header("Logs")
         log_box = st.empty()
 
-    st.title("Agent-Cop")
+    st.markdown(
+        """
+        <div class="hero">
+            <div class="hero-title">Agent-Cop</div>
+            <div class="hero-subtitle">Multi-agent workflow console with live tracing</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])

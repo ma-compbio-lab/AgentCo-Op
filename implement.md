@@ -171,3 +171,5 @@ HookManager supports:
 - 2025-12-30: removed Repo2Run from main requirements and added `requirements-repo2run.txt`.
 - 2025-12-30: added chat service, terminal REPL, Streamlit UI, and event bus for streaming logs/output.
 - 2025-12-30: fixed CLI/UI entrypoints by injecting repo root into `sys.path` for direct script runs.
+- 2025-12-30: refreshed Streamlit UI with a dark theme, new typography, and improved layout styling.
+- 2025-12-30: updated ChatStore to handle async SQLiteSession APIs and removed clear_session coroutine warnings.

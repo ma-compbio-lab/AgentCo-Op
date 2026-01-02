@@ -50,7 +50,7 @@ async def chat_turn_async(
         )
 
     chat_store = ChatStore(app_cfg.chat.db_path)
-    recent = chat_store.get_recent(session_id, limit_turns=app_cfg.chat.history_turns)
+    recent = await chat_store.get_recent_async(session_id, limit_turns=app_cfg.chat.history_turns)
     chat_context = build_chat_context(recent)
 
     task_cfg = app_cfg.task
@@ -84,7 +84,7 @@ async def chat_turn_async(
         answer = result.answer
         if event_bus:
             event_bus.emit("assistant_final", {"text": answer})
-        chat_store.append_turn(session_id, user_text, answer)
+        await chat_store.append_turn_async(session_id, user_text, answer)
         return answer
     except Exception as exc:  # noqa: BLE001 - surface errors to the chat loop
         if event_bus:
