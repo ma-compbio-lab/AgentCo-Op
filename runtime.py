@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from app_agents.factory import build_default_agents
-from config import MemoryConfig, RepairConfig, ToolConfig
+from config import MCPConfig, MemoryConfig, RepairConfig, ToolConfig
 from core.budget import BudgetRouter
 from core.cache import Cache
 from core.context import AppContext
@@ -13,6 +13,7 @@ from core.hooks import HookManager
 from core.memory import Memory
 from core.observability import Observability
 from core.registry import Registry
+from core.mcp_manager import MCPManager
 from core.safety import SafetyGate
 from models import ModelRouting
 
@@ -29,6 +30,7 @@ class Runtime:
     run_hooks: object | None
     repair: RepairConfig
     tool_cfg: ToolConfig
+    mcp_cfg: MCPConfig
     docker_runtime: DockerRuntime | None
 
 
@@ -38,6 +40,7 @@ def build_runtime(
     repair: RepairConfig | None = None,
     memory_cfg: MemoryConfig | None = None,
     tool_cfg: ToolConfig | None = None,
+    mcp_cfg: MCPConfig | None = None,
 ) -> Runtime:
     from utils import log_event
 
@@ -49,6 +52,7 @@ def build_runtime(
     cache = Cache()
     safety = SafetyGate()
     tool_cfg = tool_cfg or ToolConfig()
+    mcp_cfg = mcp_cfg or MCPConfig()
     docker_runtime = None
     if tool_cfg.enabled and tool_cfg.use_docker:
         docker_runtime = DockerRuntime(
@@ -79,6 +83,7 @@ def build_runtime(
         store_judge_reports=memory_cfg.store_judge_reports if memory_cfg else True,
         auto_build=memory_cfg.auto_build if memory_cfg else False,
     )
+    mcp_manager = MCPManager(mcp_cfg)
     context = AppContext(
         registry=registry,
         budget=budget_router,
@@ -89,6 +94,7 @@ def build_runtime(
         run_id=run_id,
         session_id=session_id,
         docker_runtime=docker_runtime,
+        mcp_manager=mcp_manager,
     )
     log_event(
         "RUNTIME",
@@ -96,6 +102,13 @@ def build_runtime(
         "runtime initialized",
         data={"run_id": run_id, "agents": list(agent_pool.keys())},
     )
+    if mcp_manager.is_enabled():
+        log_event(
+            "RUNTIME",
+            "mcp",
+            "MCP enabled",
+            data={"servers": mcp_manager.server_names()},
+        )
 
     return Runtime(
         agent_pool=agent_pool,
@@ -108,5 +121,6 @@ def build_runtime(
         run_hooks=None,
         repair=repair or RepairConfig(),
         tool_cfg=tool_cfg,
+        mcp_cfg=mcp_cfg,
         docker_runtime=docker_runtime,
     )

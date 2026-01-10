@@ -47,7 +47,20 @@ class Orchestrator:
             )
             memory_block = format_memory_block(recall, title="Historical Attempts")
 
-        prompt = build_plan_prompt(task, candidates, memory_block=memory_block)
+        mcp_manager = getattr(ctx, "mcp_manager", None)
+        mcp_summary = None
+        mcp_prompt = None
+        if mcp_manager and mcp_manager.is_enabled():
+            mcp_summary = await mcp_manager.describe_servers()
+            mcp_prompt = await mcp_manager.get_prompt("planner")
+
+        prompt = build_plan_prompt(
+            task,
+            candidates,
+            memory_block=memory_block,
+            mcp_summary=mcp_summary,
+            extra_instructions=mcp_prompt,
+        )
         log_event("ORCH", "input", "planning input prepared", data={"candidates": [c.agent_id for c in candidates]})
         if should_show_prompts():
             log_event(

@@ -26,7 +26,21 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
             k=memory.top_k,
         )
         memory_block = format_memory_block(recall, title="Historical Attempts")
-    plan_prompt = build_plan_prompt(task, candidates, memory_block=memory_block)
+    mcp_manager = getattr(runtime.context, "mcp_manager", None)
+    mcp_summary = None
+    planner_mcp_prompt = None
+    worker_mcp_prompt = None
+    if mcp_manager and mcp_manager.is_enabled():
+        mcp_summary = await mcp_manager.describe_servers()
+        planner_mcp_prompt = await mcp_manager.get_prompt("planner")
+        worker_mcp_prompt = await mcp_manager.get_prompt("worker")
+    plan_prompt = build_plan_prompt(
+        task,
+        candidates,
+        memory_block=memory_block,
+        mcp_summary=mcp_summary,
+        extra_instructions=planner_mcp_prompt,
+    )
     log_event("METHOD", "start", "sequential run", data={"task_id": task.task_id})
     plan_result = await run_agent(
         planner,
@@ -53,6 +67,7 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
         task.goal,
         [plan_msg],
         memory_block=worker_memory_block,
+        extra_instructions=worker_mcp_prompt,
     )
     worker_result = await run_agent(
         worker,

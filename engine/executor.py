@@ -44,6 +44,7 @@ class ExecutionEngine:
         state: dict = {"messages": [], "artifacts": {}, "round": 0}
         protocol = self.protocols[plan.protocol]
         protocol_state = protocol.prepare(task, plan)
+        mcp_manager = getattr(ctx, "mcp_manager", None)
 
         # Evidence is collected once up front to avoid repeated web searches per step.
         if plan.needs_web_search and plan.evidence_requests:
@@ -97,12 +98,17 @@ class ExecutionEngine:
                 recall = memory.recall_agent(agent_id, query=f"{task.goal} {instructions}", k=memory.top_k)
                 memory_block = format_memory_block(recall, title=f"Retrieved Memory ({agent_id})")
 
+            mcp_prompt = None
+            if mcp_manager and mcp_manager.is_enabled():
+                mcp_prompt = await mcp_manager.get_prompt(agent_id)
+
             prompt = build_task_prompt(
                 agent_id,
                 task,
                 instructions,
                 inbox,
                 memory_block=memory_block,
+                extra_instructions=mcp_prompt,
             )
             if should_show_prompts():
                 log_event(
@@ -112,15 +118,62 @@ class ExecutionEngine:
                     level="debug",
                     data={"agent_id": agent_id, "preview": clip_text(prompt)},
                 )
-            result = await run_agent(
-                agent,
-                prompt,
-                ctx,
-                session=session,
-                workflow_name=f"step:{agent_id}",
-                max_turns=plan.max_rounds,
-                hooks=self.run_hooks,
-            )
+            mcp_servers = []
+            required_servers: list[str] = []
+            allowed_tools = None
+            require_approval = False
+            if mcp_manager and mcp_manager.is_enabled():
+                required_servers, allowed_tools, require_approval = self._extract_mcp_requirements(step, plan)
+            if mcp_manager and mcp_manager.is_enabled() and required_servers:
+                try:
+                    async with mcp_manager.open_servers(
+                        required_servers,
+                        allowed_tools=allowed_tools,
+                        require_approval=require_approval,
+                    ) as mcp_servers:
+                        log_event(
+                            "ENGINE",
+                            "mcp_attach",
+                            "attached MCP servers",
+                            data={"agent_id": agent_id, "servers": required_servers, "allowed_tools": allowed_tools},
+                        )
+                        with mcp_manager.bind_agent(agent, mcp_servers, extra_tools=None):
+                            result = await run_agent(
+                                agent,
+                                prompt,
+                                ctx,
+                                session=session,
+                                workflow_name=f"step:{agent_id}",
+                                max_turns=plan.max_rounds,
+                                hooks=self.run_hooks,
+                            )
+                except PermissionError as exc:
+                    log_event(
+                        "ENGINE",
+                        "mcp_blocked",
+                        "MCP approval required",
+                        level="warn",
+                        data={"agent_id": agent_id, "error": str(exc)},
+                    )
+                    result = await run_agent(
+                        agent,
+                        prompt,
+                        ctx,
+                        session=session,
+                        workflow_name=f"step:{agent_id}",
+                        max_turns=plan.max_rounds,
+                        hooks=self.run_hooks,
+                    )
+            else:
+                result = await run_agent(
+                    agent,
+                    prompt,
+                    ctx,
+                    session=session,
+                    workflow_name=f"step:{agent_id}",
+                    max_turns=plan.max_rounds,
+                    hooks=self.run_hooks,
+                )
             output_text = getattr(result, "final_output", "")
             if not isinstance(output_text, str):
                 output_text = str(output_text)
@@ -427,3 +480,19 @@ class ExecutionEngine:
         merged = [msg for msg in evidence_msgs if msg.msg_id not in seen]
         merged.extend(msg for msg in inbox if msg.msg_id not in seen)
         return merged
+
+    @staticmethod
+    def _extract_mcp_requirements(step: dict, plan: ExecutionPlan) -> tuple[list[str], list[str] | None, bool]:
+        subtask = step.get("subtask")
+        if subtask is not None:
+            return (
+                list(getattr(subtask, "required_mcp_servers", []) or []),
+                list(getattr(subtask, "allowed_tools", []) or []),
+                bool(getattr(subtask, "require_approval", False)),
+            )
+        meta = plan.meta.get("mcp", {}) if plan.meta else {}
+        return (
+            list(meta.get("required_mcp_servers", []) or []),
+            list(meta.get("allowed_tools", []) or []),
+            bool(meta.get("require_approval", False)),
+        )

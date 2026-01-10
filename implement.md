@@ -13,6 +13,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
   - Judge: uses SDK judge + aggregator agents to verify and finalize output.
 - Spec Enrichment: fills missing constraints/success criteria via spec agents before planning.
 - Tool Intelligence: optional tool/repo discovery + plan synthesis before execution.
+- MCP Manager: optional MCP server registry for tool/data/prompt access with filtering/caching.
 - Chat I/O layer: multi-turn chat wrapper for terminal and Streamlit UI.
 - Cross-cutting services:
   - Registry: agent capability catalog used for routing.
@@ -36,6 +37,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - `core/docker_runtime.py`: Docker build/run sandbox for tool execution.
 - `core/tool_intelligence.py`: tool discovery + plan synthesis orchestration.
 - `core/repo2run_runtime.py`: Repo2Run integration and Dockerfile generation.
+- `core/mcp_manager.py`: MCP server lifecycle, tool filtering, caching, and prompt fetch.
 - `engine/`: protocols and executor.
 - `engine/tool_runtime.py`: tool execution with allowlist and hooks.
 - `app_agents/`: planner/worker/judge/io agent builders and factory (named to avoid SDK import collision).
@@ -56,6 +58,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - AgentSpec: capabilities and IO metadata.
 - Message: standardized inter-agent envelope.
 - ExecutionPlan/SubTask: protocol + task DAG + constraints + model_hint/meta (edges as Edge objects).
+- SubTask includes MCP routing fields: required servers, allowed tools, approval flag.
 - EvidenceRequest/EvidencePack: web search inputs and structured evidence summaries + citations.
 - ToolCandidate/ToolPlan/ToolExecutionResult: tool discovery candidates, runnable plans, and execution results.
 - Memory items: stored via Memori in agent/global scopes (see core/memory.py).
@@ -67,7 +70,8 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 2. Spec enrichment fills missing constraints/success criteria (may use web search) and updates TaskSpec.
 3. Tool Intelligence (optional) discovers tools and synthesizes a ToolPlan (cached).
 4. Orchestrator injects global memory hints into planning (when enabled) and produces an ExecutionPlan.
-5. Execution Engine runs evidence steps (if requested), executes ToolPlan in Docker (if enabled),
+5. Execution Engine attaches MCP servers per step (if enabled), runs evidence steps (if requested),
+   executes ToolPlan in Docker (if enabled),
    injects per-agent memory, and executes protocol steps.
 6. Judge runs SDK judge and aggregator agents, returning final output.
 7. If the judge fails, a repair loop runs (worker fixes issues) and re-judges up to `repair.max_rounds`.
@@ -111,6 +115,10 @@ HookManager supports:
   - `tool.docker_repair_max_rounds=2` to retry Dockerfile fixes on build failures.
   - install Repo2Run in a separate env via `requirements-repo2run.txt`
   - set `tool.repo2run_python` to the Repo2Run venv Python
+- MCP:
+  - `mcp.enabled=true`
+  - define `mcp.servers` in `conf/config.yaml` (stdio/http/sse)
+  - optional `mcp.prompts` to override agent instructions per server prompt
 - Chat:
   - `python cli/chat.py --config conf/config.yaml --session-id demo`
   - `streamlit run ui/app.py`
@@ -173,3 +181,4 @@ HookManager supports:
 - 2025-12-30: fixed CLI/UI entrypoints by injecting repo root into `sys.path` for direct script runs.
 - 2025-12-30: refreshed Streamlit UI with a dark theme, new typography, and improved layout styling.
 - 2025-12-30: updated ChatStore to handle async SQLiteSession APIs and removed clear_session coroutine warnings.
+- 2025-12-30: added MCP manager, config, and per-step MCP routing with tool filtering and prompt overrides.

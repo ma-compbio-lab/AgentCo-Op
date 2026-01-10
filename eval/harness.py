@@ -6,7 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 
 import asyncio
 
-from config import EvalConfig, LogConfig, MemoryConfig, ModelConfig, RepairConfig, ToolConfig
+from config import EvalConfig, LogConfig, MCPConfig, MemoryConfig, ModelConfig, RepairConfig, ToolConfig
 from data import load_tasks
 from eval.metrics import basic_metrics
 from methods.dispatcher import run_method
@@ -26,6 +26,7 @@ def to_eval_config(cfg: DictConfig) -> EvalConfig:
         repair_dict = cfg_obj.get("repair", {})
         memory_dict = cfg_obj.get("memory", {})
         tool_dict = cfg_obj.get("tool", {})
+        mcp_dict = cfg_obj.get("mcp", {})
         return EvalConfig(
             tasks=cfg_obj.get("tasks", "data/tasks.jsonl"),
             method=cfg_obj.get("method", "orchestrated"),
@@ -35,6 +36,7 @@ def to_eval_config(cfg: DictConfig) -> EvalConfig:
             repair=RepairConfig(**repair_dict) if isinstance(repair_dict, dict) else RepairConfig(),
             memory=MemoryConfig(**memory_dict) if isinstance(memory_dict, dict) else MemoryConfig(),
             tool=ToolConfig(**tool_dict) if isinstance(tool_dict, dict) else ToolConfig(),
+            mcp=MCPConfig(**mcp_dict) if isinstance(mcp_dict, dict) else MCPConfig(),
             max_samples=cfg_obj.get("max_samples"),
         )
     raise TypeError("Config is not compatible with EvalConfig.")
@@ -72,6 +74,7 @@ async def run_async(cfg: DictConfig) -> None:
         repair=eval_cfg.repair,
         memory_cfg=eval_cfg.memory,
         tool_cfg=eval_cfg.tool,
+        mcp_cfg=eval_cfg.mcp,
     )
 
     tasks = load_tasks(eval_cfg.tasks)

@@ -14,7 +14,11 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     log_section("METHOD", "Baseline")
     task = await ensure_spec(task, runtime.context, runtime.agent_pool, session=runtime.session)
     worker = runtime.agent_pool["worker"]
-    prompt = build_task_prompt("worker", task, task.goal, [])
+    mcp_manager = getattr(runtime.context, "mcp_manager", None)
+    worker_mcp_prompt = None
+    if mcp_manager and mcp_manager.is_enabled():
+        worker_mcp_prompt = await mcp_manager.get_prompt("worker")
+    prompt = build_task_prompt("worker", task, task.goal, [], extra_instructions=worker_mcp_prompt)
     log_event("METHOD", "start", "baseline run", data={"task_id": task.task_id})
     result = await run_agent(
         worker,

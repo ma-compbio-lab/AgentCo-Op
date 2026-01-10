@@ -48,12 +48,24 @@ async def prepare_tool_plan(
 
     log_section("TOOLS", "Tool Discovery")
     memory_block = _build_memory_block(task, ctx)
+    mcp_manager = getattr(ctx, "mcp_manager", None)
+    scout_mcp_prompt = None
+    eval_mcp_prompt = None
+    plan_mcp_prompt = None
+    if mcp_manager and mcp_manager.is_enabled():
+        scout_mcp_prompt = await mcp_manager.get_prompt("tool_scout")
+        eval_mcp_prompt = await mcp_manager.get_prompt("tool_evaluator")
+        plan_mcp_prompt = await mcp_manager.get_prompt("tool_doc_synth")
 
     candidates: list[ToolCandidate] = []
     if hint:
         candidates = [hint]
     elif "tool_scout" in agent_pool:
-        scout_prompt = build_tool_scout_prompt(task, memory_block=memory_block)
+        scout_prompt = build_tool_scout_prompt(
+            task,
+            memory_block=memory_block,
+            extra_instructions=scout_mcp_prompt,
+        )
         if should_show_prompts():
             log_event(
                 "TOOLS",
@@ -82,7 +94,12 @@ async def prepare_tool_plan(
     selected = candidates[0]
 
     if len(candidates) > 1 and "tool_evaluator" in agent_pool:
-        eval_prompt = build_tool_eval_prompt(task, candidates, memory_block=memory_block)
+        eval_prompt = build_tool_eval_prompt(
+            task,
+            candidates,
+            memory_block=memory_block,
+            extra_instructions=eval_mcp_prompt,
+        )
         if should_show_prompts():
             log_event(
                 "TOOLS",
@@ -105,7 +122,12 @@ async def prepare_tool_plan(
     repo_container_spec = None
     if selected.kind == "github_repo" and tool_cfg.repo2run_enabled:
         repo_container_spec = _run_repo2run(selected, ctx, tool_cfg)
-    plan_prompt = build_tool_plan_prompt(task, selected, memory_block=memory_block)
+    plan_prompt = build_tool_plan_prompt(
+        task,
+        selected,
+        memory_block=memory_block,
+        extra_instructions=plan_mcp_prompt,
+    )
     if should_show_prompts():
         log_event(
             "TOOLS",

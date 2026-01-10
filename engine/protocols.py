@@ -50,6 +50,7 @@ class PipelineProtocol(ProtocolBase):
             "agent_id": subtask.assigned_to,
             "instructions": subtask.instructions,
             "inbox": state["messages"][-1:],
+            "subtask": subtask,
         }
 
     def on_step_end(self, task, plan, state, protocol_state, output_msg):
@@ -153,6 +154,7 @@ class HybridProtocol(ProtocolBase):
                     "agent_id": subtask.assigned_to,
                     "instructions": subtask.instructions,
                     "inbox": state["messages"][-1:],
+                    "subtask": subtask,
                 }
             protocol_state["phase"] = "roundtable"
         if not plan.active_agents:

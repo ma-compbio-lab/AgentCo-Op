@@ -62,6 +62,16 @@ class ToolConfig:
 
 
 @dataclass
+class MCPConfig:
+    enabled: bool = False
+    approval_mode: str = "auto"  # auto | required | off
+    cache_tools_list: bool = True
+    enforce_tool_filter: bool = False
+    servers: dict[str, dict] = field(default_factory=dict)
+    prompts: dict[str, dict] = field(default_factory=dict)
+
+
+@dataclass
 class ChatConfig:
     enabled: bool = True
     db_path: str = "data/chat.db"
@@ -79,6 +89,7 @@ class AppConfig:
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
 
 
@@ -110,4 +121,5 @@ class EvalConfig:
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
     max_samples: int | None = None

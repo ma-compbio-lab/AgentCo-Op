@@ -148,6 +148,9 @@ class SubTask(BaseModel):
     instructions: str
     assigned_to: str
     depends_on: list[str] = Field(default_factory=list)
+    required_mcp_servers: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
+    require_approval: bool = False
 
 
 class ExecutionPlan(BaseModel):

@@ -12,6 +12,7 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - Spec enrichment: auto-generate missing constraints/success criteria.
 - Auto repair: judge failure -> repair -> re-judge (multi-round).
 - Tool discovery + optional Docker sandbox execution (tool/repo planning).
+- MCP integration for tools/data/prompts with tool filtering and caching (optional).
 - Optional Memori-backed long-term memory (per-agent + global).
 - Hydra configs and CLI overrides for experiments.
 - Multi-turn chat (terminal REPL + Streamlit UI) with live logs and streaming.
@@ -25,6 +26,9 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - Optional tool execution: Docker Engine for sandboxed tool runs.
 - Optional Repo2Run: install in a separate env via `requirements-repo2run.txt`.
   - macOS: install Docker Desktop and ensure `docker` is available on PATH.
+- Optional MCP servers:
+  - Node.js + `npx` (TypeScript MCP servers like filesystem/github/postgres).
+  - `uvx` (Python MCP servers like git).
 - Optional UI: `streamlit`, `prompt_toolkit`, `rich` (already in `requirements.txt`).
 
 Install:
@@ -190,6 +194,46 @@ tool.run_allow_net=false
 tool.default_timeout_s=300
 tool.docker_repair_max_rounds=2
 ```
+
+## MCP (Model Context Protocol)
+
+MCP lets the workflow use external tools, resources, and prompts without custom adapters.
+Enable MCP in config and define servers:
+
+```yaml
+mcp:
+  enabled: true
+  approval_mode: auto   # auto | required | off
+  cache_tools_list: true
+  enforce_tool_filter: false
+  servers:
+    filesystem:
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/abs/path/to/workspace"]
+      default_tools: ["read_file", "list_files"]
+    git:
+      transport: stdio
+      command: uvx
+      args: ["mcp-server-git", "--repository", "/abs/path/to/repo"]
+```
+
+Optional prompt overrides via MCP:
+
+```yaml
+mcp:
+  prompts:
+    planner:
+      server: filesystem
+      prompt: planner_template
+```
+
+Notes:
+- The planner sees available MCP servers/tools when enabled.
+- Subtasks can declare `required_mcp_servers` and `allowed_tools` in the plan.
+- Judge/Aggregator can use MCP tools if `plan.meta` includes `judge_mcp_servers` or `aggregator_mcp_servers`.
+- `approval_mode=required` blocks MCP tool usage unless you add an approval flow.
+- `cache_tools_list=true` avoids repeated `list_tools()` calls for faster planning.
 
 Repo2Run (optional):
 

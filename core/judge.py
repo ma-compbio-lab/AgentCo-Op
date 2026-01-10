@@ -29,8 +29,14 @@ class Judge:
 
         log_section("JUDGE", "Evaluation")
         state = self.hooks.before_judge(task, plan, state)
+        mcp_manager = getattr(ctx, "mcp_manager", None)
+        judge_mcp_prompt = None
+        agg_mcp_prompt = None
+        if mcp_manager and mcp_manager.is_enabled():
+            judge_mcp_prompt = await mcp_manager.get_prompt("judge")
+            agg_mcp_prompt = await mcp_manager.get_prompt("aggregator")
 
-        judge_prompt = build_judge_prompt(task, plan, state.get("messages", []))
+        judge_prompt = build_judge_prompt(task, plan, state.get("messages", []), extra_instructions=judge_mcp_prompt)
         log_event("JUDGE", "start", "running judge", data={"plan_id": plan.plan_id})
         if should_show_prompts():
             log_event(
@@ -40,15 +46,58 @@ class Judge:
                 level="debug",
                 data={"preview": clip_text(judge_prompt)},
             )
-        judge_result = await run_agent(
-            self.judge_agent,
-            judge_prompt,
-            ctx,
-            session=session,
-            workflow_name="judge",
-            max_turns=6,
-            hooks=self.run_hooks,
-        )
+        judge_servers = []
+        judge_tools = []
+        judge_require_approval = False
+        if plan and plan.meta:
+            judge_servers = list(plan.meta.get("judge_mcp_servers", []) or [])
+            judge_tools = list(plan.meta.get("judge_allowed_tools", []) or [])
+            judge_require_approval = bool(plan.meta.get("judge_require_approval", False))
+
+        if mcp_manager and mcp_manager.is_enabled() and judge_servers:
+            try:
+                async with mcp_manager.open_servers(
+                    judge_servers,
+                    allowed_tools=judge_tools,
+                    require_approval=judge_require_approval,
+                ) as mcp_servers:
+                    with mcp_manager.bind_agent(self.judge_agent, mcp_servers, extra_tools=None):
+                        judge_result = await run_agent(
+                            self.judge_agent,
+                            judge_prompt,
+                            ctx,
+                            session=session,
+                            workflow_name="judge",
+                            max_turns=6,
+                            hooks=self.run_hooks,
+                        )
+            except PermissionError as exc:
+                log_event(
+                    "JUDGE",
+                    "mcp_blocked",
+                    "MCP approval required",
+                    level="warn",
+                    data={"error": str(exc)},
+                )
+                judge_result = await run_agent(
+                    self.judge_agent,
+                    judge_prompt,
+                    ctx,
+                    session=session,
+                    workflow_name="judge",
+                    max_turns=6,
+                    hooks=self.run_hooks,
+                )
+        else:
+            judge_result = await run_agent(
+                self.judge_agent,
+                judge_prompt,
+                ctx,
+                session=session,
+                workflow_name="judge",
+                max_turns=6,
+                hooks=self.run_hooks,
+            )
         report_obj = getattr(judge_result, "final_output", None)
         if isinstance(report_obj, dict):
             try:
@@ -87,7 +136,12 @@ class Judge:
         if not report.ok:
             return report, ""
 
-        agg_prompt = build_aggregate_prompt(task, plan, state.get("messages", []))
+        agg_prompt = build_aggregate_prompt(
+            task,
+            plan,
+            state.get("messages", []),
+            extra_instructions=agg_mcp_prompt,
+        )
         log_event("JUDGE", "aggregate", "running aggregator", data={"plan_id": plan.plan_id})
         if should_show_prompts():
             log_event(
@@ -97,8 +151,27 @@ class Judge:
                 level="debug",
                 data={"preview": clip_text(agg_prompt)},
             )
-        if getattr(ctx, "stream_output", False) and getattr(ctx, "event_bus", None):
-            agg_result = await run_agent_streamed(
+        agg_servers = []
+        agg_tools = []
+        agg_require_approval = False
+        if plan and plan.meta:
+            agg_servers = list(plan.meta.get("aggregator_mcp_servers", []) or [])
+            agg_tools = list(plan.meta.get("aggregator_allowed_tools", []) or [])
+            agg_require_approval = bool(plan.meta.get("aggregator_require_approval", False))
+
+        async def _run_aggregator():
+            if getattr(ctx, "stream_output", False) and getattr(ctx, "event_bus", None):
+                return await run_agent_streamed(
+                    self.aggregator_agent,
+                    agg_prompt,
+                    ctx,
+                    session=session,
+                    workflow_name="aggregate",
+                    max_turns=4,
+                    hooks=self.run_hooks,
+                    event_bus=ctx.event_bus,
+                )
+            return await run_agent(
                 self.aggregator_agent,
                 agg_prompt,
                 ctx,
@@ -106,18 +179,28 @@ class Judge:
                 workflow_name="aggregate",
                 max_turns=4,
                 hooks=self.run_hooks,
-                event_bus=ctx.event_bus,
             )
+
+        if mcp_manager and mcp_manager.is_enabled() and agg_servers:
+            try:
+                async with mcp_manager.open_servers(
+                    agg_servers,
+                    allowed_tools=agg_tools,
+                    require_approval=agg_require_approval,
+                ) as mcp_servers:
+                    with mcp_manager.bind_agent(self.aggregator_agent, mcp_servers, extra_tools=None):
+                        agg_result = await _run_aggregator()
+            except PermissionError as exc:
+                log_event(
+                    "JUDGE",
+                    "mcp_blocked",
+                    "MCP approval required",
+                    level="warn",
+                    data={"error": str(exc)},
+                )
+                agg_result = await _run_aggregator()
         else:
-            agg_result = await run_agent(
-                self.aggregator_agent,
-                agg_prompt,
-                ctx,
-                session=session,
-                workflow_name="aggregate",
-                max_turns=4,
-                hooks=self.run_hooks,
-            )
+            agg_result = await _run_aggregator()
         final_answer = getattr(agg_result, "final_output", "")
         if not isinstance(final_answer, str):
             final_answer = str(final_answer)

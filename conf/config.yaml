@@ -78,6 +78,14 @@ tool:
   repo2run_prefer_existing: true
   repo2run_work_dir: logs/repo2run
 
+mcp:
+  enabled: false
+  approval_mode: auto
+  cache_tools_list: true
+  enforce_tool_filter: false
+  servers: {}
+  prompts: {}
+
 chat:
   enabled: true
   db_path: data/chat.db

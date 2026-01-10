@@ -81,6 +81,7 @@ def build_task_prompt(
     inbox: list[Message],
     template_sections: list[str] | None = None,
     memory_block: str | None = None,
+    extra_instructions: str | None = None,
 ) -> str:
     inbox_text = format_inbox(inbox)
     parts = [
@@ -96,6 +97,8 @@ def build_task_prompt(
     ]
     if task.chat_context:
         parts.append(f"### Chat Context\n{task.chat_context}")
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
     if template_sections and isinstance(template_sections, list):
         parts.append(format_output_template(template_sections))
     if memory_block:
@@ -105,7 +108,13 @@ def build_task_prompt(
     return "\n".join(parts)
 
 
-def build_plan_prompt(task: TaskSpec, candidates: list[AgentSpec], memory_block: str | None = None) -> str:
+def build_plan_prompt(
+    task: TaskSpec,
+    candidates: list[AgentSpec],
+    memory_block: str | None = None,
+    mcp_summary: str | None = None,
+    extra_instructions: str | None = None,
+) -> str:
     agent_lines = []
     for spec in candidates:
         agent_lines.append(
@@ -118,6 +127,8 @@ def build_plan_prompt(task: TaskSpec, candidates: list[AgentSpec], memory_block:
         "Choose a protocol from: pipeline, roundtable, debate, loop, hybrid.",
         "If the task requires external or up-to-date facts, set needs_web_search=true and add evidence_requests.",
         "Otherwise set needs_web_search=false and leave evidence_requests empty.",
+        "If MCP tools are needed, set required_mcp_servers and allowed_tools per subtask.",
+        "Set require_approval=true for any sensitive or write operations.",
         "Use only the agent IDs listed below in active_agents and subtasks.",
         "Prefer minimal, executable steps; avoid redundant subtasks.",
         "### Task",
@@ -130,34 +141,48 @@ def build_plan_prompt(task: TaskSpec, candidates: list[AgentSpec], memory_block:
     ]
     if task.chat_context:
         parts.append(f"### Chat Context\n{task.chat_context}")
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
     if memory_block:
         parts.append(memory_block)
+    if mcp_summary:
+        parts.append("### MCP Servers\n" + mcp_summary)
     parts.extend(["### Available agents", agent_text])
     return "\n".join(parts)
 
 
-def build_judge_prompt(task: TaskSpec, plan, messages: list[Message]) -> str:
+def build_judge_prompt(
+    task: TaskSpec,
+    plan,
+    messages: list[Message],
+    extra_instructions: str | None = None,
+) -> str:
     transcript = format_inbox(messages)
-    return "\n".join(
-        [
-            "### Judge Instructions",
-            "Return JudgeReport JSON only. No extra commentary.",
-            "Be strict: check success criteria and constraints; list gaps explicitly.",
-            "If evidence is provided, verify claims against it and require citations when needed.",
-            "### Task",
-            f"Goal: {task.goal}",
-            f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
-            f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
-            f"Protocol: {getattr(plan, 'protocol', 'unknown')}",
-            f"Chat context: {task.chat_context}" if task.chat_context else "",
-            "### Agent outputs",
-            transcript or "None",
-        ]
-    )
+    parts = [
+        "### Judge Instructions",
+        "Return JudgeReport JSON only. No extra commentary.",
+        "Be strict: check success criteria and constraints; list gaps explicitly.",
+        "If evidence is provided, verify claims against it and require citations when needed.",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+        f"Protocol: {getattr(plan, 'protocol', 'unknown')}",
+    ]
+    if task.chat_context:
+        parts.append(f"Chat context: {task.chat_context}")
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
+    parts.extend(["### Agent outputs", transcript or "None"])
+    return "\n".join(parts)
 
 
 def build_aggregate_prompt(
-    task: TaskSpec, plan, messages: list[Message], template_sections: list[str] | None = None
+    task: TaskSpec,
+    plan,
+    messages: list[Message],
+    template_sections: list[str] | None = None,
+    extra_instructions: str | None = None,
 ) -> str:
     transcript = format_inbox(messages)
     if template_sections is None and plan is not None:
@@ -173,6 +198,8 @@ def build_aggregate_prompt(
     ]
     if task.chat_context:
         parts.append(f"### Chat Context\n{task.chat_context}")
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
     if template_sections and isinstance(template_sections, list):
         parts.append(format_output_template(template_sections))
     parts.extend(["### Agent outputs", transcript or "None"])
@@ -276,7 +303,11 @@ def build_repair_prompt(
     return "\n".join(part for part in parts if part)
 
 
-def build_tool_scout_prompt(task: TaskSpec, memory_block: str | None = None) -> str:
+def build_tool_scout_prompt(
+    task: TaskSpec,
+    memory_block: str | None = None,
+    extra_instructions: str | None = None,
+) -> str:
     parts = [
         "### Tool Scout Instructions",
         "Return ToolCandidates JSON only. No extra text.",
@@ -293,6 +324,8 @@ def build_tool_scout_prompt(task: TaskSpec, memory_block: str | None = None) -> 
     ]
     if memory_block:
         parts.append(memory_block)
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
     return "\n".join(parts)
 
 
@@ -300,6 +333,7 @@ def build_tool_eval_prompt(
     task: TaskSpec,
     candidates: list[ToolCandidate],
     memory_block: str | None = None,
+    extra_instructions: str | None = None,
 ) -> str:
     payload = [c.model_dump(mode="json") if isinstance(c, ToolCandidate) else c for c in candidates]
     parts = [
@@ -315,6 +349,8 @@ def build_tool_eval_prompt(
     ]
     if memory_block:
         parts.append(memory_block)
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
     return "\n".join(parts)
 
 
@@ -322,6 +358,7 @@ def build_tool_plan_prompt(
     task: TaskSpec,
     candidate: ToolCandidate,
     memory_block: str | None = None,
+    extra_instructions: str | None = None,
 ) -> str:
     payload = candidate.model_dump(mode="json") if isinstance(candidate, ToolCandidate) else candidate
     parts = [
@@ -341,6 +378,8 @@ def build_tool_plan_prompt(
     ]
     if memory_block:
         parts.append(memory_block)
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
     return "\n".join(parts)
 
 

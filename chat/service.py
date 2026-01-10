@@ -47,6 +47,7 @@ async def chat_turn_async(
             repair=app_cfg.repair,
             memory_cfg=app_cfg.memory,
             tool_cfg=app_cfg.tool,
+            mcp_cfg=app_cfg.mcp,
         )
 
     chat_store = ChatStore(app_cfg.chat.db_path)
