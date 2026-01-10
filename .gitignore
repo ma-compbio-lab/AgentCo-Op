@@ -211,3 +211,5 @@ api_keys
 logs/
 third_party/
 data/
+
+AGENTS.md
