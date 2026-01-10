@@ -182,3 +182,4 @@ HookManager supports:
 - 2025-12-30: refreshed Streamlit UI with a dark theme, new typography, and improved layout styling.
 - 2025-12-30: updated ChatStore to handle async SQLiteSession APIs and removed clear_session coroutine warnings.
 - 2025-12-30: added MCP manager, config, and per-step MCP routing with tool filtering and prompt overrides.
+- 2025-12-30: excluded third_party tests from pytest collection via `pytest.ini`.
