@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import inspect
 from typing import Any, Iterator
 
 from agents import RunConfig, Runner
@@ -84,7 +85,7 @@ async def run_agent_streamed(
             group_id=ctx.session_id,
             trace_metadata={"run_id": ctx.run_id},
         )
-        result = await Runner.run_streamed(
+        maybe_result = Runner.run_streamed(
             starting_agent=agent,
             input=input_data,
             context=ctx,
@@ -94,7 +95,7 @@ async def run_agent_streamed(
             run_config=run_config,
         )
     except TypeError:
-        result = await Runner.run_streamed(
+        maybe_result = Runner.run_streamed(
             starting_agent=agent,
             input=input_data,
             context=ctx,
@@ -102,6 +103,8 @@ async def run_agent_streamed(
             max_turns=max_turns,
             hooks=hooks,
         )
+
+    result = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
 
     if event_bus is not None:
         stream_iter = result.stream_events()

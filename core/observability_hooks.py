@@ -3,52 +3,76 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from agents import RunHooksBase
+    from agents import RunHooks  # type: ignore
+    _HooksBase = RunHooks
 except Exception:  # noqa: BLE001 - optional dependency
-    RunHooksBase = object  # type: ignore
+    try:
+        from agents import RunHooksBase  # type: ignore
+
+        _HooksBase = RunHooksBase
+    except Exception:  # noqa: BLE001 - optional dependency
+        _HooksBase = object  # type: ignore
 
 
-class EventStreamHooks(RunHooksBase):
+class EventStreamHooks(_HooksBase):
     def __init__(self, event_bus) -> None:
         self.event_bus = event_bus
 
-    def on_agent_start(self, run_context, agent, **kwargs: Any) -> None:  # type: ignore[override]
+    @staticmethod
+    def _get_arg(args: tuple[Any, ...], index: int) -> Any | None:
+        if len(args) > index:
+            return args[index]
+        return None
+
+    @staticmethod
+    def _get_name(obj: Any | None) -> str:
+        if obj is None:
+            return "unknown"
+        return getattr(obj, "name", str(obj))
+
+    async def on_agent_start(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         if not self.event_bus:
             return
-        self.event_bus.emit("agent_start", {"agent": getattr(agent, "name", str(agent))})
+        agent = kwargs.get("agent") or self._get_arg(args, 1)
+        self.event_bus.emit("agent_start", {"agent": self._get_name(agent)})
 
-    def on_agent_end(self, run_context, agent, **kwargs: Any) -> None:  # type: ignore[override]
+    async def on_agent_end(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         if not self.event_bus:
             return
-        self.event_bus.emit("agent_end", {"agent": getattr(agent, "name", str(agent))})
+        agent = kwargs.get("agent") or self._get_arg(args, 1)
+        self.event_bus.emit("agent_end", {"agent": self._get_name(agent)})
 
-    def on_tool_start(self, run_context, tool, **kwargs: Any) -> None:  # type: ignore[override]
+    async def on_tool_start(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         if not self.event_bus:
             return
-        self.event_bus.emit("tool_start", {"tool": getattr(tool, "name", str(tool))})
+        tool = kwargs.get("tool") or self._get_arg(args, 1)
+        self.event_bus.emit("tool_start", {"tool": self._get_name(tool)})
 
-    def on_tool_end(self, run_context, tool, **kwargs: Any) -> None:  # type: ignore[override]
+    async def on_tool_end(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         if not self.event_bus:
             return
-        self.event_bus.emit("tool_end", {"tool": getattr(tool, "name", str(tool))})
+        tool = kwargs.get("tool") or self._get_arg(args, 1)
+        self.event_bus.emit("tool_end", {"tool": self._get_name(tool)})
 
-    def on_llm_start(self, run_context, **kwargs: Any) -> None:  # type: ignore[override]
+    async def on_llm_start(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         if not self.event_bus:
             return
         self.event_bus.emit("llm_start", {})
 
-    def on_llm_end(self, run_context, **kwargs: Any) -> None:  # type: ignore[override]
+    async def on_llm_end(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         if not self.event_bus:
             return
         self.event_bus.emit("llm_end", {})
 
-    def on_handoff(self, run_context, from_agent, to_agent, **kwargs: Any) -> None:  # type: ignore[override]
+    async def on_handoff(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         if not self.event_bus:
             return
+        from_agent = kwargs.get("from_agent") or self._get_arg(args, 1)
+        to_agent = kwargs.get("to_agent") or self._get_arg(args, 2)
         self.event_bus.emit(
             "handoff",
             {
-                "from": getattr(from_agent, "name", str(from_agent)),
-                "to": getattr(to_agent, "name", str(to_agent)),
+                "from": self._get_name(from_agent),
+                "to": self._get_name(to_agent),
             },
         )

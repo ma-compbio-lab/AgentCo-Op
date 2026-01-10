@@ -43,7 +43,7 @@ log:
   use_icons: true
   preview_chars: 200
   show_prompts: false
-  show_outputs: false
+  show_outputs: true
 
 repair:
   enabled: true
@@ -51,7 +51,7 @@ repair:
   template_mode: auto
 
 memory:
-  enabled: false
+  enabled: true
   db_path: memory/agent_cop.db
   entity_id: default
   top_k: 3

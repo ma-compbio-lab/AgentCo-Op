@@ -182,4 +182,9 @@ HookManager supports:
 - 2025-12-30: refreshed Streamlit UI with a dark theme, new typography, and improved layout styling.
 - 2025-12-30: updated ChatStore to handle async SQLiteSession APIs and removed clear_session coroutine warnings.
 - 2025-12-30: added MCP manager, config, and per-step MCP routing with tool filtering and prompt overrides.
+- 2025-12-30: fixed EventStreamHooks to inherit the correct SDK hook base (RunHooks/RunHooksBase).
+- 2025-12-30: made EventStreamHooks methods async to satisfy SDK hook await requirements.
+- 2025-12-30: aligned EventStreamHooks hook signatures with SDK call arguments.
+- 2025-12-30: made EventStreamHooks accept flexible hook signatures to avoid SDK version mismatches.
+- 2025-12-30: fixed streamed run handling to support sync/async `Runner.run_streamed` return types.
 - 2025-12-30: excluded third_party tests from pytest collection via `pytest.ini`.
