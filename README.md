@@ -125,6 +125,8 @@ Controls:
 ```bash
 task.allow_web_search_for_spec=auto   # auto | on | off
 task.spec_max_search_queries=2
+task.task_type=auto                  # auto | coding | research | analysis | general
+task.prompt_verbosity=normal         # minimal | normal | verbose
 ```
 
 Example:
@@ -194,6 +196,26 @@ tool.run_allow_net=false
 tool.default_timeout_s=300
 tool.docker_repair_max_rounds=2
 ```
+
+## Prompt Verbosity + Task Type
+
+You can tune prompt verbosity and task-type guidance via config:
+
+```bash
+task.task_type=coding
+task.prompt_verbosity=verbose
+```
+
+Task types:
+- `coding`: focuses on correctness, edge cases, tests.
+- `research`: prioritizes evidence and citations.
+- `analysis`: emphasizes assumptions, metrics, and reproducible reasoning.
+- `general`: concise, goal-focused delivery.
+
+Verbosity levels:
+- `minimal`: shortest guidance.
+- `normal`: balanced guidance (default).
+- `verbose`: step-by-step instructions + examples.
 
 ## MCP (Model Context Protocol)
 

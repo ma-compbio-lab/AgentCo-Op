@@ -18,6 +18,8 @@ task:
   allow_tool_search: auto
   tool_max_candidates: 5
   tool_max_search_queries: 3
+  task_type: auto
+  prompt_verbosity: normal
   input_modalities:
     - text
   output_modalities:

@@ -20,6 +20,8 @@ class TaskSpec(BaseModel):
     max_latency_s: Optional[float] = None
     input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     output_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    task_type: Literal["auto", "coding", "research", "analysis", "general"] = "auto"
+    prompt_verbosity: Literal["minimal", "normal", "verbose"] = "normal"
     allow_web_search_for_spec: Literal["auto", "on", "off"] = "auto"
     spec_max_search_queries: int = 2
     allow_tool_search: Literal["auto", "on", "off"] = "auto"

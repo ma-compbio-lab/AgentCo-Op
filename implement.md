@@ -54,6 +54,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 
 ## Data Contracts (core/contracts.py)
 - TaskSpec: user goal, constraints, criteria, budgets, modalities, and optional chat_context.
+- TaskSpec includes prompt control: `task_type` and `prompt_verbosity`.
 - TaskSpec includes spec metadata: `spec_source/spec_confidence/spec_notes/spec_evidence`.
 - AgentSpec: capabilities and IO metadata.
 - Message: standardized inter-agent envelope.
@@ -106,6 +107,9 @@ HookManager supports:
 - Spec enrichment:
   - `task.allow_web_search_for_spec=auto` (auto|on|off)
   - `task.spec_max_search_queries=2`
+- Prompt tuning:
+  - `task.task_type=auto` (auto|coding|research|analysis|general)
+  - `task.prompt_verbosity=normal` (minimal|normal|verbose)
 - Tool discovery:
   - `tool.enabled=true`
   - `task.allow_tool_search=auto` (auto|on|off)
@@ -188,4 +192,5 @@ HookManager supports:
 - 2025-12-30: made EventStreamHooks accept flexible hook signatures to avoid SDK version mismatches.
 - 2025-12-30: fixed streamed run handling to support sync/async `Runner.run_streamed` return types.
 - 2025-12-30: expanded prompts with detailed steps, examples, and edge-case guidance.
+- 2025-12-30: added task-type and verbosity controls to prompts via TaskSpec.
 - 2025-12-30: excluded third_party tests from pytest collection via `pytest.ini`.

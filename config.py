@@ -11,6 +11,8 @@ class TaskConfig:
     budget_tokens: int = 8000
     input_modalities: list[str] = field(default_factory=lambda: ["text"])
     output_modalities: list[str] = field(default_factory=lambda: ["text"])
+    task_type: str = "auto"  # auto | coding | research | analysis | general
+    prompt_verbosity: str = "normal"  # minimal | normal | verbose
     allow_web_search_for_spec: str = "auto"
     spec_max_search_queries: int = 2
     allow_tool_search: str = "auto"

@@ -62,6 +62,8 @@ async def chat_turn_async(
         budget_tokens=task_cfg.budget_tokens,
         input_modalities=task_cfg.input_modalities,
         output_modalities=task_cfg.output_modalities,
+        task_type=task_cfg.task_type,
+        prompt_verbosity=task_cfg.prompt_verbosity,
         allow_web_search_for_spec=task_cfg.allow_web_search_for_spec,
         spec_max_search_queries=task_cfg.spec_max_search_queries,
         allow_tool_search=task_cfg.allow_tool_search,
