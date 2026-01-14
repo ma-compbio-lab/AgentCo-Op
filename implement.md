@@ -194,5 +194,5 @@ HookManager supports:
 - 2025-12-30: expanded prompts with detailed steps, examples, and edge-case guidance.
 - 2025-12-30: added task-type and verbosity controls to prompts via TaskSpec.
 - 2025-12-30: added a minimal animated spinner and bot prefix for terminal chat responses.
-- 2025-12-30: switched terminal chat spinner to an animated progress bar style.
+- 2025-12-30: reverted terminal chat spinner back to the loading icon animation.
 - 2025-12-30: excluded third_party tests from pytest collection via `pytest.ini`.
