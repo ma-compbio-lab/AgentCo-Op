@@ -52,18 +52,20 @@ def _colorize(text: str, color: str, enabled: bool) -> str:
 
 
 class _Spinner:
-    def __init__(self, label: str, use_color: bool) -> None:
+    def __init__(self, label: str, use_color: bool, width: int = 60) -> None:
         self._label = label
         self._use_color = use_color
+        self._width = max(10, width)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._frames = ["|", "/", "-", "\\"]
         self._lock = threading.Lock()
+        self._progress = 0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._progress = 0
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -77,22 +79,30 @@ class _Spinner:
                 sys.stdout.flush()
 
     def _run(self) -> None:
-        idx = 0
         while not self._stop.is_set():
-            frame = self._frames[idx % len(self._frames)]
-            line = f"{frame} {self._label}"
+            line = self._render_bar()
             line = _colorize(line, "yellow", self._use_color)
             with self._lock:
                 sys.stdout.write("\r" + line)
                 sys.stdout.flush()
-            idx += 1
-            time.sleep(0.12)
+            self._progress += 1
+            if self._progress > self._width:
+                self._progress = 0
+            time.sleep(0.08)
+
+    def _render_bar(self) -> str:
+        filled = min(self._progress, self._width)
+        head = ">" if filled < self._width else ""
+        tail_len = self._width - filled - (1 if head else 0)
+        bar = "=" * filled + head + (" " * max(0, tail_len))
+        percent = int((filled / self._width) * 100)
+        return f"[{bar}] {filled}/{self._width} ({percent}%) {self._label}"
 
 
 class _ChatPrinter:
     def __init__(self, use_color: bool) -> None:
         self._use_color = use_color
-        self._spinner = _Spinner("[BOT] thinking", use_color)
+        self._spinner = _Spinner("[BOT] thinking", use_color, width=60)
         self._response_started = False
         self._lock = threading.Lock()
 
