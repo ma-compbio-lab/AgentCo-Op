@@ -1,25 +1,12 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import inspect
-from typing import Any, Iterator
+from typing import Any
 
 from agents import RunConfig, Runner
 from types import SimpleNamespace
 
 from core.context import AppContext
-
-
-@contextmanager
-def optional_trace(name: str, group_id: str, metadata: dict[str, Any] | None = None) -> Iterator[None]:
-    # Allow older SDK versions without RunConfig support.
-    try:
-        from agents.tracing import trace
-    except ImportError:
-        yield
-        return
-    with trace(name, group_id=group_id, metadata=metadata or {}):
-        yield
 
 
 async def run_agent(

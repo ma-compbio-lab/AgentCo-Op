@@ -85,6 +85,7 @@ exec:
   workspace_root: .
   require_approval: true
   max_output_chars: 4000
+  # Writes outside workspace_root are blocked; prompts appear for writes within the workspace.
 
 mcp:
   enabled: false

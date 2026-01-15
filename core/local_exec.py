@@ -37,6 +37,7 @@ _GIT_READ_CMDS = {"status", "diff", "log", "show", "branch", "rev-parse", "ls-fi
 _GIT_WRITE_CMDS = {"add", "checkout", "commit", "reset", "rm", "mv", "clean", "apply", "revert"}
 
 _REDIRECT_RE = re.compile(r"(?:^|\\s)(?:>>|>|2>|&>)\\s*(\\S+)")
+_SHELL_COMPLEX_RE = re.compile(r"(?:^|\\s)(?:\\|\\||&&|;|\\|)(?:\\s|$)")
 
 
 @dataclass
@@ -90,6 +91,7 @@ class LocalExecutor:
         if not command or not command.strip():
             raise ValueError("Command is empty.")
         run_cwd = self._resolve_cwd(cwd)
+        # Guardrail: reject complex shell pipelines and multi-command chains to avoid hidden writes.
         write_intent, write_paths, is_dir_flags = self._analyze_command(command, run_cwd)
         if write_intent and not write_paths:
             raise PermissionError(
@@ -131,13 +133,15 @@ class LocalExecutor:
 
     def _analyze_command(self, command: str, cwd: Path) -> tuple[bool, list[Path], list[bool]]:
         tokens = _safe_split(command)
+        if _SHELL_COMPLEX_RE.search(command):
+            return True, [], []
         if not tokens:
             return False, [], []
         cmd = tokens[0]
         subcmd = tokens[1] if len(tokens) > 1 else ""
         redir_paths = _extract_redirections(command, cwd)
         has_redir = bool(redir_paths)
-        if cmd in _READ_ONLY_CMDS and not has_redir:
+        if cmd in _READ_ONLY_CMDS and not has_redir and not _has_write_flags(cmd, tokens):
             return False, [], []
 
         write_intent = True
@@ -215,6 +219,14 @@ def _resolve_path(path_str: str, cwd: Path) -> Path:
 def _extract_redirections(command: str, cwd: Path) -> list[Path]:
     matches = _REDIRECT_RE.findall(command)
     return [_resolve_path(match, cwd) for match in matches]
+
+
+def _has_write_flags(cmd: str, tokens: list[str]) -> bool:
+    if cmd == "sed":
+        return any(token.startswith("-i") or token == "--in-place" for token in tokens[1:])
+    if cmd == "find":
+        return any(token in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for token in tokens[1:])
+    return False
 
 
 def _is_relative_to(path: Path, base: Path) -> bool:

@@ -78,6 +78,7 @@ def build_runtime(
 
     local_executor = None
     if exec_cfg.enabled:
+        # Local execution is opt-in and gated by workspace-only write checks.
         approval = WriteApproval(Path(exec_cfg.workspace_root).resolve())
         local_executor = LocalExecutor(exec_cfg, approval)
 

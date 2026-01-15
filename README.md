@@ -207,6 +207,8 @@ allowed anywhere; writes require approval and are blocked outside the workspace.
 python run.py exec.enabled=true exec.workspace_root=. exec.require_approval=true
 ```
 
+When a write is requested, the terminal prompts with: allow once, allow always for the path, or deny.
+
 Sample tasks are listed in `conf/exec_examples.yaml`.
 
 ## Prompt Verbosity + Task Type
