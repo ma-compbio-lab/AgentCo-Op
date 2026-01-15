@@ -420,7 +420,8 @@ def build_aggregate_prompt(
     return "\n".join(parts)
 
 
-def build_evidence_prompt(request, memory_block: str | None = None) -> str:
+def build_evidence_prompt(request, memory_block: str | None = None, *, verbosity: str = "normal") -> str:
+    verbosity = (verbosity or "normal").strip().lower()
     parts = [
         "### Evidence Request",
         "Return EvidencePack JSON only. No extra text.",

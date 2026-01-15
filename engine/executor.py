@@ -48,7 +48,13 @@ class ExecutionEngine:
 
         # Evidence is collected once up front to avoid repeated web searches per step.
         if plan.needs_web_search and plan.evidence_requests:
-            await self._run_evidence_steps(plan.evidence_requests, state, ctx, session=session)
+            await self._run_evidence_steps(
+                plan.evidence_requests,
+                state,
+                ctx,
+                session=session,
+                verbosity=task.prompt_verbosity,
+            )
         if plan.tool_plan:
             await self._run_tool_plan(task, plan.tool_plan, state, ctx)
 
@@ -357,7 +363,15 @@ class ExecutionEngine:
             cleaned = cleaned.replace("dockerfile", "").replace("Dockerfile", "")
         return cleaned.strip()
 
-    async def _run_evidence_steps(self, requests: list[EvidenceRequest], state: dict, ctx, session=None) -> None:
+    async def _run_evidence_steps(
+        self,
+        requests: list[EvidenceRequest],
+        state: dict,
+        ctx,
+        session=None,
+        *,
+        verbosity: str = "normal",
+    ) -> None:
         from utils import clip_text, log_event, should_show_outputs, should_show_prompts
 
         if "researcher" not in self.agent_pool:
@@ -379,7 +393,7 @@ class ExecutionEngine:
                 if memory and memory.enabled:
                     recall = memory.recall_agent("researcher", query=request.query, k=memory.top_k)
                     memory_block = format_memory_block(recall, title="Retrieved Memory (researcher)")
-                prompt = build_evidence_prompt(request, memory_block=memory_block)
+                prompt = build_evidence_prompt(request, memory_block=memory_block, verbosity=verbosity)
                 if should_show_prompts():
                     log_event(
                         "ENGINE",

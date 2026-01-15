@@ -62,3 +62,4 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Added Repo2Run + Docker repair loop.
 - Added chat REPL + Streamlit UI with streaming logs.
 - Added local execution tool with workspace-only approvals.
+- Fixed evidence prompt verbosity handling to prevent runtime errors.
