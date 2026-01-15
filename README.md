@@ -52,6 +52,87 @@ python run.py \
   task.goal="Summarize key risks in this plan."
 ```
 
+## Detailed Usage Guide
+
+### 1) Configure a task (YAML or CLI)
+
+Default config lives in `conf/config.yaml`. Edit it directly, or override via CLI:
+
+```bash
+python run.py \
+  method=orchestrated \
+  task.goal="Implement a Python function levenshtein_distance(a: str, b: str) -> int." \
+  'task.constraints=["Use Python 3.10 syntax.","No external libraries."]' \
+  'task.success_criteria=["Include 3 tests."]'
+```
+
+Tip: in zsh, quote list overrides to avoid globbing errors.
+
+### 2) Choose prompt guidance (task type + verbosity)
+
+```bash
+python run.py task.task_type=coding task.prompt_verbosity=verbose
+```
+
+### 3) Enable spec enrichment (auto constraints/criteria)
+
+If constraints or success criteria are missing, the spec designer/critic will fill them in:
+
+```bash
+python run.py task.constraints=[] task.success_criteria=[]
+```
+
+### 4) Evidence-first web search (research tasks)
+
+```bash
+python run.py task.allow_web_search_for_spec=auto task.spec_max_search_queries=2
+```
+
+### 5) Tool discovery + Docker sandbox
+
+```bash
+python run.py tool.enabled=true task.allow_tool_search=on
+```
+
+Repo2Run (Dockerfile generation for GitHub repos):
+
+```bash
+python run.py tool.enabled=true tool.repo2run_enabled=true
+```
+
+### 6) MCP tools/data/prompts
+
+Enable MCP and define servers in `conf/config.yaml`:
+
+```bash
+python run.py mcp.enabled=true
+```
+
+### 7) Local execution (workspace-only writes)
+
+```bash
+python run.py exec.enabled=true exec.workspace_root=. exec.require_approval=true
+```
+
+### 8) Multi-turn chat (terminal / UI)
+
+```bash
+python cli/chat.py --config conf/config.yaml --session-id demo
+streamlit run ui/app.py
+```
+
+### 9) Batch eval
+
+```bash
+python eval/harness.py tasks=data/tasks.jsonl method=orchestrated max_samples=10
+```
+
+### 10) Logging + debug
+
+```bash
+python run.py log.level=debug log.show_prompts=true log.show_outputs=true
+```
+
 ## Multi-Turn Chat (Terminal)
 
 ```bash
