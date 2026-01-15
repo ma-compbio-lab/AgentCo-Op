@@ -9,6 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from config import (
     AppConfig,
     ChatConfig,
+    ExecConfig,
     LogConfig,
     MCPConfig,
     MemoryConfig,
@@ -35,6 +36,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
         repair_dict = cfg_obj.get("repair", {})
         memory_dict = cfg_obj.get("memory", {})
         tool_dict = cfg_obj.get("tool", {})
+        exec_dict = cfg_obj.get("exec", {})
         mcp_dict = cfg_obj.get("mcp", {})
         chat_dict = cfg_obj.get("chat", {})
         return AppConfig(
@@ -46,6 +48,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
             repair=RepairConfig(**repair_dict) if isinstance(repair_dict, dict) else RepairConfig(),
             memory=MemoryConfig(**memory_dict) if isinstance(memory_dict, dict) else MemoryConfig(),
             tool=ToolConfig(**tool_dict) if isinstance(tool_dict, dict) else ToolConfig(),
+            exec=ExecConfig(**exec_dict) if isinstance(exec_dict, dict) else ExecConfig(),
             mcp=MCPConfig(**mcp_dict) if isinstance(mcp_dict, dict) else MCPConfig(),
             chat=ChatConfig(**chat_dict) if isinstance(chat_dict, dict) else ChatConfig(),
         )
@@ -102,6 +105,7 @@ async def run_async(cfg: DictConfig) -> None:
         repair=app_cfg.repair,
         memory_cfg=app_cfg.memory,
         tool_cfg=app_cfg.tool,
+        exec_cfg=app_cfg.exec,
         mcp_cfg=app_cfg.mcp,
     )
 

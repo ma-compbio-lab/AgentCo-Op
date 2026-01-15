@@ -15,6 +15,7 @@ Agents SDK with a LatentMAS-like layout (`run.py`, `models.py`, `methods/`).
 - Tool Intelligence: optional tool/repo discovery + plan synthesis before execution.
 - MCP Manager: optional MCP server registry for tool/data/prompt access with filtering/caching.
 - Chat I/O layer: multi-turn chat wrapper for terminal and Streamlit UI.
+- Local Exec: optional local shell execution tool with workspace-only writes and user approval.
 - Cross-cutting services:
   - Registry: agent capability catalog used for routing.
   - BudgetRouter: model routing by role and budget.
@@ -123,6 +124,11 @@ HookManager supports:
   - `mcp.enabled=true`
   - define `mcp.servers` in `conf/config.yaml` (stdio/http/sse)
   - optional `mcp.prompts` to override agent instructions per server prompt
+- Local execution:
+  - `exec.enabled=true`
+  - `exec.workspace_root=.` (writes restricted to this folder)
+  - `exec.require_approval=true` (prompts on writes)
+  - sample tasks in `conf/exec_examples.yaml`
 - Chat:
   - `python cli/chat.py --config conf/config.yaml --session-id demo`
   - `streamlit run ui/app.py`
@@ -150,6 +156,7 @@ HookManager supports:
 - Pytest imports are anchored via `tests/conftest.py` to ensure repo root is on `sys.path`.
 - Memory is optional; enable via `memory.enabled=true` and initialize storage with `scripts/memory_init.py`.
 - Spec enrichment uses `spec_designer` and `spec_critic` agents when constraints/criteria are missing.
+- Local execution is opt-in and requires per-write approval; writes outside the workspace are blocked.
 
 ## Maintenance Record
 - 2025-12-22: initial implementation of core architecture, methods, protocols,
@@ -196,3 +203,4 @@ HookManager supports:
 - 2025-12-30: added a minimal animated spinner and bot prefix for terminal chat responses.
 - 2025-12-30: reverted terminal chat spinner back to the loading icon animation.
 - 2025-12-30: excluded third_party tests from pytest collection via `pytest.ini`.
+- 2025-12-30: added local execution tool with workspace-only write approvals and sample exec configs.

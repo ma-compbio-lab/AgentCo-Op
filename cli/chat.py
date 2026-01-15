@@ -32,6 +32,7 @@ def build_runtime_from_config(app_cfg):
         repair=app_cfg.repair,
         memory_cfg=app_cfg.memory,
         tool_cfg=app_cfg.tool,
+        exec_cfg=app_cfg.exec,
         mcp_cfg=app_cfg.mcp,
     )
 

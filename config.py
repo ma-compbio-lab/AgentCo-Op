@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from core.local_exec import ExecConfig
+
 
 @dataclass
 class TaskConfig:
@@ -91,6 +93,7 @@ class AppConfig:
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
+    exec: ExecConfig = field(default_factory=ExecConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
 
@@ -123,5 +126,6 @@ class EvalConfig:
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
+    exec: ExecConfig = field(default_factory=ExecConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     max_samples: int | None = None

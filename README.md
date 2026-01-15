@@ -12,6 +12,7 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - Spec enrichment: auto-generate missing constraints/success criteria.
 - Auto repair: judge failure -> repair -> re-judge (multi-round).
 - Tool discovery + optional Docker sandbox execution (tool/repo planning).
+- Optional local shell execution with workspace-only writes and approval prompts.
 - MCP integration for tools/data/prompts with tool filtering and caching (optional).
 - Optional Memori-backed long-term memory (per-agent + global).
 - Hydra configs and CLI overrides for experiments.
@@ -196,6 +197,17 @@ tool.run_allow_net=false
 tool.default_timeout_s=300
 tool.docker_repair_max_rounds=2
 ```
+
+## Local Execution (Workspace-Only Writes)
+
+Enable the local execution tool to run shell commands safely inside the workspace. Reads are
+allowed anywhere; writes require approval and are blocked outside the workspace.
+
+```bash
+python run.py exec.enabled=true exec.workspace_root=. exec.require_approval=true
+```
+
+Sample tasks are listed in `conf/exec_examples.yaml`.
 
 ## Prompt Verbosity + Task Type
 

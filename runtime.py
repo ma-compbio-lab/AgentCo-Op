@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from app_agents.factory import build_default_agents
-from config import MCPConfig, MemoryConfig, RepairConfig, ToolConfig
+from config import ExecConfig, MCPConfig, MemoryConfig, RepairConfig, ToolConfig
 from core.budget import BudgetRouter
 from core.cache import Cache
 from core.context import AppContext
 from core.docker_runtime import DockerRuntime
 from core.hooks import HookManager
+from core.local_exec import LocalExecutor, WriteApproval
 from core.memory import Memory
 from core.observability import Observability
 from core.registry import Registry
@@ -30,6 +32,7 @@ class Runtime:
     run_hooks: object | None
     repair: RepairConfig
     tool_cfg: ToolConfig
+    exec_cfg: ExecConfig
     mcp_cfg: MCPConfig
     docker_runtime: DockerRuntime | None
 
@@ -40,6 +43,7 @@ def build_runtime(
     repair: RepairConfig | None = None,
     memory_cfg: MemoryConfig | None = None,
     tool_cfg: ToolConfig | None = None,
+    exec_cfg: ExecConfig | None = None,
     mcp_cfg: MCPConfig | None = None,
 ) -> Runtime:
     from utils import log_event
@@ -52,6 +56,7 @@ def build_runtime(
     cache = Cache()
     safety = SafetyGate()
     tool_cfg = tool_cfg or ToolConfig()
+    exec_cfg = exec_cfg or ExecConfig()
     mcp_cfg = mcp_cfg or MCPConfig()
     docker_runtime = None
     if tool_cfg.enabled and tool_cfg.use_docker:
@@ -70,6 +75,11 @@ def build_runtime(
             observability=observability,
             hooks=hooks,
         )
+
+    local_executor = None
+    if exec_cfg.enabled:
+        approval = WriteApproval(Path(exec_cfg.workspace_root).resolve())
+        local_executor = LocalExecutor(exec_cfg, approval)
 
     run_id = str(uuid4())
     session_id = run_id
@@ -94,6 +104,7 @@ def build_runtime(
         run_id=run_id,
         session_id=session_id,
         docker_runtime=docker_runtime,
+        local_executor=local_executor,
         mcp_manager=mcp_manager,
     )
     log_event(
@@ -121,6 +132,7 @@ def build_runtime(
         run_hooks=None,
         repair=repair or RepairConfig(),
         tool_cfg=tool_cfg,
+        exec_cfg=exec_cfg,
         mcp_cfg=mcp_cfg,
         docker_runtime=docker_runtime,
     )

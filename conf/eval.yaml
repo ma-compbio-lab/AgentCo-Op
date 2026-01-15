@@ -48,6 +48,12 @@ tool:
   repo2run_prefer_existing: true
   repo2run_work_dir: logs/repo2run
 
+exec:
+  enabled: false
+  workspace_root: .
+  require_approval: true
+  max_output_chars: 4000
+
 mcp:
   enabled: false
   approval_mode: auto

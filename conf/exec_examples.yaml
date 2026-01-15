@@ -1,0 +1,46 @@
+defaults:
+  - _self_
+
+# Local execution examples (copy a task block into conf/config.yaml or override via CLI).
+exec:
+  enabled: true
+  workspace_root: .
+  require_approval: true
+  max_output_chars: 4000
+
+examples:
+  - name: todo_report
+    task:
+      goal: "Scan the workspace for TODO comments and write a report to logs/todo_report.txt."
+      constraints:
+        - "Use the local_execute tool for filesystem interaction."
+        - "Do not modify source files; only write to logs/todo_report.txt."
+        - "Report entries as: <file>:<line> - <text>."
+      success_criteria:
+        - "logs/todo_report.txt exists and is non-empty."
+        - "Report includes file paths and line numbers."
+        - "Provide a summary count of TODO entries."
+
+  - name: repo_snapshot
+    task:
+      goal: "Create a repository snapshot listing and save it to logs/structure.txt."
+      constraints:
+        - "Use local_execute to gather the listing."
+        - "Include top-level folders and files."
+        - "Write only to logs/structure.txt."
+      success_criteria:
+        - "logs/structure.txt exists."
+        - "First line includes a timestamp."
+        - "Output includes top-level items."
+
+  - name: dataset_stub
+    task:
+      goal: "Create a small CSV stub at data/sample_users.csv with 5 rows of fake users."
+      constraints:
+        - "Use local_execute to create the file."
+        - "Columns: id,name,email,role."
+        - "Write only under data/."
+      success_criteria:
+        - "data/sample_users.csv exists."
+        - "Contains a header + 5 data rows."
+        - "Values are syntactically valid (email-like)."
