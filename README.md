@@ -436,6 +436,24 @@ python run.py log.level=debug log.show_prompts=true log.show_outputs=true log.pr
 pytest -q
 ```
 
+## Benchmark: MedQA (bigbio/med_qa)
+
+Install dependencies:
+
+```bash
+pip install datasets
+```
+
+Run evaluation (uses `conf/config_w_api.yaml` by default):
+
+```bash
+python eval/med_qa_eval.py --config conf/config_w_api.yaml --split test --max-samples 50
+```
+
+Outputs:
+- `logs/med_qa_results.jsonl`: per-sample predictions.
+- `logs/med_qa_summary.json`: accuracy summary.
+
 ## Project Layout
 
 ```

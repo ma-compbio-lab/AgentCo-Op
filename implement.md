@@ -56,6 +56,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 ## Tests
 - `pytest -q` (third_party tests are excluded).
 - Added focused unit tests for local execution in `tests/test_local_exec.py`.
+- MedQA benchmark runner: `eval/med_qa_eval.py` (requires `datasets`).
 
 ## Recent Maintenance (Condensed)
 - Added MCP manager + tool filtering.
@@ -63,3 +64,4 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Added chat REPL + Streamlit UI with streaming logs.
 - Added local execution tool with workspace-only approvals.
 - Fixed evidence prompt verbosity handling to prevent runtime errors.
+- Added MedQA evaluation script and dataset dependency.
