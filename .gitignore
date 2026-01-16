@@ -213,3 +213,4 @@ third_party/
 data/
 
 AGENTS.md
+conf/config_w_api.yaml
