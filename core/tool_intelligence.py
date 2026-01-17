@@ -145,7 +145,7 @@ async def prepare_tool_plan(
         max_turns=6,
         hooks=run_hooks,
     )
-    plan = _coerce_tool_plan(getattr(plan_result, "final_output", None))
+    plan = _coerce_tool_plan(getattr(plan_result, "final_output", None), fallback=selected)
     if not plan:
         log_event("TOOLS", "invalid", "tool plan output invalid", level="warn")
         return None
@@ -257,12 +257,15 @@ def _coerce_candidate(obj: Any) -> ToolCandidate | None:
     return None
 
 
-def _coerce_tool_plan(obj: Any) -> ToolPlan | None:
+def _coerce_tool_plan(obj: Any, fallback: ToolCandidate | None = None) -> ToolPlan | None:
     if isinstance(obj, ToolPlan):
         return obj
     if isinstance(obj, dict):
         try:
-            return ToolPlan(**obj)
+            payload = dict(obj)
+            if "selected_tool" not in payload and fallback is not None:
+                payload["selected_tool"] = fallback.model_dump(mode="json")
+            return ToolPlan(**payload)
         except Exception:
             return None
     return None

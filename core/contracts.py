@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 ContentType = Literal["text", "json", "tool_call", "tool_result", "file_ref"]
 
@@ -58,6 +58,16 @@ class EvidenceRequest(BaseModel):
     allowed_domains: list[str] = Field(default_factory=list)
     max_sources: int = 10
     require_citations: bool = True
+
+    @field_validator("allowed_domains", mode="before")
+    @classmethod
+    def _coerce_allowed_domains(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+            return items or [value]
+        return value
 
 
 class EvidenceItem(BaseModel):

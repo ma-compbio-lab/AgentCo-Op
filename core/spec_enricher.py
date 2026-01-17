@@ -264,7 +264,15 @@ def _coerce_evidence_pack(request: EvidenceRequest, data: object | None) -> Evid
         return data
     if isinstance(data, dict):
         try:
-            return EvidencePack(**data)
+            payload = dict(data)
+            req_payload = payload.get("request")
+            if not req_payload:
+                payload["request"] = request.model_dump()
+            elif isinstance(req_payload, dict) and req_payload.get("allowed_domains") is None:
+                req_payload = dict(req_payload)
+                req_payload["allowed_domains"] = []
+                payload["request"] = req_payload
+            return EvidencePack(**payload)
         except Exception:
             return None
     return None

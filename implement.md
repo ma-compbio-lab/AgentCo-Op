@@ -70,3 +70,5 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Fixed evidence prompt verbosity handling to prevent runtime errors.
 - Added MedQA evaluation script and dataset dependency.
 - MedQA loader blocks dataset scripts and requires Parquet/Arrow or local data-dir.
+- Normalized EvidencePack request.allowed_domains to avoid null parsing errors.
+- ToolPlan parsing now backfills missing selected_tool with the chosen candidate.
