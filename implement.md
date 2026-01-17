@@ -57,6 +57,10 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - `pytest -q` (third_party tests are excluded).
 - Added focused unit tests for local execution in `tests/test_local_exec.py`.
 - MedQA benchmark runner: `eval/med_qa_eval.py` (requires `datasets`).
+- Hugging Face download helpers: `download_med_qa.sh` and `download_med_qa.py` (repo files only).
+- MedQA supports local JSONL folder via `--jsonl-dir`.
+- MedQA eval shows a single-line progress bar and suppresses per-sample logs.
+- MedQA summary includes invalid-output rate, top-3/5 accuracy, avg tokens, and meta_info breakdowns.
 
 ## Recent Maintenance (Condensed)
 - Added MCP manager + tool filtering.
@@ -65,3 +69,4 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Added local execution tool with workspace-only approvals.
 - Fixed evidence prompt verbosity handling to prevent runtime errors.
 - Added MedQA evaluation script and dataset dependency.
+- MedQA loader blocks dataset scripts and requires Parquet/Arrow or local data-dir.

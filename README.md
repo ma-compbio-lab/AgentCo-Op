@@ -401,6 +401,12 @@ Clear memory:
 python scripts/memory_clear.py --all
 ```
 
+Note: Memori requires `huggingface_hub<1.0`. If memory import fails, run:
+
+```bash
+pip install "huggingface_hub>=0.34,<1.0"
+```
+
 ## Auto Repair (Judge -> Repair -> Re-judge)
 
 Enable multi-round repair when judge fails:
@@ -450,9 +456,23 @@ Run evaluation (uses `conf/config_w_api.yaml` by default):
 python eval/med_qa_eval.py --config conf/config_w_api.yaml --split test --max-samples 50
 ```
 
+Offline/local dataset (after `datasets.Dataset.save_to_disk`):
+
+```bash
+python eval/med_qa_eval.py --config conf/config_w_api.yaml --data-dir /path/to/med_qa_saved --split test
+```
+
+Local MedQA JSONL (downloaded from dataset repo):
+
+```bash
+python eval/med_qa_eval.py --config conf/config_w_api.yaml --jsonl-dir data/med_qa_repo/data_clean/questions/US --split test
+```
+
 Outputs:
 - `logs/med_qa_results.jsonl`: per-sample predictions.
 - `logs/med_qa_summary.json`: accuracy summary.
+Summary metrics include accuracy, top-3/5 accuracy, invalid-output rate, average tokens,
+and a per-`meta_info` breakdown.
 
 ## Project Layout
 
