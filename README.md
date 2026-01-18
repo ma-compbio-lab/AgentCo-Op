@@ -127,6 +127,45 @@ streamlit run ui/app.py
 python eval/harness.py tasks=data/tasks.jsonl method=orchestrated max_samples=10
 ```
 
+### 10) SpatialBench eval
+
+SpatialBench lives in `third_party/spatialbench`. The eval wrapper uses the same
+config interface as MedQA (`conf/config_w_api.yaml` by default) and runs your
+workflow against SpatialBench eval JSON files.
+
+Requirements:
+- Install SpatialBench deps (see `third_party/spatialbench/pyproject.toml`)
+- Install `latch` CLI if you want to download `latch://` data nodes
+- Set `LATCH_TOKEN` for private datasets
+
+Example (canonical evals):
+
+```bash
+python eval/spatialbench_eval.py \
+  --config conf/config_w_api.yaml \
+  --eval-dir third_party/spatialbench/evals_canonical \
+  --max-samples 2 \
+  --progress
+```
+
+If you want a quick pipeline check without downloading data:
+
+```bash
+python eval/spatialbench_eval.py \
+  --config conf/config_w_api.yaml \
+  --eval-path third_party/spatialbench/evals_canonical/qc/xenium_xenium_qc_filter_min_umi_counts.json \
+  --skip-download \
+  --progress
+```
+
+Tip: for non-interactive batch runs, disable local write approvals:
+
+```bash
+python eval/spatialbench_eval.py \
+  --config conf/config_w_api.yaml \
+  exec.require_approval=false
+```
+
 ### 10) Logging + debug
 
 ```bash

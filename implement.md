@@ -61,6 +61,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - MedQA supports local JSONL folder via `--jsonl-dir`.
 - MedQA eval shows a single-line progress bar and suppresses per-sample logs.
 - MedQA summary includes invalid-output rate, top-3/5 accuracy, avg tokens, and meta_info breakdowns.
+- SpatialBench benchmark runner: `eval/spatialbench_eval.py` (uses SpatialBench eval JSONs).
 
 ## Recent Maintenance (Condensed)
 - Added MCP manager + tool filtering.
@@ -69,6 +70,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Added local execution tool with workspace-only approvals.
 - Fixed evidence prompt verbosity handling to prevent runtime errors.
 - Added MedQA evaluation script and dataset dependency.
+- Added SpatialBench evaluation wrapper for canonical evals and custom eval JSONs.
 - MedQA loader blocks dataset scripts and requires Parquet/Arrow or local data-dir.
 - Normalized EvidencePack request.allowed_domains to avoid null parsing errors.
 - ToolPlan parsing now backfills missing selected_tool with the chosen candidate.
