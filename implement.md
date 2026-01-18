@@ -72,3 +72,4 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - MedQA loader blocks dataset scripts and requires Parquet/Arrow or local data-dir.
 - Normalized EvidencePack request.allowed_domains to avoid null parsing errors.
 - ToolPlan parsing now backfills missing selected_tool with the chosen candidate.
+- Expanded prompt templates with step-by-step guidance, tool/memory usage, and stronger module instructions.
