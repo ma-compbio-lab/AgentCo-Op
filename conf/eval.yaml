@@ -29,6 +29,15 @@ memory:
   store_judge_reports: true
   auto_build: false
 
+planning:
+  enabled: false
+  db_path: memory/planning.db
+  findings_db_path: null
+  progress_db_path: null
+  include_in_prompts: true
+  store_to_memory: true
+  max_items: 5
+
 tool:
   enabled: false
   use_docker: true

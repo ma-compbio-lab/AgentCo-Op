@@ -38,6 +38,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - MCP integration for tools/data/prompts with tool filtering + caching.
 - Local execution with workspace-only writes and approval prompts.
 - Multi-turn chat (terminal + Streamlit UI) with live logs/streaming.
+- Planning-with-memory (task plan/findings/progress stored in DB, injected into prompts when enabled).
 
 ## Config Summary (Hydra)
 - Task: `task.goal`, `task.constraints`, `task.success_criteria`,
@@ -52,6 +53,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Local exec writes are blocked outside `exec.workspace_root`.
 - Docker runs can disable network access and apply resource limits.
 - MCP tools should be filtered per-step and gated for sensitive actions.
+- Planning memory can be toggled; stored per task_id in SQLite DB files.
 
 ## Tests
 - `pytest -q` (third_party tests are excluded).
@@ -71,7 +73,11 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Fixed evidence prompt verbosity handling to prevent runtime errors.
 - Added MedQA evaluation script and dataset dependency.
 - Added SpatialBench evaluation wrapper for canonical evals and custom eval JSONs.
+- Added planning-with-memory storage and hooks (task plan/findings/progress in SQLite).
+- Added `conf/config_planning.yaml` sample that enables planning-with-memory with a complex task.
 - MedQA loader blocks dataset scripts and requires Parquet/Arrow or local data-dir.
 - Normalized EvidencePack request.allowed_domains to avoid null parsing errors.
 - ToolPlan parsing now backfills missing selected_tool with the chosen candidate.
 - Expanded prompt templates with step-by-step guidance, tool/memory usage, and stronger module instructions.
+- Fixed AppContext dataclass field order to avoid Python 3.12 init errors.
+- Normalized task config toggles so YAML booleans map to "auto/on/off".

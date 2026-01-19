@@ -275,6 +275,7 @@ async def run_eval(args: argparse.Namespace) -> None:
         log_dir=app_cfg.log_dir,
         repair=app_cfg.repair,
         memory_cfg=app_cfg.memory,
+        planning_cfg=app_cfg.planning,
         tool_cfg=app_cfg.tool,
         exec_cfg=app_cfg.exec,
         mcp_cfg=app_cfg.mcp,

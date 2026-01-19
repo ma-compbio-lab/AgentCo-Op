@@ -6,7 +6,17 @@ from omegaconf import DictConfig, OmegaConf
 
 import asyncio
 
-from config import EvalConfig, ExecConfig, LogConfig, MCPConfig, MemoryConfig, ModelConfig, RepairConfig, ToolConfig
+from config import (
+    EvalConfig,
+    ExecConfig,
+    LogConfig,
+    MCPConfig,
+    MemoryConfig,
+    ModelConfig,
+    PlanningConfig,
+    RepairConfig,
+    ToolConfig,
+)
 from data import load_tasks
 from eval.metrics import basic_metrics
 from methods.dispatcher import run_method
@@ -25,6 +35,7 @@ def to_eval_config(cfg: DictConfig) -> EvalConfig:
         log_dict = cfg_obj.get("log", {})
         repair_dict = cfg_obj.get("repair", {})
         memory_dict = cfg_obj.get("memory", {})
+        planning_dict = cfg_obj.get("planning", {})
         tool_dict = cfg_obj.get("tool", {})
         exec_dict = cfg_obj.get("exec", {})
         mcp_dict = cfg_obj.get("mcp", {})
@@ -36,6 +47,7 @@ def to_eval_config(cfg: DictConfig) -> EvalConfig:
             log=LogConfig(**log_dict) if isinstance(log_dict, dict) else LogConfig(),
             repair=RepairConfig(**repair_dict) if isinstance(repair_dict, dict) else RepairConfig(),
             memory=MemoryConfig(**memory_dict) if isinstance(memory_dict, dict) else MemoryConfig(),
+            planning=PlanningConfig(**planning_dict) if isinstance(planning_dict, dict) else PlanningConfig(),
             tool=ToolConfig(**tool_dict) if isinstance(tool_dict, dict) else ToolConfig(),
             exec=ExecConfig(**exec_dict) if isinstance(exec_dict, dict) else ExecConfig(),
             mcp=MCPConfig(**mcp_dict) if isinstance(mcp_dict, dict) else MCPConfig(),
@@ -75,6 +87,7 @@ async def run_async(cfg: DictConfig) -> None:
         log_dir=eval_cfg.log_dir,
         repair=eval_cfg.repair,
         memory_cfg=eval_cfg.memory,
+        planning_cfg=eval_cfg.planning,
         tool_cfg=eval_cfg.tool,
         exec_cfg=eval_cfg.exec,
         mcp_cfg=eval_cfg.mcp,

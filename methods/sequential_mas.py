@@ -26,6 +26,12 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
             k=memory.top_k,
         )
         memory_block = format_memory_block(recall, title="Historical Attempts")
+    planning_memory = getattr(runtime.context, "planning_memory", None)
+    plan_block = None
+    if planning_memory and getattr(planning_memory, "enabled", False):
+        plan_block = planning_memory.render_prompt_block(task)
+    if plan_block:
+        memory_block = "\n\n".join(block for block in [plan_block, memory_block] if block)
     mcp_manager = getattr(runtime.context, "mcp_manager", None)
     mcp_summary = None
     planner_mcp_prompt = None
@@ -61,6 +67,8 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     if memory and memory.enabled:
         recall = memory.recall_agent("worker", query=f"{task.goal} {task.goal}", k=memory.top_k)
         worker_memory_block = format_memory_block(recall, title="Retrieved Memory")
+    if plan_block:
+        worker_memory_block = "\n\n".join(block for block in [plan_block, worker_memory_block] if block)
     worker_prompt = build_task_prompt(
         "worker",
         task,

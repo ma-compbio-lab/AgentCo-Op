@@ -21,6 +21,26 @@ class TaskConfig:
     tool_max_candidates: int = 5
     tool_max_search_queries: int = 3
 
+    def __post_init__(self) -> None:
+        # Normalize YAML booleans like "on"/"off" into the expected string values.
+        self.allow_web_search_for_spec = _normalize_toggle(self.allow_web_search_for_spec)
+        self.allow_tool_search = _normalize_toggle(self.allow_tool_search)
+
+
+def _normalize_toggle(value: str | bool | None) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if value is None:
+        return "auto"
+    normalized = str(value).strip().lower()
+    if normalized in {"on", "off", "auto"}:
+        return normalized
+    if normalized in {"true", "yes", "1"}:
+        return "on"
+    if normalized in {"false", "no", "0"}:
+        return "off"
+    return normalized
+
 
 @dataclass
 class ModelConfig:
@@ -42,6 +62,17 @@ class MemoryConfig:
     store_agent_outputs: bool = True
     store_judge_reports: bool = True
     auto_build: bool = False
+
+
+@dataclass
+class PlanningConfig:
+    enabled: bool = False
+    db_path: str = "memory/planning.db"
+    findings_db_path: str | None = None
+    progress_db_path: str | None = None
+    include_in_prompts: bool = True
+    store_to_memory: bool = True
+    max_items: int = 5
 
 
 @dataclass
@@ -92,6 +123,7 @@ class AppConfig:
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    planning: PlanningConfig = field(default_factory=PlanningConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
     exec: ExecConfig = field(default_factory=ExecConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
@@ -125,6 +157,7 @@ class EvalConfig:
     log: "LogConfig" = field(default_factory=lambda: LogConfig())
     repair: "RepairConfig" = field(default_factory=lambda: RepairConfig())
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    planning: PlanningConfig = field(default_factory=PlanningConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
     exec: ExecConfig = field(default_factory=ExecConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)

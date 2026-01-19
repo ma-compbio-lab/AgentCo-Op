@@ -230,6 +230,10 @@ def build_task_prompt(
                 "### Edge Cases",
                 "- Handle empty inputs, boundary values, and error paths when relevant.",
                 "- If the task requests a format, follow it exactly.",
+                "### Error Recovery (3-Strike Rule)",
+                "1) Diagnose and fix the root cause.",
+                "2) If it fails again, change approach (different tool or method).",
+                "3) On a third failure, stop and ask for guidance with details.",
             ]
         )
     if verbosity == "verbose":

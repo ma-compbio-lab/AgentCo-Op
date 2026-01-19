@@ -15,6 +15,7 @@ It uses the OpenAI Agents SDK (no LangGraph) and keeps a LatentMAS-style layout.
 - Optional local shell execution with workspace-only writes and approval prompts.
 - MCP integration for tools/data/prompts with tool filtering and caching (optional).
 - Optional Memori-backed long-term memory (per-agent + global).
+- Optional planning-with-memory (task plan / findings / progress stored in DB).
 - Hydra configs and CLI overrides for experiments.
 - Multi-turn chat (terminal REPL + Streamlit UI) with live logs and streaming.
 - Colored debug logging with prompt/output previews.
@@ -538,3 +539,20 @@ ui/                 # Streamlit UI
 - If memory init fails, ensure `memori` and `sqlalchemy` are installed.
 - If web search is not available, confirm your OpenAI account has tool access.
 - If tool execution fails, verify Docker is installed and `tool.enabled=true`.
+### 7.5) Planning with memory (task plan + findings + progress in DB)
+
+```bash
+python run.py planning.enabled=true
+```
+
+This stores task plan/findings/progress in `memory/planning.db` (configurable) and
+injects a compact plan summary into prompts to avoid context explosion.
+
+Optional separate DBs:
+
+```yaml
+planning:
+  db_path: memory/planning.db
+  findings_db_path: memory/planning_findings.db
+  progress_db_path: memory/planning_progress.db
+```

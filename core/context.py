@@ -20,6 +20,7 @@ class AppContext:
     observability: Observability
     run_id: str
     session_id: str
+    planning_memory: object | None = None
     docker_runtime: object | None = None
     local_executor: object | None = None
     mcp_manager: object | None = None

@@ -46,6 +46,12 @@ class Orchestrator:
                 k=memory.top_k,
             )
             memory_block = format_memory_block(recall, title="Historical Attempts")
+        planning_memory = getattr(ctx, "planning_memory", None)
+        plan_block = None
+        if planning_memory and getattr(planning_memory, "enabled", False):
+            plan_block = planning_memory.render_prompt_block(task)
+        if plan_block:
+            memory_block = "\n\n".join(block for block in [plan_block, memory_block] if block)
 
         mcp_manager = getattr(ctx, "mcp_manager", None)
         mcp_summary = None

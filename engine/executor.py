@@ -103,6 +103,12 @@ class ExecutionEngine:
             if memory and memory.enabled:
                 recall = memory.recall_agent(agent_id, query=f"{task.goal} {instructions}", k=memory.top_k)
                 memory_block = format_memory_block(recall, title=f"Retrieved Memory ({agent_id})")
+            planning_memory = getattr(ctx, "planning_memory", None)
+            plan_block = None
+            if planning_memory and getattr(planning_memory, "enabled", False):
+                plan_block = planning_memory.render_prompt_block(task)
+            if plan_block:
+                memory_block = "\n\n".join(block for block in [plan_block, memory_block] if block)
 
             mcp_prompt = None
             if mcp_manager and mcp_manager.is_enabled():

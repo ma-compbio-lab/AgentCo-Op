@@ -65,12 +65,17 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     repair_history: list[dict] = []
     evidence_artifacts = dict(state.get("artifacts") or {})
     evidence_messages = list(evidence_artifacts.get("evidence_messages") or [])
+    planning_memory = getattr(runtime.context, "planning_memory", None)
+    if planning_memory and getattr(planning_memory, "enabled", False) and not report.ok:
+        planning_memory.add_error(task, f"Judge failed: {', '.join(report.issues) if report.issues else 'unknown'}")
     # If the judge fails, run a bounded repair loop and re-evaluate.
     if not report.ok and runtime.repair.enabled and runtime.repair.max_rounds > 0:
         issues = list(report.issues)
         for attempt in range(1, runtime.repair.max_rounds + 1):
             log_section("REPAIR", f"Attempt {attempt}")
             log_event("REPAIR", "issues", "judge issues", data={"issues": issues})
+            if planning_memory and getattr(planning_memory, "enabled", False):
+                planning_memory.add_error(task, f"Repair attempt {attempt}: {', '.join(issues)}")
             repair_prompt = build_repair_prompt(
                 task,
                 issues,

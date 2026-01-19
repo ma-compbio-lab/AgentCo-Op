@@ -18,7 +18,18 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
     worker_mcp_prompt = None
     if mcp_manager and mcp_manager.is_enabled():
         worker_mcp_prompt = await mcp_manager.get_prompt("worker")
-    prompt = build_task_prompt("worker", task, task.goal, [], extra_instructions=worker_mcp_prompt)
+    planning_memory = getattr(runtime.context, "planning_memory", None)
+    plan_block = None
+    if planning_memory and getattr(planning_memory, "enabled", False):
+        plan_block = planning_memory.render_prompt_block(task)
+    prompt = build_task_prompt(
+        "worker",
+        task,
+        task.goal,
+        [],
+        memory_block=plan_block,
+        extra_instructions=worker_mcp_prompt,
+    )
     log_event("METHOD", "start", "baseline run", data={"task_id": task.task_id})
     result = await run_agent(
         worker,
