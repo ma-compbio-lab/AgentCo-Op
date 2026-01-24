@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import random
@@ -270,22 +271,34 @@ async def run_eval(args: argparse.Namespace) -> None:
     configure_openai(app_cfg.model.api_key)
     ensure_api_key()
     routing = build_model_routing(app_cfg.model)
-    runtime = build_runtime(
-        routing,
-        log_dir=app_cfg.log_dir,
-        repair=app_cfg.repair,
-        memory_cfg=app_cfg.memory,
-        planning_cfg=app_cfg.planning,
-        tool_cfg=app_cfg.tool,
-        exec_cfg=app_cfg.exec,
-        mcp_cfg=app_cfg.mcp,
-    )
-
     dataset = _load_dataset(args.split, args.cache_dir, args.config_name, args.data_dir, args.jsonl_dir)
     indices = list(range(len(dataset)))
     random.Random(args.seed).shuffle(indices)
     if args.max_samples:
         indices = indices[: args.max_samples]
+
+    concurrency = max(1, int(args.concurrency))
+    runtimes: list = []
+    trace_paths: list[Path] = []
+    trace_offsets: list[int] = []
+    for worker_id in range(concurrency):
+        worker_log_dir = (
+            app_cfg.log_dir if concurrency == 1 else str(Path(app_cfg.log_dir) / f"medqa_worker_{worker_id}")
+        )
+        runtime = build_runtime(
+            routing,
+            log_dir=worker_log_dir,
+            repair=app_cfg.repair,
+            memory_cfg=app_cfg.memory,
+            planning_cfg=app_cfg.planning,
+            tool_cfg=app_cfg.tool,
+            exec_cfg=app_cfg.exec,
+            mcp_cfg=app_cfg.mcp,
+        )
+        runtimes.append(runtime)
+        trace_path = Path(runtime.observability.trace_path)
+        trace_paths.append(trace_path)
+        trace_offsets.append(trace_path.stat().st_size if trace_path.exists() else 0)
 
     total = 0
     correct = 0
@@ -293,75 +306,104 @@ async def run_eval(args: argparse.Namespace) -> None:
     topk_hits = {3: 0, 5: 0}
     tokens_total = 0
     meta_metrics: dict[str, dict[str, int]] = {}
-    trace_path = Path(runtime.observability.trace_path)
-    trace_offset = trace_path.stat().st_size if trace_path.exists() else 0
     total_expected = len(indices)
     if not args.progress:
-        log_event("RUN", "start", "med_qa eval start", data={"split": args.split, "samples": total_expected})
+        log_event(
+            "RUN",
+            "start",
+            "med_qa eval start",
+            data={"split": args.split, "samples": total_expected, "concurrency": concurrency},
+        )
     else:
-        print(f"MedQA eval start | split={args.split} | samples={total_expected}")
+        print(f"MedQA eval start | split={args.split} | samples={total_expected} | concurrency={concurrency}")
+
+    index_queue: asyncio.Queue[int | None] = asyncio.Queue()
     for idx in indices:
-        row = dataset[idx]
-        question = _extract_question(row)
-        choices, labels = _extract_choices(row)
-        gold = _extract_answer(row)
-        if not question or not choices:
-            continue
-        prompt = _format_prompt(question, labels, choices)
-        task = TaskSpec(
-            goal=prompt,
-            constraints=["Answer with the option letter and text only."],
-            success_criteria=["Select exactly one of the provided options."],
-            budget_tokens=app_cfg.task.budget_tokens,
-            input_modalities=app_cfg.task.input_modalities,
-            output_modalities=app_cfg.task.output_modalities,
-            task_type=app_cfg.task.task_type,
-            prompt_verbosity=app_cfg.task.prompt_verbosity,
-            allow_web_search_for_spec=app_cfg.task.allow_web_search_for_spec,
-            spec_max_search_queries=app_cfg.task.spec_max_search_queries,
-            allow_tool_search=app_cfg.task.allow_tool_search,
-            tool_max_candidates=app_cfg.task.tool_max_candidates,
-            tool_max_search_queries=app_cfg.task.tool_max_search_queries,
-        )
-        result = await run_method(app_cfg.method, task, runtime)
-        answer = result.answer if result else ""
-        pred_labels = _extract_predicted_labels(answer, labels, choices)
-        pred_label = pred_labels[0] if pred_labels else None
-        pred_text = choices[labels.index(pred_label)] if pred_label in labels else None
-        gold_label, gold_text = _gold_label_text(gold, labels, choices)
-        ok = pred_label is not None and gold_label is not None and pred_label == gold_label
-        is_invalid = pred_label is None
-        invalid += 1 if is_invalid else 0
-        for k in topk_hits.keys():
-            if gold_label and gold_label in pred_labels[:k]:
-                topk_hits[k] += 1
-        usage_sum, trace_offset = _collect_usage(trace_path, trace_offset)
-        tokens_total += usage_sum["total"]
-        meta = _extract_meta_info(row)
-        metrics = meta_metrics.setdefault(
-            meta, {"total": 0, "correct": 0, "invalid": 0, "top3": 0, "top5": 0, "tokens": 0}
-        )
-        metrics["total"] += 1
-        metrics["correct"] += 1 if ok else 0
-        metrics["invalid"] += 1 if is_invalid else 0
-        metrics["top3"] += 1 if gold_label and gold_label in pred_labels[:3] else 0
-        metrics["top5"] += 1 if gold_label and gold_label in pred_labels[:5] else 0
-        metrics["tokens"] += usage_sum["total"]
-        total += 1
-        correct += 1 if ok else 0
-        if args.progress:
-            _render_progress(total, total_expected)
-        append_jsonl(
-            args.output,
-            {
-                "id": row.get("id", idx),
-                "question": question,
-                "choices": [{"label": l, "text": t} for l, t in zip(labels, choices)],
-                "gold": {"label": gold_label, "text": gold_text, "raw": gold},
-                "prediction": {"label": pred_label, "text": pred_text, "raw": answer},
-                "ok": ok,
-            },
-        )
+        index_queue.put_nowait(idx)
+    for _ in range(concurrency):
+        index_queue.put_nowait(None)
+
+    metrics_lock = asyncio.Lock()
+
+    async def _process_sample(worker_id: int) -> None:
+        nonlocal total, correct, invalid, tokens_total
+        runtime = runtimes[worker_id]
+        trace_path = trace_paths[worker_id]
+        while True:
+            idx = await index_queue.get()
+            if idx is None:
+                return
+            row = dataset[idx]
+            question = _extract_question(row)
+            choices, labels = _extract_choices(row)
+            gold = _extract_answer(row)
+            if not question or not choices:
+                continue
+            prompt = _format_prompt(question, labels, choices)
+            task = TaskSpec(
+                goal=prompt,
+                constraints=["Answer with the option letter and text only."],
+                success_criteria=["Select exactly one of the provided options."],
+                budget_tokens=app_cfg.task.budget_tokens,
+                input_modalities=app_cfg.task.input_modalities,
+                output_modalities=app_cfg.task.output_modalities,
+                task_type=app_cfg.task.task_type,
+                prompt_verbosity=app_cfg.task.prompt_verbosity,
+                allow_web_search_for_spec=app_cfg.task.allow_web_search_for_spec,
+                spec_max_search_queries=app_cfg.task.spec_max_search_queries,
+                allow_tool_search=app_cfg.task.allow_tool_search,
+                tool_max_candidates=app_cfg.task.tool_max_candidates,
+                tool_max_search_queries=app_cfg.task.tool_max_search_queries,
+            )
+            error_text: str | None = None
+            try:
+                result = await run_method(app_cfg.method, task, runtime)
+                answer = result.answer if result else ""
+            except Exception as exc:  # pragma: no cover - defensive for eval runs
+                answer = ""
+                error_text = f"{type(exc).__name__}: {exc}"
+            pred_labels = _extract_predicted_labels(answer, labels, choices)
+            pred_label = pred_labels[0] if pred_labels else None
+            pred_text = choices[labels.index(pred_label)] if pred_label in labels else None
+            gold_label, gold_text = _gold_label_text(gold, labels, choices)
+            ok = pred_label is not None and gold_label is not None and pred_label == gold_label
+            is_invalid = pred_label is None
+            usage_sum, trace_offsets[worker_id] = _collect_usage(trace_path, trace_offsets[worker_id])
+            meta = _extract_meta_info(row)
+            async with metrics_lock:
+                invalid += 1 if is_invalid else 0
+                for k in topk_hits.keys():
+                    if gold_label and gold_label in pred_labels[:k]:
+                        topk_hits[k] += 1
+                tokens_total += usage_sum["total"]
+                metrics = meta_metrics.setdefault(
+                    meta, {"total": 0, "correct": 0, "invalid": 0, "top3": 0, "top5": 0, "tokens": 0}
+                )
+                metrics["total"] += 1
+                metrics["correct"] += 1 if ok else 0
+                metrics["invalid"] += 1 if is_invalid else 0
+                metrics["top3"] += 1 if gold_label and gold_label in pred_labels[:3] else 0
+                metrics["top5"] += 1 if gold_label and gold_label in pred_labels[:5] else 0
+                metrics["tokens"] += usage_sum["total"]
+                total += 1
+                correct += 1 if ok else 0
+                if args.progress:
+                    _render_progress(total, total_expected)
+                append_jsonl(
+                    args.output,
+                    {
+                        "id": row.get("id", idx),
+                        "question": question,
+                        "choices": [{"label": l, "text": t} for l, t in zip(labels, choices)],
+                        "gold": {"label": gold_label, "text": gold_text, "raw": gold},
+                        "prediction": {"label": pred_label, "text": pred_text, "raw": answer},
+                        "ok": ok,
+                        "error": error_text,
+                    },
+                )
+
+    workers = [asyncio.create_task(_process_sample(worker_id)) for worker_id in range(concurrency)]
+    await asyncio.gather(*workers)
 
     accuracy = correct / total if total else 0.0
     invalid_rate = invalid / total if total else 0.0
@@ -414,6 +456,7 @@ def main() -> None:
     )
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--output", default="logs/med_qa_results.jsonl")
     parser.add_argument("--summary", default="logs/med_qa_summary.json")
     parser.add_argument("overrides", nargs="*", help="Hydra-style overrides (key=value)")

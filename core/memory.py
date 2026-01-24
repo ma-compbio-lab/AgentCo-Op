@@ -3,12 +3,15 @@ from __future__ import annotations
 import inspect
 import os
 import sqlite3
+import threading
 from typing import Any
 
 from utils import ensure_dir
 
 
 class Memory:
+    _LOCKS: dict[str, threading.Lock] = {}
+
     def __init__(
         self,
         *,
@@ -34,6 +37,7 @@ class Memory:
         self._episodic: list[dict[str, Any]] = []
         self._mem = None
         self._mem_available = False
+        self._lock = self._get_lock(self.db_path)
 
         if self.enabled:
             self._init_memori()
@@ -54,17 +58,18 @@ class Memory:
         self.session_id = session_id
         if not self._mem_available or not session_id:
             return
-        if hasattr(self._mem, "set_session"):
-            try:
-                self._mem.set_session(session_id)
-                return
-            except Exception:
-                return
-        if hasattr(self._mem, "new_session"):
-            try:
-                self._mem.new_session(session_id)
-            except Exception:
-                return
+        with self._lock:
+            if hasattr(self._mem, "set_session"):
+                try:
+                    self._mem.set_session(session_id)
+                    return
+                except Exception:
+                    return
+            if hasattr(self._mem, "new_session"):
+                try:
+                    self._mem.new_session(session_id)
+                except Exception:
+                    return
 
     def recall_agent(self, agent_id: str, query: str, k: int | None = None) -> list[dict[str, Any]]:
         return self._recall(query, k, process_id=f"agent:{agent_id}")
@@ -177,39 +182,50 @@ class Memory:
     def _recall(self, query: str, k: int | None, process_id: str) -> list[dict[str, Any]]:
         if not self.enabled or not self._mem_available or not query:
             return []
-        self._apply_attribution(process_id)
-        limit = k or self.top_k
-        recall = getattr(self._mem, "recall", None)
-        if not callable(recall):
-            return []
-        try:
-            results = recall(query, limit=limit)
-        except TypeError:
+        with self._lock:
+            self._apply_attribution(process_id)
+            limit = k or self.top_k
+            recall = getattr(self._mem, "recall", None)
+            if not callable(recall):
+                return []
             try:
-                results = recall(query, limit)
+                results = recall(query, limit=limit)
+            except TypeError:
+                try:
+                    results = recall(query, limit)
+                except Exception:
+                    return []
             except Exception:
                 return []
-        except Exception:
-            return []
-        return self._normalize_recall(results)
+            return self._normalize_recall(results)
 
     def _write(self, text: str, process_id: str, labels: list[str] | None, category: str | None) -> None:
         if not self.enabled or not self._mem_available or not text:
             return
-        self._apply_attribution(process_id)
-        add_memory = getattr(self._mem, "add_memory", None)
-        if callable(add_memory):
-            try:
-                add_memory(text, labels=labels or [], category=category)
-                return
-            except Exception:
-                return
-        add = getattr(self._mem, "add", None)
-        if callable(add):
-            try:
-                add(text, labels=labels or [], category=category)
-            except Exception:
-                return
+        with self._lock:
+            self._apply_attribution(process_id)
+            add_memory = getattr(self._mem, "add_memory", None)
+            if callable(add_memory):
+                try:
+                    add_memory(text, labels=labels or [], category=category)
+                    return
+                except Exception:
+                    return
+            add = getattr(self._mem, "add", None)
+            if callable(add):
+                try:
+                    add(text, labels=labels or [], category=category)
+                except Exception:
+                    return
+
+    @classmethod
+    def _get_lock(cls, db_path: str) -> threading.Lock:
+        key = db_path or ":memory:"
+        lock = cls._LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            cls._LOCKS[key] = lock
+        return lock
 
     @staticmethod
     def _normalize_recall(results: Any) -> list[dict[str, Any]]:
