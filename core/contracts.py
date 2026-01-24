@@ -82,6 +82,21 @@ class EvidencePack(BaseModel):
     summary: str
     citations: list[EvidenceItem] = Field(default_factory=list)
 
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _coerce_citations(cls, value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, dict) and "items" in value:
+            value = value.get("items")
+        if not isinstance(value, list):
+            return []
+        cleaned: list[Any] = []
+        for item in value:
+            if isinstance(item, (EvidenceItem, dict)):
+                cleaned.append(item)
+        return cleaned
+
 
 class ToolCandidate(BaseModel):
     kind: Literal["pypi", "github_repo", "cli", "api"]
@@ -97,6 +112,17 @@ class ToolCandidate(BaseModel):
 
 class ToolCandidates(BaseModel):
     candidates: list[ToolCandidate] = Field(default_factory=list)
+
+    @field_validator("candidates", mode="before")
+    @classmethod
+    def _coerce_candidates(cls, value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, dict) and "items" in value:
+            value = value.get("items")
+        if not isinstance(value, list):
+            return []
+        return value
 
 
 class ContainerLimits(BaseModel):
@@ -164,6 +190,15 @@ class SubTask(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     require_approval: bool = False
 
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _coerce_depends_on(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item) for item in value if item is not None]
+        return [str(value)]
+
 
 class ExecutionPlan(BaseModel):
     plan_id: str = Field(default_factory=lambda: str(uuid4()))
@@ -187,6 +222,17 @@ class JudgeReport(BaseModel):
     score: float = 0.0
     issues: list[str] = Field(default_factory=list)
     suggested_patch: Optional[dict[str, Any]] = None
+
+    @field_validator("suggested_patch", mode="before")
+    @classmethod
+    def _coerce_suggested_patch(cls, value: Any) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            return {"note": value}
+        return {"note": str(value)}
 
 
 class TraceEvent(BaseModel):

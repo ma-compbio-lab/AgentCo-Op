@@ -76,6 +76,8 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Added planning-with-memory storage and hooks (task plan/findings/progress in SQLite).
 - Added `conf/config_planning.yaml` sample that enables planning-with-memory with a complex task.
 - MedQA loader blocks dataset scripts and requires Parquet/Arrow or local data-dir.
+- MedQA eval supports configurable concurrency with per-worker runtimes and safe shared metrics/output updates.
+- Added defensive Pydantic coercions for JudgeReport/ToolCandidates/EvidencePack/depends_on.
 - Normalized EvidencePack request.allowed_domains to avoid null parsing errors.
 - ToolPlan parsing now backfills missing selected_tool with the chosen candidate.
 - Expanded prompt templates with step-by-step guidance, tool/memory usage, and stronger module instructions.

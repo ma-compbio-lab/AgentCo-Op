@@ -284,7 +284,8 @@ def build_plan_prompt(
         "If MCP tools are needed, set required_mcp_servers and allowed_tools per subtask.",
         "Set require_approval=true for any sensitive or write operations.",
         "Use only the agent IDs listed below in active_agents and subtasks.",
-        "Use strings type in depends_on; do not use numeric indices (e.g. int)",
+        "Use strings in depends_on; do not use numeric indices.",
+        "If you add depends_on, reference subtask sub_id strings (e.g. \"ST1\"), not array indexes.",
         "Prefer minimal, executable steps; avoid redundant subtasks.",
         "Use any provided Memory block to avoid repeating known failures.",
         "If critical information is missing, add a short assumption in plan.meta.",
@@ -316,6 +317,7 @@ def build_plan_prompt(
                 "### Output Requirements",
                 "- Return valid JSON that matches ExecutionPlan schema.",
                 "- Include plan_id, protocol, active_agents, subtasks, acceptance_tests, max_rounds.",
+                "- Ensure depends_on is a list of strings (subtask IDs).",
                 "### Example (minimal)",
                 "{",
                 '  "protocol": "pipeline",',
@@ -354,6 +356,7 @@ def build_judge_prompt(
         "Be strict: check success criteria and constraints; list gaps explicitly.",
         "If evidence is provided, verify claims against it and require citations when needed.",
         "If output is incomplete, provide a minimal suggested_patch to fix it.",
+        "suggested_patch must be an object or null; never a plain string.",
         "### Task",
         f"Goal: {task.goal}",
         f"Task type: {_resolve_task_type(task)}",
@@ -378,6 +381,7 @@ def build_judge_prompt(
             [
                 "### Output Requirements",
                 "- ok: true/false, score: 0.0-1.0, issues: list of strings, suggested_patch: optional dict.",
+                "- If you need to express text in suggested_patch, wrap it as {\"note\": \"...\"}.",
                 "### Example (failure)",
                 '{ "ok": false, "score": 0.2, "issues": ["Missing tests"], "suggested_patch": {"add_tests": true} }',
             ]
@@ -467,10 +471,14 @@ def build_evidence_prompt(request, memory_block: str | None = None, *, verbosity
                 "- Always output request.allowed_domains as an array (use [] if none).",
                 "- citations must be a JSON array (list).",
                 "- Each item in citations MUST be a JSON object with keys: title, url, snippet, source_type.",
+                "- Do NOT wrap citations in {\"items\": ...}.",
                 "- Do NOT emit any non-JSON text, markdown, or trailing tokens.",
                 "- Example citations item: {\"title\": \"...\", \"url\": \"https://...\", \"snippet\": \"...\", \"source_type\": \"...\"}",
                 "- Do NOT output placeholders or templates. If you cannot provide a citation, omit it.",
                 "- Never put strings like '{', 'title', 'url', 'snippet', 'source_type' as items in citations.",
+                "### Example Output",
+                '{ "request": {"query": "X", "freshness": "any", "allowed_domains": [], "max_sources": 3, "require_citations": true},'
+                ' "summary": "Short summary.", "citations": [ {"title": "T", "url": "https://...", "snippet": "S", "source_type": "web"} ] }',
             ]
         )
     if memory_block:
@@ -590,6 +598,7 @@ def build_tool_scout_prompt(
     parts = [
         "### Tool Scout Instructions",
         "Return ToolCandidates JSON only. No extra text.",
+        "Output shape must be {\"candidates\": [ ... ]}. Do not wrap in {\"items\": ...}.",
         "Find existing tools (PyPI packages, CLIs, GitHub repos, APIs) relevant to the task.",
         "Prefer actively maintained and permissive-license tools.",
         "If constraints forbid external libraries/tools, return an empty candidates list.",
@@ -603,6 +612,8 @@ def build_tool_scout_prompt(
         "4) Add risk_flags if license, maintenance, or security is unclear.",
         "### Example Candidate",
         '{ "kind": "pypi", "name": "requests", "version": "2.x", "risk_flags": [] }',
+        "### Example Output",
+        '{ "candidates": [ { "kind": "pypi", "name": "requests", "version": "2.x", "risk_flags": [] } ] }',
         "### Task",
         f"Goal: {task.goal}",
         f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
