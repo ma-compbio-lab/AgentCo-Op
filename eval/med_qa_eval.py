@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import json
 import logging
 import random
@@ -306,6 +307,7 @@ async def run_eval(args: argparse.Namespace) -> None:
     topk_hits = {3: 0, 5: 0}
     tokens_total = 0
     meta_metrics: dict[str, dict[str, int]] = {}
+    failure_rows: list[dict[str, Any]] = []
     total_expected = len(indices)
     if not args.progress:
         log_event(
@@ -334,34 +336,41 @@ async def run_eval(args: argparse.Namespace) -> None:
             if idx is None:
                 return
             row = dataset[idx]
-            question = _extract_question(row)
-            choices, labels = _extract_choices(row)
-            gold = _extract_answer(row)
-            if not question or not choices:
-                continue
-            prompt = _format_prompt(question, labels, choices)
-            task = TaskSpec(
-                goal=prompt,
-                constraints=["Answer with the option letter and text only."],
-                success_criteria=["Select exactly one of the provided options."],
-                budget_tokens=app_cfg.task.budget_tokens,
-                input_modalities=app_cfg.task.input_modalities,
-                output_modalities=app_cfg.task.output_modalities,
-                task_type=app_cfg.task.task_type,
-                prompt_verbosity=app_cfg.task.prompt_verbosity,
-                allow_web_search_for_spec=app_cfg.task.allow_web_search_for_spec,
-                spec_max_search_queries=app_cfg.task.spec_max_search_queries,
-                allow_tool_search=app_cfg.task.allow_tool_search,
-                tool_max_candidates=app_cfg.task.tool_max_candidates,
-                tool_max_search_queries=app_cfg.task.tool_max_search_queries,
-            )
+            question = ""
+            choices: list[str] = []
+            labels: list[str] = []
+            gold = ""
+            answer = ""
             error_text: str | None = None
+            meta = _extract_meta_info(row)
             try:
+                question = _extract_question(row)
+                choices, labels = _extract_choices(row)
+                gold = _extract_answer(row)
+                if not question or not choices:
+                    raise ValueError("missing_question_or_choices")
+                prompt = _format_prompt(question, labels, choices)
+                task = TaskSpec(
+                    goal=prompt,
+                    constraints=["Answer with the option letter and text only."],
+                    success_criteria=["Select exactly one of the provided options."],
+                    budget_tokens=app_cfg.task.budget_tokens,
+                    input_modalities=app_cfg.task.input_modalities,
+                    output_modalities=app_cfg.task.output_modalities,
+                    task_type=app_cfg.task.task_type,
+                    prompt_verbosity=app_cfg.task.prompt_verbosity,
+                    allow_web_search_for_spec=app_cfg.task.allow_web_search_for_spec,
+                    spec_max_search_queries=app_cfg.task.spec_max_search_queries,
+                    allow_tool_search=app_cfg.task.allow_tool_search,
+                    tool_max_candidates=app_cfg.task.tool_max_candidates,
+                    tool_max_search_queries=app_cfg.task.tool_max_search_queries,
+                )
                 result = await run_method(app_cfg.method, task, runtime)
                 answer = result.answer if result else ""
             except Exception as exc:  # pragma: no cover - defensive for eval runs
                 answer = ""
                 error_text = f"{type(exc).__name__}: {exc}"
+
             pred_labels = _extract_predicted_labels(answer, labels, choices)
             pred_label = pred_labels[0] if pred_labels else None
             pred_text = choices[labels.index(pred_label)] if pred_label in labels else None
@@ -369,7 +378,6 @@ async def run_eval(args: argparse.Namespace) -> None:
             ok = pred_label is not None and gold_label is not None and pred_label == gold_label
             is_invalid = pred_label is None
             usage_sum, trace_offsets[worker_id] = _collect_usage(trace_path, trace_offsets[worker_id])
-            meta = _extract_meta_info(row)
             async with metrics_lock:
                 invalid += 1 if is_invalid else 0
                 for k in topk_hits.keys():
@@ -401,6 +409,19 @@ async def run_eval(args: argparse.Namespace) -> None:
                         "error": error_text,
                     },
                 )
+                if not ok:
+                    failure_rows.append(
+                        {
+                            "id": row.get("id", idx),
+                            "meta_info": meta,
+                            "question": question,
+                            "gold_label": gold_label,
+                            "gold_text": gold_text,
+                            "pred_label": pred_label,
+                            "pred_text": pred_text,
+                            "error": error_text or "",
+                        }
+                    )
 
     workers = [asyncio.create_task(_process_sample(worker_id)) for worker_id in range(concurrency)]
     await asyncio.gather(*workers)
@@ -432,6 +453,25 @@ async def run_eval(args: argparse.Namespace) -> None:
         }
     Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
     Path(args.summary).write_text(json.dumps(summary, ensure_ascii=True, indent=2), encoding="utf-8")
+    if args.failures_csv:
+        failures_path = Path(args.failures_csv)
+        failures_path.parent.mkdir(parents=True, exist_ok=True)
+        with failures_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "id",
+                    "meta_info",
+                    "question",
+                    "gold_label",
+                    "gold_text",
+                    "pred_label",
+                    "pred_text",
+                    "error",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(failure_rows)
     if args.progress:
         sys.stdout.write("\n")
         sys.stdout.flush()
@@ -459,6 +499,7 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--output", default="logs/med_qa_results.jsonl")
     parser.add_argument("--summary", default="logs/med_qa_summary.json")
+    parser.add_argument("--failures-csv", default="logs/med_qa_failures.csv")
     parser.add_argument("overrides", nargs="*", help="Hydra-style overrides (key=value)")
     args = parser.parse_args()
 
