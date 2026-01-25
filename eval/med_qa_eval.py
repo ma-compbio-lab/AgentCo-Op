@@ -60,6 +60,15 @@ def _load_dataset(
         ) from exc
 
 
+def _auto_jsonl_dir(prefer_local: bool) -> str | None:
+    if not prefer_local:
+        return None
+    candidate = ROOT / "data/med_qa_repo/data_clean/questions/US"
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
 def _assert_no_dataset_script() -> None:
     cache_root = Path("~/.cache/huggingface/hub").expanduser()
     dataset_root = cache_root / "datasets--bigbio--med_qa"
@@ -272,7 +281,14 @@ async def run_eval(args: argparse.Namespace) -> None:
     configure_openai(app_cfg.model.api_key)
     ensure_api_key()
     routing = build_model_routing(app_cfg.model)
-    dataset = _load_dataset(args.split, args.cache_dir, args.config_name, args.data_dir, args.jsonl_dir)
+    auto_jsonl_dir = _auto_jsonl_dir(args.prefer_local_jsonl)
+    if args.jsonl_dir:
+        jsonl_dir = args.jsonl_dir
+    else:
+        jsonl_dir = auto_jsonl_dir
+    if jsonl_dir and args.progress:
+        print(f"MedQA eval using JSONL dir: {jsonl_dir}")
+    dataset = _load_dataset(args.split, args.cache_dir, args.config_name, args.data_dir, jsonl_dir)
     indices = list(range(len(dataset)))
     random.Random(args.seed).shuffle(indices)
     if args.max_samples:
@@ -488,6 +504,12 @@ def main() -> None:
     parser.add_argument("--config-name", default=None, help="Dataset config name (default: bigbio_qa)")
     parser.add_argument("--data-dir", default=None, help="Use a locally saved dataset (load_from_disk).")
     parser.add_argument("--jsonl-dir", default=None, help="Use a local MedQA JSONL folder (e.g., data_clean/questions/US).")
+    parser.add_argument(
+        "--prefer-local-jsonl",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-use data/med_qa_repo/data_clean/questions/US when present.",
+    )
     parser.add_argument(
         "--progress",
         action=argparse.BooleanOptionalAction,

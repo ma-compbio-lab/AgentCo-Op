@@ -78,6 +78,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - MedQA loader blocks dataset scripts and requires Parquet/Arrow or local data-dir.
 - MedQA eval supports configurable concurrency with per-worker runtimes and safe shared metrics/output updates.
 - MedQA eval skips failed items and writes a failures CSV (default: logs/med_qa_failures.csv).
+- MedQA eval auto-detects local JSONL at data/med_qa_repo/data_clean/questions/US (disable with --no-prefer-local-jsonl).
 - Added defensive Pydantic coercions for JudgeReport/ToolCandidates/EvidencePack/depends_on.
 - Normalized EvidencePack request.allowed_domains to avoid null parsing errors.
 - ToolPlan parsing now backfills missing selected_tool with the chosen candidate.
