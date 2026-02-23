@@ -118,6 +118,7 @@ adaptive:
   fallback_to_heuristic: true
   memory_top_k: 4
   force_mode: auto
+  enforce_self_contained_guardrails: true
 
 hydra:
   job:

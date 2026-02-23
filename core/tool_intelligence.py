@@ -78,6 +78,15 @@ async def prepare_tool_plan(
 
     if not tool_cfg.enabled:
         return None
+    if tool_cfg.use_docker and getattr(ctx, "docker_runtime", None) is None:
+        log_event(
+            "TOOLS",
+            "skip",
+            "tool runtime unavailable; skip tool planning",
+            level="warn",
+            data={"use_docker": True},
+        )
+        return None
     if not hint and not signals["need_tool_search"]:
         return None
 
@@ -263,10 +272,12 @@ def _coerce_candidates(obj: Any) -> list[ToolCandidate]:
                 out.append(candidate)
         return out
     if isinstance(obj, dict):
-        try:
-            return ToolCandidates(**obj).candidates
-        except Exception:
-            return []
+        payload = dict(obj)
+        raw = payload.get("candidates") or payload.get("items")
+        if isinstance(raw, list):
+            return _coerce_candidates(raw)
+        candidate = _coerce_candidate(payload)
+        return [candidate] if candidate else []
     return []
 
 
@@ -275,7 +286,8 @@ def _coerce_candidate(obj: Any) -> ToolCandidate | None:
         return obj
     if isinstance(obj, dict):
         try:
-            return ToolCandidate(**obj)
+            payload = _normalize_candidate_payload(obj)
+            return ToolCandidate(**payload)
         except Exception:
             return None
     return None
@@ -287,12 +299,31 @@ def _coerce_tool_plan(obj: Any, fallback: ToolCandidate | None = None) -> ToolPl
     if isinstance(obj, dict):
         try:
             payload = dict(obj)
+            if "selected_tool" in payload and isinstance(payload["selected_tool"], dict):
+                payload["selected_tool"] = _normalize_candidate_payload(payload["selected_tool"])
             if "selected_tool" not in payload and fallback is not None:
                 payload["selected_tool"] = fallback.model_dump(mode="json")
+            container = payload.get("container_spec")
+            if container is None:
+                payload["container_spec"] = {}
+            elif isinstance(container, dict) and container.get("limits") is None:
+                container = dict(container)
+                container["limits"] = {}
+                payload["container_spec"] = container
             return ToolPlan(**payload)
         except Exception:
             return None
     return None
+
+
+def _normalize_candidate_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    kind = str(normalized.get("kind", "")).strip().lower()
+    if kind in {"repo", "repository", "github", "gh"}:
+        normalized["kind"] = "github_repo"
+    if kind in {"package", "python_package"}:
+        normalized["kind"] = "pypi"
+    return normalized
 
 
 def _apply_tool_defaults(plan: ToolPlan, tool_cfg: ToolConfig) -> ToolPlan:

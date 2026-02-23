@@ -123,6 +123,7 @@ class AdaptiveConfig:
     fallback_to_heuristic: bool = True
     memory_top_k: int = 4
     force_mode: str = "auto"  # auto | single_agent | multi_agent
+    enforce_self_contained_guardrails: bool = True
 
 
 @dataclass

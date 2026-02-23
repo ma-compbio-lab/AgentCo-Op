@@ -15,12 +15,51 @@ from runtime import Runtime
 from utils import estimate_tokens
 
 
+def _looks_like_multiple_choice(text: str) -> bool:
+    lowered = text.lower()
+    if "options:" in lowered and "answer with the option" in lowered:
+        return True
+    labels = ("a.", "b.", "c.", "d.")
+    hits = sum(1 for label in labels if label in lowered)
+    return hits >= 3 and "question:" in lowered
+
+
+def _is_self_contained_task(task: TaskSpec) -> bool:
+    text = " ".join([task.goal, *task.constraints, *task.success_criteria]).strip()
+    if not text:
+        return False
+    if _looks_like_multiple_choice(text):
+        return True
+    lowered = text.lower()
+    # Closed-world tasks usually already contain all required information.
+    return (
+        "use only the provided options" in lowered
+        or "based on the provided context only" in lowered
+        or "do not use external information" in lowered
+    )
+
+
 def _infer_task_type(task: TaskSpec) -> str:
     explicit = (task.task_type or "auto").strip().lower()
     if explicit != "auto":
         return explicit
     text = " ".join([task.goal, *task.constraints, *task.success_criteria]).lower()
-    if any(k in text for k in ("implement", "function", "code", "python", "fix", "test")):
+    if _looks_like_multiple_choice(text):
+        return "general"
+    coding_keywords = (
+        "implement",
+        "write code",
+        "python script",
+        "python function",
+        "def ",
+        "class ",
+        "bug fix",
+        "fix bug",
+        "unit test",
+        "pytest",
+        "refactor",
+    )
+    if any(k in text for k in coding_keywords):
         return "coding"
     if any(k in text for k in ("benchmark", "dataset", "analysis", "metric", "evaluate")):
         return "analysis"
@@ -123,6 +162,29 @@ def _difficulty_bucket(task: TaskSpec, *, tool_need: bool, metrics_needed: bool,
     if score >= 2:
         return "medium"
     return "low"
+
+
+def _apply_decision_guardrails(
+    task: TaskSpec,
+    decision: AdaptiveRoutingDecision,
+    signals: dict[str, Any],
+    cfg: AdaptiveConfig,
+) -> AdaptiveRoutingDecision:
+    if not cfg.enforce_self_contained_guardrails:
+        return decision
+    if not _is_self_contained_task(task):
+        return decision
+
+    # For self-contained tasks, avoid expensive tool/search paths unless explicitly requested.
+    tool_mode = (task.allow_tool_search or "auto").lower()
+    web_mode = (task.allow_web_search_for_spec or "auto").lower()
+    if tool_mode != "on" and not signals["tool"]["need_tool_search"] and decision.enable_tool_search:
+        decision.enable_tool_search = False
+        decision.notes.append("Guardrail: disabled tool search for self-contained task.")
+    if web_mode != "on" and not signals["web_freshness_needed"] and decision.need_web_search:
+        decision.need_web_search = False
+        decision.notes.append("Guardrail: disabled web search for self-contained task.")
+    return decision
 
 
 def _heuristic_fallback(task: TaskSpec, signals: dict[str, Any]) -> AdaptiveRoutingDecision:
@@ -281,6 +343,7 @@ async def decide_route(task: TaskSpec, runtime: Runtime) -> tuple[AdaptiveRoutin
         model_decision.mode = "multi_agent"
         model_decision.estimated_agents = max(2, model_decision.estimated_agents)
         model_decision.notes.append("Escalated to multi_agent due to high deterministic difficulty.")
+    model_decision = _apply_decision_guardrails(task, model_decision, signals, cfg)
     if not model_decision.reason:
         model_decision.reason = "model decision applied"
     return model_decision, signals, "model"
@@ -296,8 +359,16 @@ async def run(task: TaskSpec, runtime: Runtime) -> MethodResult:
 
     run_task = task
     updates: dict[str, Any] = {}
+    runtime_supports_tool_exec = bool(
+        runtime.tool_cfg.enabled
+        and ((not runtime.tool_cfg.use_docker) or getattr(runtime, "docker_runtime", None) is not None)
+    )
     if decision.enable_tool_search and task.allow_tool_search != "on":
-        updates["allow_tool_search"] = "on"
+        if runtime_supports_tool_exec:
+            updates["allow_tool_search"] = "on"
+        else:
+            decision.notes.append("Tool search requested but runtime tool execution is unavailable.")
+            decision.enable_tool_search = False
     if decision.need_web_search and task.allow_web_search_for_spec == "auto":
         updates["allow_web_search_for_spec"] = "on"
     if updates:

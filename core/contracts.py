@@ -168,6 +168,18 @@ class ToolCandidate(BaseModel):
     maintained_score: Optional[float] = None
     risk_flags: list[str] = Field(default_factory=list)
 
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _coerce_kind(cls, value: Any) -> str:
+        if value is None:
+            return "pypi"
+        text = str(value).strip().lower()
+        if text in {"repo", "repository", "github", "gh"}:
+            return "github_repo"
+        if text in {"package", "python_package"}:
+            return "pypi"
+        return text
+
 
 class ToolCandidates(BaseModel):
     candidates: list[ToolCandidate] = Field(default_factory=list)
@@ -179,6 +191,8 @@ class ToolCandidates(BaseModel):
             return []
         if isinstance(value, dict) and "items" in value:
             value = value.get("items")
+        if isinstance(value, dict) and "candidates" in value:
+            value = value.get("candidates")
         if not isinstance(value, list):
             return []
         return value
@@ -201,6 +215,13 @@ class ContainerSpec(BaseModel):
     limits: ContainerLimits = Field(default_factory=ContainerLimits)
     build_allow_net: bool = True
     run_allow_net: bool = False
+
+    @field_validator("limits", mode="before")
+    @classmethod
+    def _coerce_limits(cls, value: Any) -> dict[str, Any] | ContainerLimits:
+        if value is None:
+            return {}
+        return value
 
 
 class ToolPlan(BaseModel):

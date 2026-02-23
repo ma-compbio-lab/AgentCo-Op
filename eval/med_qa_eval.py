@@ -172,18 +172,24 @@ def _gold_label_text(gold: str, labels: list[str], choices: list[str]) -> tuple[
 def _extract_predicted_labels(text: str, labels: list[str], choices: list[str]) -> list[str]:
     if not text:
         return []
-    label_set = set(labels)
+    label_set = {label.upper() for label in labels}
     found: list[str] = []
-    for match in re.finditer(r"\\b([A-Z])\\b", text):
-        label = match.group(1)
+    for match in re.finditer(r"(?<![A-Za-z])([A-Za-z])(?:[\\.)]|\\s)", text):
+        label = match.group(1).upper()
         if label in label_set and label not in found:
             found.append(label)
+    if not found:
+        for match in re.finditer(r"\b([A-Za-z])\b", text):
+            label = match.group(1).upper()
+            if label in label_set and label not in found:
+                found.append(label)
     lower = text.lower()
     for label, choice in zip(labels, choices):
-        if label in found:
+        normalized_label = label.upper()
+        if normalized_label in found:
             continue
         if choice and choice.lower() in lower:
-            found.append(label)
+            found.append(normalized_label)
     return found
 
 
