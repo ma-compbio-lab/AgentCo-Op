@@ -15,6 +15,51 @@ from prompts import (
     format_memory_block,
 )
 
+_TOOL_SEARCH_KEYWORDS = (
+    "library",
+    "package",
+    "pypi",
+    "github",
+    "repo",
+    "repository",
+    "cli",
+    "tool",
+    "install",
+    "docker",
+    "sdk",
+)
+
+_BLOCK_TOOL_TERMS = (
+    "no external",
+    "do not use external",
+    "no dependencies",
+    "without external",
+)
+
+
+def should_search_tools(task: TaskSpec) -> bool:
+    return bool(tool_search_signals(task)["need_tool_search"])
+
+
+def tool_search_signals(task: TaskSpec) -> dict[str, Any]:
+    mode = (task.allow_tool_search or "auto").lower()
+    hint = _extract_tool_hint(task)
+    blocked = _constraints_block_tools(task.constraints)
+    text = " ".join([task.goal, *task.constraints, *task.success_criteria]).lower()
+    keyword_hits = [keyword for keyword in _TOOL_SEARCH_KEYWORDS if keyword in text]
+    need_tool_search = False
+    if mode == "on":
+        need_tool_search = True
+    elif mode == "auto":
+        need_tool_search = not blocked and bool(keyword_hits or hint)
+    return {
+        "mode": mode,
+        "hint": hint,
+        "blocked_by_constraints": blocked,
+        "keyword_hits": keyword_hits,
+        "need_tool_search": need_tool_search,
+    }
+
 
 async def prepare_tool_plan(
     task: TaskSpec,
@@ -28,11 +73,12 @@ async def prepare_tool_plan(
     from utils import clip_text, log_event, log_section, should_show_prompts
 
     tool_cfg = tool_cfg or ToolConfig()
-    hint = _extract_tool_hint(task)
+    signals = tool_search_signals(task)
+    hint = signals["hint"]
 
     if not tool_cfg.enabled:
         return None
-    if not hint and not _should_search_tools(task):
+    if not hint and not signals["need_tool_search"]:
         return None
 
     if "tool_doc_synth" not in agent_pool:
@@ -174,34 +220,12 @@ def _build_memory_block(task: TaskSpec, ctx) -> str | None:
 
 
 def _should_search_tools(task: TaskSpec) -> bool:
-    mode = (task.allow_tool_search or "auto").lower()
-    if mode == "off":
-        return False
-    if mode == "on":
-        return True
-    if _constraints_block_tools(task.constraints):
-        return False
-    text = " ".join([task.goal, *task.constraints, *task.success_criteria]).lower()
-    keywords = (
-        "library",
-        "package",
-        "pypi",
-        "github",
-        "repo",
-        "repository",
-        "cli",
-        "tool",
-        "install",
-        "docker",
-        "use",
-    )
-    return any(keyword in text for keyword in keywords)
+    return bool(tool_search_signals(task)["need_tool_search"])
 
 
 def _constraints_block_tools(constraints: list[str]) -> bool:
     text = " ".join(constraints).lower()
-    blocked = ("no external", "do not use external", "no dependencies", "without external")
-    return any(term in text for term in blocked)
+    return any(term in text for term in _BLOCK_TOOL_TERMS)
 
 
 def _extract_tool_hint(task: TaskSpec) -> ToolCandidate | None:

@@ -39,6 +39,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - Local execution with workspace-only writes and approval prompts.
 - Multi-turn chat (terminal + Streamlit UI) with live logs/streaming.
 - Planning-with-memory (task plan/findings/progress stored in DB, injected into prompts when enabled).
+- Adaptive collaboration mode: task complexity routing to single-agent baseline or multi-agent orchestrated flow.
 
 ## Config Summary (Hydra)
 - Task: `task.goal`, `task.constraints`, `task.success_criteria`,
@@ -81,6 +82,7 @@ LatentMAS-style layout (`run.py`, `models.py`, `methods/`).
 - MedQA eval auto-detects local JSONL at data/med_qa_repo/data_clean/questions/US (disable with --no-prefer-local-jsonl).
 - Added a baseline-only MedQA runner: eval/med_qa_baseline_eval.py (forces method=baseline).
 - Fixed baseline MedQA runner import by adding repo root to sys.path.
+- Added `adaptive` method with runtime mode logs and per-task auto tool-search enablement.
 - Added defensive Pydantic coercions for JudgeReport/ToolCandidates/EvidencePack/depends_on.
 - Normalized EvidencePack request.allowed_domains to avoid null parsing errors.
 - ToolPlan parsing now backfills missing selected_tool with the chosen candidate.

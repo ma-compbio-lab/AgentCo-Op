@@ -121,6 +121,15 @@ chat:
   history_turns: 8
   stream: true
 
+adaptive:
+  enabled: true
+  router_model: null
+  max_turns: 4
+  confidence_threshold: 0.6
+  fallback_to_heuristic: true
+  memory_top_k: 4
+  force_mode: auto
+
 hydra:
   job:
     chdir: false

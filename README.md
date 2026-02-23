@@ -232,6 +232,27 @@ python run.py \
 - `baseline`: single worker agent
 - `sequential`: planner -> worker
 - `orchestrated`: orchestrator + engine + judge (recommended)
+- `adaptive`: auto-route by task complexity
+  - model-based route decision with heuristic fallback
+  - simple task -> `baseline` (single agent)
+  - complex/tool-heavy/ambiguous task -> `orchestrated` (multi-agent)
+  - automatically turns on tool search for the current run when tool intent is detected
+
+Example:
+
+```bash
+python run.py method=adaptive task.goal="Summarize this short note"
+python run.py method=adaptive task.goal="Benchmark this GitHub repo and produce a dockerized report"
+```
+
+Adaptive router tuning:
+
+```bash
+python run.py method=adaptive \
+  adaptive.router_model=gpt-5-nano-2025-08-07 \
+  adaptive.confidence_threshold=0.65 \
+  adaptive.fallback_to_heuristic=true
+```
 
 ## Spec Enrichment (Auto Constraints / Success Criteria)
 

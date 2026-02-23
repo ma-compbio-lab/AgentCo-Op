@@ -41,6 +41,65 @@ class TaskSpecPatch(BaseModel):
     used_web_search: bool = False
 
 
+class RoutingDimension(BaseModel):
+    name: str
+    value: str = ""
+    impact: Literal["low", "medium", "high"] = "medium"
+    rationale: str = ""
+
+
+class AdaptiveRoutingDecision(BaseModel):
+    mode: Literal["single_agent", "multi_agent"] = "multi_agent"
+    enable_tool_search: bool = False
+    need_web_search: bool = False
+    estimated_agents: int = 4
+    confidence: float = 0.5
+    reason: str = ""
+    recommended_protocol: Optional[Literal["pipeline", "roundtable", "debate", "loop", "hybrid"]] = None
+    dimensions: list[RoutingDimension] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _coerce_mode(cls, value: Any) -> str:
+        if value is None:
+            return "multi_agent"
+        text = str(value).strip().lower()
+        if text in {"single", "single_agent", "single-agent", "baseline"}:
+            return "single_agent"
+        if text in {"multi", "multi_agent", "multi-agent", "orchestrated"}:
+            return "multi_agent"
+        return "multi_agent"
+
+    @field_validator("enable_tool_search", "need_web_search", mode="before")
+    @classmethod
+    def _coerce_bool(cls, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        text = str(value).strip().lower()
+        return text in {"1", "true", "yes", "on"}
+
+    @field_validator("estimated_agents", mode="before")
+    @classmethod
+    def _coerce_estimated_agents(cls, value: Any) -> int:
+        try:
+            number = int(value)
+        except Exception:
+            number = 4
+        return max(1, min(8, number))
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, value: Any) -> float:
+        try:
+            number = float(value)
+        except Exception:
+            number = 0.5
+        return max(0.0, min(1.0, number))
+
+
 class AgentSpec(BaseModel):
     agent_id: str
     name: str

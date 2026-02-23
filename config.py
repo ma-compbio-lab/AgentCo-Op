@@ -115,6 +115,17 @@ class ChatConfig:
 
 
 @dataclass
+class AdaptiveConfig:
+    enabled: bool = True
+    router_model: str | None = None
+    max_turns: int = 4
+    confidence_threshold: float = 0.6
+    fallback_to_heuristic: bool = True
+    memory_top_k: int = 4
+    force_mode: str = "auto"  # auto | single_agent | multi_agent
+
+
+@dataclass
 class AppConfig:
     task: TaskConfig = field(default_factory=TaskConfig)
     method: str = "orchestrated"
@@ -128,6 +139,7 @@ class AppConfig:
     exec: ExecConfig = field(default_factory=ExecConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
+    adaptive: AdaptiveConfig = field(default_factory=AdaptiveConfig)
 
 
 @dataclass
@@ -161,4 +173,5 @@ class EvalConfig:
     tool: ToolConfig = field(default_factory=ToolConfig)
     exec: ExecConfig = field(default_factory=ExecConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    adaptive: AdaptiveConfig = field(default_factory=AdaptiveConfig)
     max_samples: int | None = None

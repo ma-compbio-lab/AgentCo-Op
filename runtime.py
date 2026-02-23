@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app_agents.factory import build_default_agents
-from config import ExecConfig, MCPConfig, MemoryConfig, PlanningConfig, RepairConfig, ToolConfig
+from config import AdaptiveConfig, ExecConfig, MCPConfig, MemoryConfig, PlanningConfig, RepairConfig, ToolConfig
 from core.budget import BudgetRouter
 from core.cache import Cache
 from core.context import AppContext
@@ -36,6 +36,7 @@ class Runtime:
     tool_cfg: ToolConfig
     exec_cfg: ExecConfig
     mcp_cfg: MCPConfig
+    adaptive_cfg: AdaptiveConfig
     docker_runtime: DockerRuntime | None
 
 
@@ -48,6 +49,7 @@ def build_runtime(
     tool_cfg: ToolConfig | None = None,
     exec_cfg: ExecConfig | None = None,
     mcp_cfg: MCPConfig | None = None,
+    adaptive_cfg: AdaptiveConfig | None = None,
 ) -> Runtime:
     from utils import log_event
 
@@ -61,6 +63,7 @@ def build_runtime(
     tool_cfg = tool_cfg or ToolConfig()
     exec_cfg = exec_cfg or ExecConfig()
     mcp_cfg = mcp_cfg or MCPConfig()
+    adaptive_cfg = adaptive_cfg or AdaptiveConfig()
     planning_cfg = planning_cfg or PlanningConfig()
     docker_runtime = None
     if tool_cfg.enabled and tool_cfg.use_docker:
@@ -151,6 +154,7 @@ def build_runtime(
         tool_cfg=tool_cfg,
         exec_cfg=exec_cfg,
         mcp_cfg=mcp_cfg,
+        adaptive_cfg=adaptive_cfg,
         docker_runtime=docker_runtime,
     )
 

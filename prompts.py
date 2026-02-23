@@ -261,6 +261,67 @@ def build_task_prompt(
     return "\n".join(parts)
 
 
+def build_adaptive_route_prompt(
+    task: TaskSpec,
+    signals: dict,
+    memory_block: str | None = None,
+    extra_instructions: str | None = None,
+) -> str:
+    verbosity = _normalize_verbosity(task)
+    parts = [
+        "### Adaptive Routing Controller",
+        "Decide routing mode for this task and return AdaptiveRoutingDecision JSON only.",
+        "No markdown, no prose outside JSON.",
+        "### Primary Objective",
+        "Choose the minimal collaboration mode that reliably satisfies constraints and success criteria.",
+        "### Modes",
+        "- single_agent: fast baseline path for simple tasks with low uncertainty and low tool dependency.",
+        "- multi_agent: orchestrated path for complex, ambiguous, tool-heavy, research-heavy, or high-risk tasks.",
+        "### Required Dimensions To Evaluate",
+        "1) task_type and deliverable shape (QA/coding/analysis/research/general).",
+        "2) difficulty and decomposition needs.",
+        "3) required background/domain knowledge depth.",
+        "4) tool dependency and package/repo reuse opportunities.",
+        "5) memory history: prior solved patterns vs unresolved failure patterns.",
+        "6) metrics/eval pressure (strict measurable criteria).",
+        "7) freshness or external evidence need.",
+        "8) ambiguity and risk of single-pass failure.",
+        "### Output Requirements",
+        "- mode: single_agent or multi_agent.",
+        "- enable_tool_search: true/false.",
+        "- need_web_search: true/false.",
+        "- estimated_agents: integer in [1,8].",
+        "- confidence: float in [0,1].",
+        "- reason: concise explanation referencing major dimensions.",
+        "- dimensions: array of objects {name, value, impact, rationale}.",
+        "- recommended_protocol: one of pipeline/roundtable/debate/loop/hybrid or null.",
+        "- notes: optional list of short notes.",
+        "### Hard Rules",
+        "- If tool signals strongly indicate tool use, enable_tool_search should be true.",
+        "- If unresolved failures are present in memory for similar tasks, prefer multi_agent unless confidence is very high.",
+        "- Keep decisions conservative for high-risk or high-ambiguity tasks.",
+        "### Task",
+        f"Goal: {task.goal}",
+        f"Constraints: {', '.join(task.constraints) if task.constraints else 'None'}",
+        f"Success criteria: {', '.join(task.success_criteria) if task.success_criteria else 'None'}",
+        "### Deterministic Signals (JSON)",
+        json.dumps(signals, ensure_ascii=True, default=str),
+    ]
+    if verbosity == "verbose":
+        parts.extend(
+            [
+                "### Verbose Guidance",
+                "Reason step-by-step over each dimension and explicitly trade off latency/cost vs reliability.",
+                "Prefer single_agent only when confidence remains high after all checks.",
+            ]
+        )
+    if extra_instructions:
+        parts.append(f"### MCP Prompt\n{extra_instructions}")
+    if memory_block:
+        parts.append(memory_block)
+    return "\n".join(parts)
+
+
 def build_plan_prompt(
     task: TaskSpec,
     candidates: list[AgentSpec],

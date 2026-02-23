@@ -7,6 +7,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
 from config import (
+    AdaptiveConfig,
     AppConfig,
     ChatConfig,
     ExecConfig,
@@ -41,6 +42,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
         exec_dict = cfg_obj.get("exec", {})
         mcp_dict = cfg_obj.get("mcp", {})
         chat_dict = cfg_obj.get("chat", {})
+        adaptive_dict = cfg_obj.get("adaptive", {})
         return AppConfig(
             task=TaskConfig(**task_dict),
             method=cfg_obj.get("method", "orchestrated"),
@@ -54,6 +56,7 @@ def to_app_config(cfg: DictConfig) -> AppConfig:
             exec=ExecConfig(**exec_dict) if isinstance(exec_dict, dict) else ExecConfig(),
             mcp=MCPConfig(**mcp_dict) if isinstance(mcp_dict, dict) else MCPConfig(),
             chat=ChatConfig(**chat_dict) if isinstance(chat_dict, dict) else ChatConfig(),
+            adaptive=AdaptiveConfig(**adaptive_dict) if isinstance(adaptive_dict, dict) else AdaptiveConfig(),
         )
     raise TypeError("Config is not compatible with AppConfig.")
 
@@ -111,6 +114,7 @@ async def run_async(cfg: DictConfig) -> None:
         tool_cfg=app_cfg.tool,
         exec_cfg=app_cfg.exec,
         mcp_cfg=app_cfg.mcp,
+        adaptive_cfg=app_cfg.adaptive,
     )
 
     result = await run_method(app_cfg.method, task, runtime)

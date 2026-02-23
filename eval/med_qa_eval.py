@@ -311,6 +311,7 @@ async def run_eval(args: argparse.Namespace) -> None:
             tool_cfg=app_cfg.tool,
             exec_cfg=app_cfg.exec,
             mcp_cfg=app_cfg.mcp,
+            adaptive_cfg=app_cfg.adaptive,
         )
         runtimes.append(runtime)
         trace_path = Path(runtime.observability.trace_path)

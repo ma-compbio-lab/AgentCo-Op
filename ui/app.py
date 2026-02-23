@@ -34,6 +34,7 @@ def build_runtime_from_config(app_cfg):
         tool_cfg=app_cfg.tool,
         exec_cfg=app_cfg.exec,
         mcp_cfg=app_cfg.mcp,
+        adaptive_cfg=app_cfg.adaptive,
     )
 
 
