@@ -135,7 +135,9 @@ config interface as MedQA (`conf/config_w_api.yaml` by default) and runs your
 workflow against SpatialBench eval JSON files.
 
 Requirements:
-- Install SpatialBench deps (see `third_party/spatialbench/pyproject.toml`)
+- Install SpatialBench deps (recommended):
+  - `pip install -e third_party/spatialbench`
+  - or install from `third_party/spatialbench/pyproject.toml` manually
 - Install `latch` CLI if you want to download `latch://` data nodes
 - Set `LATCH_TOKEN` for private datasets
 

@@ -19,6 +19,7 @@ if SPATIAL_ROOT.exists() and str(SPATIAL_ROOT) not in sys.path:
 from omegaconf import OmegaConf
 
 from config import (
+    AdaptiveConfig,
     AppConfig,
     ChatConfig,
     ExecConfig,
@@ -50,6 +51,7 @@ def _to_app_config(cfg) -> AppConfig:
         exec_dict = cfg_obj.get("exec", {})
         mcp_dict = cfg_obj.get("mcp", {})
         chat_dict = cfg_obj.get("chat", {})
+        adaptive_dict = cfg_obj.get("adaptive", {})
         return AppConfig(
             task=TaskConfig(**task_dict),
             method=cfg_obj.get("method", "orchestrated"),
@@ -63,6 +65,7 @@ def _to_app_config(cfg) -> AppConfig:
             exec=ExecConfig(**exec_dict) if isinstance(exec_dict, dict) else ExecConfig(),
             mcp=MCPConfig(**mcp_dict) if isinstance(mcp_dict, dict) else MCPConfig(),
             chat=ChatConfig(**chat_dict) if isinstance(chat_dict, dict) else ChatConfig(),
+            adaptive=AdaptiveConfig(**adaptive_dict) if isinstance(adaptive_dict, dict) else AdaptiveConfig(),
         )
     raise TypeError("Config is not compatible with AppConfig.")
 
@@ -201,95 +204,79 @@ async def run_eval(args: argparse.Namespace) -> None:
     durations: list[float] = []
 
     for idx, eval_path in enumerate(eval_paths, 1):
-        eval_data = json.loads(eval_path.read_text())
-        test_case = TestCase(**eval_data)
-        work_dir = setup_workspace(test_case.id, args.run_id)
-        contextual_data = []
-        if not args.skip_download and test_case.data_node:
-            try:
+        work_dir = None
+        test_case = None
+        row: dict[str, Any] | None = None
+        duration = 0.0
+        try:
+            eval_data = json.loads(eval_path.read_text())
+            test_case = TestCase(**eval_data)
+            work_dir = setup_workspace(test_case.id, args.run_id)
+            contextual_data = []
+            if not args.skip_download and test_case.data_node:
                 contextual_data = download_data(test_case.data_node, work_dir)
-            except Exception as exc:
-                cleanup_workspace(work_dir, keep=args.keep_workspace)
-                if args.continue_on_error:
-                    results.append(
-                        {
-                            "id": test_case.id,
-                            "eval_path": str(eval_path),
-                            "passed": False,
-                            "error": f"download_failed: {exc}",
-                        }
-                    )
-                    invalid += 1
-                    if args.progress:
-                        _render_progress(idx, total_expected)
-                    continue
-                raise
 
-        data_context = ""
-        if contextual_data:
-            data_context = (
-                "\n\nHere is the context of the selected nodes the user would like to use: "
-                f"<ContextualNodeData>{json.dumps(contextual_data)}</ContextualNodeData>"
+            data_context = ""
+            if contextual_data:
+                data_context = (
+                    "\n\nHere is the context of the selected nodes the user would like to use: "
+                    f"<ContextualNodeData>{json.dumps(contextual_data)}</ContextualNodeData>"
+                )
+
+            task_prompt = (
+                f"{test_case.task}\n\n"
+                "IMPORTANT:\n"
+                "1) Write your final answer as a JSON object to a file named `eval_answer.json`.\n"
+                "2) The file should contain ONLY the JSON object with the required fields.\n"
+                "3) After writing the file, the task is complete.\n"
+                "Example eval_answer.json:\n"
+                "{\n  \"field1\": value1,\n  \"field2\": value2\n}\n"
+                f"{data_context}\n"
+                f"Workspace path: {work_dir}"
             )
 
-        task_prompt = (
-            f"{test_case.task}\n\n"
-            "IMPORTANT:\n"
-            "1) Write your final answer as a JSON object to a file named `eval_answer.json`.\n"
-            "2) The file should contain ONLY the JSON object with the required fields.\n"
-            "3) After writing the file, the task is complete.\n"
-            "Example eval_answer.json:\n"
-            "{\n  \"field1\": value1,\n  \"field2\": value2\n}\n"
-            f"{data_context}\n"
-            f"Workspace path: {work_dir}"
-        )
+            task = TaskSpec(
+                goal=task_prompt,
+                constraints=[
+                    "Return a JSON object only (no markdown).",
+                    "Write eval_answer.json to the provided workspace path.",
+                ],
+                success_criteria=[
+                    "JSON fields must match the task description.",
+                ],
+                budget_tokens=app_cfg.task.budget_tokens,
+                input_modalities=app_cfg.task.input_modalities,
+                output_modalities=app_cfg.task.output_modalities,
+                task_type=app_cfg.task.task_type,
+                prompt_verbosity=app_cfg.task.prompt_verbosity,
+                allow_web_search_for_spec=app_cfg.task.allow_web_search_for_spec,
+                spec_max_search_queries=app_cfg.task.spec_max_search_queries,
+                allow_tool_search=app_cfg.task.allow_tool_search,
+                tool_max_candidates=app_cfg.task.tool_max_candidates,
+                tool_max_search_queries=app_cfg.task.tool_max_search_queries,
+            )
 
-        task = TaskSpec(
-            goal=task_prompt,
-            constraints=[
-                "Return a JSON object only (no markdown).",
-                "Write eval_answer.json to the provided workspace path.",
-            ],
-            success_criteria=[
-                "JSON fields must match the task description.",
-            ],
-            budget_tokens=app_cfg.task.budget_tokens,
-            input_modalities=app_cfg.task.input_modalities,
-            output_modalities=app_cfg.task.output_modalities,
-            task_type=app_cfg.task.task_type,
-            prompt_verbosity=app_cfg.task.prompt_verbosity,
-            allow_web_search_for_spec=app_cfg.task.allow_web_search_for_spec,
-            spec_max_search_queries=app_cfg.task.spec_max_search_queries,
-            allow_tool_search=app_cfg.task.allow_tool_search,
-            tool_max_candidates=app_cfg.task.tool_max_candidates,
-            tool_max_search_queries=app_cfg.task.tool_max_search_queries,
-        )
+            start = time.monotonic()
+            result = await run_method(app_cfg.method, task, runtime)
+            duration = time.monotonic() - start
 
-        start = time.monotonic()
-        result = await run_method(app_cfg.method, task, runtime)
-        duration = time.monotonic() - start
-        durations.append(duration)
+            answer_text = result.answer if result else ""
+            parsed = _parse_json_answer(answer_text)
+            eval_answer_path = work_dir / "eval_answer.json"
+            if parsed is not None:
+                eval_answer_path.write_text(json.dumps(parsed), encoding="utf-8")
 
-        answer_text = result.answer if result else ""
-        parsed = _parse_json_answer(answer_text)
-        eval_answer_path = work_dir / "eval_answer.json"
-        if parsed is not None:
-            eval_answer_path.write_text(json.dumps(parsed), encoding="utf-8")
-
-        grader_result = None
-        is_invalid = parsed is None
-        if test_case.grader and parsed is not None:
-            grader_type = test_case.grader.get("type")
-            grader_config = test_case.grader.get("config", {})
-            grader_cls = GRADER_REGISTRY.get(grader_type)
-            if grader_cls:
-                grader = grader_cls()
-                grader_result = grader.evaluate_answer(parsed, grader_config)
-        ok = bool(grader_result.passed) if grader_result else False
-        passed += 1 if ok else 0
-        invalid += 1 if is_invalid else 0
-        results.append(
-            {
+            grader_result = None
+            is_invalid = parsed is None
+            if test_case.grader and parsed is not None:
+                grader_type = test_case.grader.get("type")
+                grader_config = test_case.grader.get("config", {})
+                grader_cls = GRADER_REGISTRY.get(grader_type)
+                if grader_cls:
+                    grader = grader_cls()
+                    grader_result = grader.evaluate_answer(parsed, grader_config)
+            ok = bool(grader_result.passed) if grader_result else False
+            row = {
                 "id": test_case.id,
                 "eval_path": str(eval_path),
                 "passed": ok,
@@ -298,10 +285,29 @@ async def run_eval(args: argparse.Namespace) -> None:
                 "grader_metrics": getattr(grader_result, "metrics", None) if grader_result else None,
                 "grader_reasoning": getattr(grader_result, "reasoning", None) if grader_result else None,
             }
-        )
-        append_jsonl(args.output, results[-1])
-        cleanup_workspace(work_dir, keep=args.keep_workspace)
+        except Exception as exc:
+            if not args.continue_on_error:
+                raise
+            row = {
+                "id": getattr(test_case, "id", eval_path.stem),
+                "eval_path": str(eval_path),
+                "passed": False,
+                "invalid": True,
+                "duration_s": duration,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        finally:
+            if work_dir is not None:
+                cleanup_workspace(work_dir, keep=args.keep_workspace)
 
+        if row is None:
+            continue
+        if row.get("duration_s", 0.0):
+            durations.append(float(row["duration_s"]))
+        passed += 1 if row.get("passed") else 0
+        invalid += 1 if row.get("invalid") else 0
+        results.append(row)
+        append_jsonl(args.output, row)
         if args.progress:
             _render_progress(idx, total_expected)
 
