@@ -14,6 +14,7 @@ from core.hooks import HookManager
 from core.local_exec import LocalExecutor, WriteApproval
 from core.memory import Memory
 from core.observability import Observability
+from core.observability_hooks import EventStreamHooks
 from core.planning_memory import PlanningMemory
 from core.registry import Registry
 from core.mcp_manager import MCPManager
@@ -148,7 +149,8 @@ def build_runtime(
         budget_router=budget_router,
         context=context,
         session=None,
-        run_hooks=None,
+        # Always attach lifecycle hooks so tool activity (e.g., web search) is visible in logs.
+        run_hooks=EventStreamHooks(),
         repair=repair or RepairConfig(),
         planning_cfg=planning_cfg,
         tool_cfg=tool_cfg,

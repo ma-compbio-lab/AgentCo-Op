@@ -431,6 +431,12 @@ class ExecutionEngine:
                         )
             if not pack:
                 continue
+            log_event(
+                "TOOLS",
+                "web_search_evidence",
+                "evidence collected",
+                data=self._evidence_log_payload(pack),
+            )
             evidence_packs.append(pack)
             evidence_messages.append(self._evidence_to_message(pack))
             if should_show_outputs():
@@ -446,6 +452,23 @@ class ExecutionEngine:
             state["artifacts"]["evidence"] = evidence_packs
             state["artifacts"]["evidence_messages"] = evidence_messages
             state["messages"].extend(evidence_messages)
+
+    @staticmethod
+    def _evidence_log_payload(pack: EvidencePack, limit: int = 3) -> dict[str, object]:
+        sources: list[dict[str, str]] = []
+        for item in pack.citations[:limit]:
+            sources.append(
+                {
+                    "title": item.title or "Untitled",
+                    "url": item.url,
+                    "snippet": (item.snippet or "")[:180],
+                }
+            )
+        return {
+            "query": pack.request.query,
+            "summary_preview": pack.summary[:240],
+            "sources": sources,
+        }
 
     @staticmethod
     def _evidence_cache_key(request: EvidenceRequest) -> str:

@@ -167,6 +167,12 @@ async def _collect_spec_evidence(
             continue
         ctx.cache.set(cache_key, pack)
         evidence.append(pack)
+        log_event(
+            "TOOLS",
+            "web_search_evidence",
+            "spec evidence collected",
+            data=_evidence_log_payload(pack),
+        )
         if should_show_outputs():
             log_event(
                 "ORCH",
@@ -283,6 +289,23 @@ def _summarize_evidence(packs: Iterable[EvidencePack]) -> str | None:
     if not summaries:
         return None
     return "\n".join(f"- {summary}" for summary in summaries)
+
+
+def _evidence_log_payload(pack: EvidencePack, limit: int = 3) -> dict[str, object]:
+    sources: list[dict[str, str]] = []
+    for item in pack.citations[:limit]:
+        sources.append(
+            {
+                "title": item.title or "Untitled",
+                "url": item.url,
+                "snippet": (item.snippet or "")[:180],
+            }
+        )
+    return {
+        "query": pack.request.query,
+        "summary_preview": pack.summary[:240],
+        "sources": sources,
+    }
 
 
 def _dedupe_records(records: list[dict]) -> list[dict]:
