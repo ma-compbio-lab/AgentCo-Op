@@ -130,43 +130,90 @@ python eval/harness.py tasks=data/tasks.jsonl method=orchestrated max_samples=10
 
 ### 10) SpatialBench eval
 
-SpatialBench lives in `third_party/spatialbench`. The eval wrapper uses the same
-config interface as MedQA (`conf/config_w_api.yaml` by default) and runs your
-workflow against SpatialBench eval JSON files.
+SpatialBench assets are under `third_party/spatialbench`. The Agent-Cop wrapper
+now follows SpatialBench's official `EvalRunner` flow (workspace setup, latch
+data staging, grading), and plugs Agent-Cop in via a custom `agent_function`.
 
-Requirements:
-- Install SpatialBench deps (recommended):
-  - `pip install -e third_party/spatialbench`
-  - or install from `third_party/spatialbench/pyproject.toml` manually
-- Install `latch` CLI if you want to download `latch://` data nodes
-- Set `LATCH_TOKEN` for private datasets
+Important scope note:
+- `third_party/spatialbench/evals_canonical` contains only **10 canonical examples**.
+- The **full benchmark eval JSON set** is withheld by SpatialBench maintainers and
+  must be obtained separately (then passed via `EVAL_DIR=/path/to/evals_full`).
 
-Example (canonical evals):
+Setup (recommended dedicated env):
+
+```bash
+bash scripts/setup_spatialbench_env.sh
+conda activate spatialbench
+export OPENAI_API_KEY=...
+latch login
+```
+
+Direct run:
 
 ```bash
 python eval/spatialbench_eval.py \
   --config conf/config_w_api.yaml \
   --eval-dir third_party/spatialbench/evals_canonical \
+  --concurrency 8 \
   --max-samples 2 \
-  --progress
+  --progress \
+  --continue-on-error \
+  method=adaptive
 ```
 
-If you want a quick pipeline check without downloading data:
+Dry-run (only checks eval discovery and config loading):
 
 ```bash
 python eval/spatialbench_eval.py \
   --config conf/config_w_api.yaml \
-  --eval-path third_party/spatialbench/evals_canonical/qc/xenium_xenium_qc_filter_min_umi_counts.json \
-  --skip-download \
-  --progress
+  --dry-run
 ```
 
-Tip: for non-interactive batch runs, disable local write approvals:
+Wrapper scripts:
 
 ```bash
-python eval/spatialbench_eval.py \
-  --config conf/config_w_api.yaml \
-  exec.require_approval=false
+# strict single-agent baseline (no tools/memory/repair/planning/mcp/exec)
+bash scripts/run_spatialbench_baseline.sh
+
+# adaptive workflow
+bash scripts/run_spatialbench_adaptive.sh
+
+# baseline + adaptive in one timestamped folder
+bash scripts/run_spatialbench_both.sh
+
+# with parallel workers
+CONCURRENCY=8 bash scripts/run_spatialbench_adaptive.sh
+
+# force both runs into one specific folder and auto-generate overall report
+RUN_DIR=logs/spatialbench_task_001 CONCURRENCY=8 bash scripts/run_spatialbench_both.sh
+```
+
+Full benchmark scripts (when you have full eval JSON files):
+
+```bash
+# Expected: EVAL_DIR points to your full eval tree (not the canonical 10 examples)
+EVAL_DIR=/path/to/evals_full CONCURRENCY=8 bash scripts/run_spatialbench_full_baseline.sh
+EVAL_DIR=/path/to/evals_full CONCURRENCY=8 bash scripts/run_spatialbench_full_adaptive.sh
+
+# Run both methods to one folder + overall report
+EVAL_DIR=/path/to/evals_full CONCURRENCY=8 RUN_DIR=logs/spatialbench_full_001 \
+  bash scripts/run_spatialbench_full_both.sh
+```
+
+What the full scripts do:
+- Verify `EVAL_DIR` exists and (by default) contains more than 10 evals.
+- Prefetch all latch datasets once (`eval/spatialbench_prefetch.py`) before inference.
+- Run evaluation with progress bar, concurrency, and continue-on-error behavior.
+- Save outputs to one folder with:
+  - `baseline_results.jsonl`, `baseline_summary.json`
+  - `adaptive_results.jsonl`, `adaptive_summary.json`
+  - `overall_report.json`, `overall_report.md`
+
+If you intentionally want to run canonical examples through full wrappers:
+
+```bash
+REQUIRE_FULL=false EVAL_DIR=third_party/spatialbench/evals_canonical \
+  bash scripts/run_spatialbench_full_adaptive.sh
 ```
 
 ### 10) Logging + debug
