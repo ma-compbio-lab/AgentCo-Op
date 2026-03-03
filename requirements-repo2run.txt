@@ -1,2 +1,0 @@
-# Repo2Run is not a pip package; install its dependencies from the cloned repo.
--r third_party/Repo2Run/requirements.txt
