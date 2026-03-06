@@ -1,0 +1,45 @@
+# @package _global_
+
+benchmark:
+  kind: medqa
+  dataset_id: bigbio/med_qa
+  config_name: med_qa_en_bigbio_qa
+  trust_remote_code: true
+  split: train
+  sample_count: 1
+  preview_path: benchmarks/medqa/medqa_preview.json
+  info_path: benchmarks/medqa/medqa_dataset_info.json
+
+blueprint:
+  task:
+    task_id: medqa
+    title: MedQA
+    description: Answer medical multiple-choice questions from the MedQA benchmark.
+  budget:
+    max_total_usd: 5.0
+    max_total_tokens: 12000
+  base_nodes:
+    - node_id: planner
+      kind: agent
+      role: Planner
+      model: ${model}
+      cacheable: true
+    - node_id: responder
+      kind: agent
+      role: Responder
+      model: ${model}
+      io:
+        output_schema:
+          type: object
+          required:
+            - result
+  base_edges:
+    - edge_id: medqa_plan
+      src: planner
+      dst: responder
+  meta:
+    benchmark: medqa
+    dataset_id: ${benchmark.dataset_id}
+    config_name: ${benchmark.config_name}
+    split: ${benchmark.split}
+

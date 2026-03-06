@@ -1,6 +1,7 @@
 """Runtime utilities for workflow execution and repair."""
 
 from dynaforge.runtime.executor import BlueprintExecutor
+from dynaforge.runtime.llm import LLMRouter, OpenAICompatibleLLMClient
 from dynaforge.runtime.reports import (
     BlameCandidate,
     BudgetLedger,
@@ -22,7 +23,8 @@ __all__ = [
     "ExecutionCost",
     "ExecutionReport",
     "HardCheckResult",
+    "LLMRouter",
     "NodeExecutionResult",
     "NodeTrace",
+    "OpenAICompatibleLLMClient",
 ]
-

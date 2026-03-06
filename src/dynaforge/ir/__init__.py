@@ -18,6 +18,7 @@ from dynaforge.ir.schema import (
     PatchOp,
     PatchOpType,
     PatchPlan,
+    Repo2RunSpec,
     SafetySpec,
     SandboxSpec,
     SoftJudge,
@@ -48,6 +49,7 @@ __all__ = [
     "PatchOp",
     "PatchOpType",
     "PatchPlan",
+    "Repo2RunSpec",
     "SafetySpec",
     "SandboxSpec",
     "SoftJudge",
@@ -59,4 +61,3 @@ __all__ = [
     "TriggerExpr",
     "WorkflowBlueprint",
 ]
-

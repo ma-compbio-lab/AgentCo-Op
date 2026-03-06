@@ -1,0 +1,34 @@
+# @package _global_
+
+blueprint:
+  task:
+    task_id: minimal-repair-demo
+    title: Minimal Repair Demo
+    description: A Hydra-configured blueprint that enables repair mode and an explicit hard check.
+  budget:
+    max_total_usd: 5.0
+    max_total_tokens: 10000
+  base_nodes:
+    - node_id: planner
+      kind: agent
+      role: Planner
+      model: ${model}
+      cacheable: true
+  base_edges: []
+  eval:
+    hard_checks:
+      - check_id: sanity
+        description: Basic local sanity check
+        cmd:
+          - python
+          - -c
+          - print('ok')
+        timeout_s: 10
+        expected_exit_codes:
+          - 0
+  meta:
+    repair_demo: true
+
+executor:
+  repair_enabled: true
+  max_repair_iterations: 2

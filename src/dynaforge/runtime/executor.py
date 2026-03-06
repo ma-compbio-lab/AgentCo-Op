@@ -4,18 +4,21 @@ import json
 import os
 import subprocess
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, Set
+from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set
 
 from dynaforge.ir.schema import FailureType, NodeKind, NodeSpec, TraceAssertion, WorkflowBlueprint
+from dynaforge.integrations.mcp_client import MCPClientManager
+from dynaforge.integrations.sandbox import DockerSandboxRunner, SandboxError
 from dynaforge.runtime.blame import BlameAssigner, FailureClassifier
 from dynaforge.runtime.cache import ArtifactStore
 from dynaforge.runtime.conditions import evaluate_trigger
+from dynaforge.runtime.expression import evaluate_predicate
+from dynaforge.runtime.llm import LLMRouter
 from dynaforge.runtime.patching import DeterministicPatchPolicy, apply_patch_plan, compute_impacted_nodes
 from dynaforge.runtime.reports import (
-    BlameCandidate,
     BudgetLedger,
     ContractViolation,
     ExecutionCost,
@@ -25,6 +28,7 @@ from dynaforge.runtime.reports import (
     NodeTrace,
     SoftJudgeResult,
 )
+from dynaforge.runtime.validation import validate_json_payload
 
 JsonDict = Dict[str, Any]
 
@@ -46,6 +50,9 @@ class NodeExecutionContext:
     active_subgraphs: Set[str]
     node_results: Dict[str, NodeExecutionResult]
     budget_remaining: Dict[str, Any]
+    llm_router: LLMRouter
+    mcp_client: MCPClientManager
+    sandbox_runner: DockerSandboxRunner
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -58,11 +65,18 @@ class BlueprintExecutor:
         *,
         patch_policy: Optional[DeterministicPatchPolicy] = None,
         blame_assigner: Optional[BlameAssigner] = None,
+        llm_router: Optional[LLMRouter] = None,
+        mcp_client: Optional[MCPClientManager] = None,
+        sandbox_runner: Optional[DockerSandboxRunner] = None,
+        allow_offline_fallback: bool = True,
     ):
         self.artifact_store = ArtifactStore(artifact_root)
         self.patch_policy = patch_policy or DeterministicPatchPolicy()
         self.blame_assigner = blame_assigner or BlameAssigner()
         self.failure_classifier = FailureClassifier()
+        self.llm_router = llm_router or LLMRouter(allow_offline_fallback=allow_offline_fallback)
+        self.mcp_client = mcp_client or MCPClientManager()
+        self.sandbox_runner = sandbox_runner or DockerSandboxRunner()
         self._memoized_results: Dict[str, NodeExecutionResult] = {}
 
     def execute_blueprint(
@@ -147,7 +161,15 @@ class BlueprintExecutor:
                         error=f"Input contract validation failed at node {node_id}.",
                     )
                 else:
-                    result = self._run_node(node, inputs, blueprint, handlers, node_results, active_subgraphs)
+                    result = self._run_node(
+                        node,
+                        inputs,
+                        blueprint,
+                        handlers,
+                        node_results,
+                        active_subgraphs,
+                        ledger.snapshot().model_dump(),
+                    )
                 ledger.consume(result.cost)
                 node_results[node_id] = result
                 executed.add(node_id)
@@ -350,10 +372,25 @@ class BlueprintExecutor:
         handlers: Mapping[str, NodeHandler],
         node_results: Dict[str, NodeExecutionResult],
         active_subgraphs: Set[str],
+        budget_remaining: Dict[str, Any],
     ) -> NodeExecutionResult:
         cache_key = self._cache_key(node, inputs)
         if node.cacheable and cache_key in self._memoized_results:
             return self._memoized_results[cache_key].model_copy(update={"cached": True})
+
+        container_starts = 0
+        if node.sandbox:
+            was_materialized = self.sandbox_runner.is_materialized(node.sandbox.sandbox_id)
+            try:
+                self.sandbox_runner.ensure_materialized(node.sandbox)
+                if not was_materialized:
+                    container_starts = 1
+            except SandboxError as exc:
+                return NodeExecutionResult(
+                    failure_type=FailureType.tool_runtime_error,
+                    error=f"Sandbox materialization failed: {exc}",
+                    trace={"sandbox_error": True, "sandbox_id": node.sandbox.sandbox_id},
+                )
 
         handler = handlers.get(node.node_id) or handlers.get(node.role)
         context = NodeExecutionContext(
@@ -361,10 +398,13 @@ class BlueprintExecutor:
             artifact_store=self.artifact_store,
             active_subgraphs=active_subgraphs,
             node_results=node_results,
-            budget_remaining={},
+            budget_remaining=budget_remaining,
+            llm_router=self.llm_router,
+            mcp_client=self.mcp_client,
+            sandbox_runner=self.sandbox_runner,
         )
         try:
-            result = handler(node, inputs, context) if handler is not None else self._default_handler(node, inputs)
+            result = handler(node, inputs, context) if handler is not None else self._default_handler(node, inputs, context)
         except Exception as exc:
             result = NodeExecutionResult(
                 failure_type=FailureType.unknown,
@@ -372,31 +412,52 @@ class BlueprintExecutor:
                 trace={"exception": exc.__class__.__name__},
             )
 
+        if container_starts:
+            result.cost = result.cost.add(ExecutionCost(container_starts=container_starts))
+
         if node.cacheable and result.failure_type == FailureType.none:
             self._memoized_results[cache_key] = result
         return result
 
-    def _default_handler(self, node: NodeSpec, inputs: JsonDict) -> NodeExecutionResult:
-        input_text = json.dumps(inputs, ensure_ascii=True, sort_keys=True)
-        tool_calls = len(node.tools) if node.kind == NodeKind.tool else 0
-        approx_input_tokens = max(len(input_text) // 4, 1) if inputs else 1
-        approx_output_tokens = 64 if node.kind in {NodeKind.agent, NodeKind.evaluator, NodeKind.router} else 16
-        cost = ExecutionCost(
-            usd=node.cost_hint_usd or 0.0,
-            input_tokens=approx_input_tokens,
-            output_tokens=approx_output_tokens,
-            tool_calls=tool_calls,
-            container_starts=1 if node.sandbox else 0,
-        )
-        outputs: JsonDict = {"result": {"node_id": node.node_id, "role": node.role}}
-        if node.kind == NodeKind.tool and node.tools:
-            outputs["tool"] = {"server": node.tools[0].server, "name": node.tools[0].tool}
-        confidence = 0.7 if node.kind != NodeKind.router else 0.8
+    def _default_handler(self, node: NodeSpec, inputs: JsonDict, context: NodeExecutionContext) -> NodeExecutionResult:
+        if node.kind in {NodeKind.agent, NodeKind.evaluator, NodeKind.router}:
+            return self.llm_router.run_node(node, inputs, context)
+
+        if node.kind == NodeKind.tool:
+            if not node.tools:
+                return NodeExecutionResult(
+                    failure_type=FailureType.tool_runtime_error,
+                    error=f"Tool node {node.node_id} has no bound tools",
+                )
+            try:
+                tool_result = self.mcp_client.call_bound_tool(
+                    node.tools,
+                    f"{node.tools[0].server}:{node.tools[0].tool}",
+                    inputs,
+                    blueprint=context.blueprint,
+                    sandbox_runner=context.sandbox_runner,
+                )
+            except Exception as exc:
+                return NodeExecutionResult(
+                    failure_type=FailureType.tool_runtime_error,
+                    error=f"MCP tool call failed: {exc}",
+                    trace={"live_mcp": True, "tool": f"{node.tools[0].server}:{node.tools[0].tool}"},
+                )
+            return NodeExecutionResult(
+                outputs={"result": tool_result},
+                trace={
+                    "live_mcp": True,
+                    "server": node.tools[0].server,
+                    "tool": node.tools[0].tool,
+                },
+                cost=ExecutionCost(tool_calls=1),
+                confidence=0.9,
+            )
+
         return NodeExecutionResult(
-            outputs=outputs,
-            trace={"simulated": True, "kind": node.kind.value},
-            cost=cost,
-            confidence=confidence,
+            outputs={"result": inputs},
+            trace={"passthrough": True, "kind": node.kind.value},
+            confidence=1.0,
         )
 
     def _validate_input_contract(self, node: NodeSpec, inputs: JsonDict) -> list[ContractViolation]:
@@ -406,7 +467,11 @@ class BlueprintExecutor:
         violations: list[ContractViolation] = []
         violations.extend(self._validate_schema(node.node_id, "output_schema", node.io.output_schema, outputs))
         for invariant in node.io.invariants:
-            if not self._safe_eval(invariant, {"inputs": inputs, "outputs": outputs}):
+            if not evaluate_predicate(
+                invariant,
+                {"inputs": inputs, "outputs": outputs},
+                default_on_error=False,
+            ):
                 violations.append(
                     ContractViolation(
                         node_id=node.node_id,
@@ -436,45 +501,44 @@ class BlueprintExecutor:
             "upstream": upstream.outputs if upstream is not None else None,
             "source": upstream.outputs if upstream is not None else None,
         }
-        return BlueprintExecutor._safe_eval_optional(edge.condition, env)
+        return evaluate_predicate(edge.condition, env, default_on_error=None)
 
     @staticmethod
     def _validate_schema(
         node_id: str,
         contract_type: str,
         schema: Optional[JsonDict],
-        payload: JsonDict,
+        payload: Any,
     ) -> list[ContractViolation]:
-        if not schema or schema.get("type") != "object":
-            return []
-        required = schema.get("required", [])
-        missing = [key for key in required if key not in payload]
-        if not missing:
+        if not schema:
             return []
         return [
             ContractViolation(
                 node_id=node_id,
                 contract_type=contract_type,
-                message=f"Missing required key '{key}'",
+                message=message,
             )
-            for key in missing
+            for message in validate_json_payload(schema, payload)
         ]
 
     def _run_hard_checks(self, blueprint: WorkflowBlueprint) -> list[HardCheckResult]:
         results: list[HardCheckResult] = []
         for check in blueprint.eval.hard_checks:
-            env = os.environ.copy()
-            if check.sandbox:
-                env.update(check.sandbox.env)
             try:
-                completed = subprocess.run(
-                    check.cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=check.timeout_s,
-                    env=env,
-                    cwd=check.sandbox.workdir if check.sandbox and check.sandbox.workdir else None,
-                )
+                if check.sandbox:
+                    completed = self.sandbox_runner.run_in_sandbox(
+                        check.sandbox,
+                        check.cmd,
+                        timeout_s=check.timeout_s,
+                    )
+                else:
+                    completed = subprocess.run(
+                        check.cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=check.timeout_s,
+                        env=os.environ.copy(),
+                    )
                 passed = completed.returncode in check.expected_exit_codes
                 failure_type = FailureType.none if passed else self.failure_classifier.classify_text(completed.stderr)
                 results.append(
@@ -495,6 +559,16 @@ class BlueprintExecutor:
                         stdout=exc.stdout or "",
                         stderr=exc.stderr or "",
                         failure_type=FailureType.timeout,
+                    )
+                )
+            except SandboxError as exc:
+                message = str(exc)
+                results.append(
+                    HardCheckResult(
+                        check_id=check.check_id,
+                        passed=False,
+                        stderr=message,
+                        failure_type=self.failure_classifier.classify_text(message),
                     )
                 )
             except (OSError, subprocess.SubprocessError) as exc:
@@ -544,16 +618,29 @@ class BlueprintExecutor:
     ) -> list[ContractViolation]:
         summary = {
             "node_results": {node_id: result.outputs for node_id, result in node_results.items()},
+            "node_costs": {node_id: result.cost.model_dump() for node_id, result in node_results.items()},
             "tool_calls": sum(result.cost.tool_calls for result in node_results.values()),
+            "container_starts": sum(result.cost.container_starts for result in node_results.values()),
+            "successful_nodes": sorted(
+                node_id for node_id, result in node_results.items() if result.failure_type == FailureType.none
+            ),
         }
         violations: list[ContractViolation] = []
         for assertion in assertions:
-            if not self._safe_eval(assertion.expr, {"trace": summary}):
+            if not evaluate_predicate(
+                assertion.expr,
+                {
+                    "trace": summary,
+                    "node_results": summary["node_results"],
+                    "node_costs": summary["node_costs"],
+                },
+                default_on_error=False,
+            ):
                 violations.append(
                     ContractViolation(
                         node_id="trace",
                         contract_type="invariant",
-                        message=f"Trace assertion failed: {assertion.assertion_id}",
+                        message=f"Trace assertion failed: {assertion.assertion_id} ({assertion.expr})",
                     )
                 )
         return violations
@@ -584,18 +671,6 @@ class BlueprintExecutor:
         if not values:
             return None
         return round(sum(values) / len(values), 4)
-
-    @staticmethod
-    def _safe_eval(expr: str, env: Mapping[str, Any]) -> bool:
-        value = BlueprintExecutor._safe_eval_optional(expr, env)
-        return bool(value)
-
-    @staticmethod
-    def _safe_eval_optional(expr: str, env: Mapping[str, Any]) -> Optional[bool]:
-        try:
-            return bool(eval(expr, {"__builtins__": {}}, dict(env)))
-        except Exception:
-            return None
 
     @staticmethod
     def _cache_key(node: NodeSpec, inputs: JsonDict) -> str:

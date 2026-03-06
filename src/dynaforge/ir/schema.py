@@ -100,6 +100,16 @@ class MountSpec(BaseModel):
     read_only: bool = False
 
 
+class Repo2RunSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    build_cmd: List[str] = Field(default_factory=list)
+    image_tag: Optional[str] = Field(default=None)
+    smoke_test_cmd: Optional[List[str]] = Field(default=None)
+    env: Dict[str, str] = Field(default_factory=dict)
+
+
 class SandboxSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -111,6 +121,11 @@ class SandboxSpec(BaseModel):
     env: Dict[str, str] = Field(default_factory=dict)
     mounts: List[MountSpec] = Field(default_factory=list)
     safety: SafetySpec = Field(default_factory=SafetySpec)
+    container_name: Optional[str] = Field(default=None)
+    exposed_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    host_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    auto_remove: bool = True
+    repo2run: Optional[Repo2RunSpec] = Field(default=None)
     mcp_transport: Transport = Transport.streamable_http
     mcp_url: Optional[str] = Field(default=None)
 
@@ -440,4 +455,3 @@ class WorkflowBlueprint(BaseModel):
 
     def default_active_subgraphs(self) -> Set[str]:
         return {subgraph.subgraph_id for subgraph in self.subgraphs if subgraph.default_enabled}
-

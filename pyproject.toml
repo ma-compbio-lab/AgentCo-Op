@@ -9,12 +9,20 @@ description = "Dynamic-by-construction workflow compiler/runtime for open-world 
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "hydra-core>=1.3,<2",
+  "jsonschema>=4.23,<5",
   "pydantic>=2.8,<3",
 ]
+
+[project.scripts]
+dynaforge-run = "dynaforge.cli:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2,<9",
+]
+benchmarks = [
+  "datasets>=3,<4",
 ]
 mcp = [
   "mcp[cli]>=1.0.0",
@@ -26,7 +34,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+dynaforge = ["conf/**/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-

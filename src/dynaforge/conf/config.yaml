@@ -1,0 +1,10 @@
+defaults:
+  - _self_
+  - model: openai_gpt41_mini
+  - experiment: minimal
+
+executor:
+  artifact_root: .dynaforge_artifacts
+  allow_offline_fallback: true
+  repair_enabled: false
+  max_repair_iterations: 3

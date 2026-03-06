@@ -1,0 +1,10 @@
+{
+  "repo_url": "https://github.com/latchbio/spatialbench",
+  "repo_path": "/home/shuaikes/projects/agent/Agent-Cop/external/spatialbench",
+  "repo_action": "updated",
+  "venv_path": "/home/shuaikes/projects/agent/Agent-Cop/external/spatialbench/.venv",
+  "validation_eval": "evals_canonical/qc/xenium_xenium_qc_filter_min_umi_counts.json",
+  "validation_returncode": 0,
+  "validation_stdout": "Validating evaluation: evals_canonical/qc/xenium_xenium_qc_filter_min_umi_counts.json\n\u2713 Validation passed!\n  ID: xenium_qc_filter_min_umi_counts\n  Task: Filter cells with very low total UMI counts. Return a JSON object with field: ce...\n  Grader: numeric_tolerance\n",
+  "validation_stderr": ""
+}
