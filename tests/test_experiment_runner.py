@@ -8,10 +8,11 @@ from dynaforge.experiment_runner import (
     _load_existing_medqa_task_results,
     _medqa_evaluation_failure_type,
     _resolve_medqa_indices,
+    build_medqa_deep_analysis,
     run_medqa_experiment,
 )
 from dynaforge.ir.schema import FailureType
-from dynaforge.runtime.reports import ExecutionReport, NodeExecutionResult
+from dynaforge.runtime.reports import ExecutionCost, ExecutionReport, NodeExecutionResult, NodeTrace
 
 
 def test_resolve_medqa_indices_supports_focused_task_ids() -> None:
@@ -300,3 +301,132 @@ def test_run_medqa_experiment_resume_skips_completed_tasks(monkeypatch, tmp_path
     assert executed == ["200"]
     assert summary["task_count"] == 2
     assert [result["task_id"] for result in merged_results] == ["100", "200"]
+
+
+def test_build_medqa_deep_analysis_uses_question_type_and_review_ids(tmp_path) -> None:
+    reviewed_report = ExecutionReport(
+        workflow_id="wf-review",
+        task_id="medqa:100",
+        success=True,
+        failure_type=FailureType.none,
+        traces=[
+            NodeTrace(
+                node_id="planner",
+                role="Planner",
+                status="success",
+                outputs={"question_type": "mechanism"},
+                confidence=0.7,
+            ),
+            NodeTrace(
+                node_id="responder",
+                role="Responder",
+                status="success",
+                outputs={"final_answer_label": "B"},
+                confidence=0.7,
+            ),
+            NodeTrace(
+                node_id="reviewer",
+                role="Reviewer",
+                status="success",
+                outputs={"review_verdict": "revise"},
+                confidence=0.8,
+            ),
+            NodeTrace(
+                node_id="reviser",
+                role="Reviser",
+                status="success",
+                outputs={"final_answer_label": "B"},
+                confidence=0.8,
+            ),
+        ],
+        hard_checks=[],
+        soft_judges=[],
+        contract_violations=[],
+        activated_gates=["medqa_low_conf_review"],
+        active_subgraphs=["sg_review"],
+        cost=ExecutionCost(usd=0.004),
+        confidence=0.75,
+        summary="reviewed",
+        node_results={
+            "reviser": NodeExecutionResult(outputs={"final_answer_label": "B"}, confidence=0.8),
+        },
+    )
+    plain_report = ExecutionReport(
+        workflow_id="wf-plain",
+        task_id="medqa:200",
+        success=True,
+        failure_type=FailureType.none,
+        traces=[
+            NodeTrace(
+                node_id="planner",
+                role="Planner",
+                status="success",
+                outputs={"question_type": "diagnosis"},
+                confidence=0.8,
+            ),
+            NodeTrace(
+                node_id="responder",
+                role="Responder",
+                status="success",
+                outputs={"final_answer_label": "A"},
+                confidence=0.9,
+            ),
+        ],
+        hard_checks=[],
+        soft_judges=[],
+        contract_violations=[],
+        activated_gates=[],
+        active_subgraphs=[],
+        cost=ExecutionCost(usd=0.001),
+        confidence=0.85,
+        summary="plain",
+        node_results={
+            "responder": NodeExecutionResult(outputs={"final_answer_label": "A"}, confidence=0.9),
+        },
+    )
+    reviewed_path = tmp_path / "100.report.json"
+    plain_path = tmp_path / "200.report.json"
+    reviewed_path.write_text(reviewed_report.model_dump_json(), encoding="utf-8")
+    plain_path.write_text(plain_report.model_dump_json(), encoding="utf-8")
+
+    deep_analysis = build_medqa_deep_analysis(
+        [
+            {
+                "task_id": "100",
+                "question_type": "",
+                "correct": False,
+                "workflow_signature": "planner->responder->reviewer->reviser",
+                "prediction_label": "B",
+                "gold_label": "C",
+                "confidence": 0.75,
+                "failure_type": "incorrect_answer",
+                "runtime_failure_type": "none",
+                "report_path": str(reviewed_path),
+                "cost": {"usd": 0.004},
+                "activated_node_count": 4,
+                "activated_subgraph_count": 1,
+            },
+            {
+                "task_id": "200",
+                "question_type": "diagnosis",
+                "correct": True,
+                "workflow_signature": "planner->responder",
+                "prediction_label": "A",
+                "gold_label": "A",
+                "confidence": 0.85,
+                "failure_type": "none",
+                "runtime_failure_type": "none",
+                "report_path": str(plain_path),
+                "cost": {"usd": 0.001},
+                "activated_node_count": 2,
+                "activated_subgraph_count": 0,
+            },
+        ]
+    )
+
+    assert deep_analysis["review_task_count"] == 1
+    assert deep_analysis["reviewed_task_ids"] == ["100"]
+    assert deep_analysis["question_type_breakdown"]["mechanism"]["count"] == 1
+    assert deep_analysis["question_type_breakdown"]["mechanism"]["review_rate"] == 1.0
+    assert deep_analysis["review_failure_breakdown"]["mechanism"] == 1
+    assert deep_analysis["workflow_structure"]["role_frequency"]["Reviewer"] == 1

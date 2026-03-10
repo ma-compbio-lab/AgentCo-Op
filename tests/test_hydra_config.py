@@ -104,6 +104,33 @@ def test_medqa_gpt5_review_config_uses_stronger_review_model() -> None:
     assert blueprint.node_map()["responder"].model.name == "gpt-5-mini"
 
 
+def test_medqa_gpt5_review_gate90_config_raises_review_threshold() -> None:
+    config = load_hydra_config(overrides=["experiment=medqa_gpt5_review_gate90", "model=openai_gpt5_mini"])
+    blueprint = build_blueprint_from_config(config)
+    reviewer = next(node for node in blueprint.subgraphs[0].nodes if node.node_id == "reviewer")
+
+    assert reviewer.model.name == "gpt-5"
+    assert blueprint.gates[0].trigger.all_of[1].any_of[0].value == 0.90
+
+
+def test_scanpy_case_study_config_exposes_local_venv_sandbox() -> None:
+    config = load_hydra_config(overrides=["experiment=scanpy_pbmc3k_case", "model=openai_gpt5_mini"])
+
+    assert config.benchmark.kind == "case_study"
+    assert config.benchmark.case_id == "scanpy_pbmc3k_umap"
+    assert config.benchmark.sandbox.backend == "local_venv"
+    assert config.executor.allow_offline_fallback is False
+
+
+def test_squidpy_case_study_config_exposes_local_venv_sandbox() -> None:
+    config = load_hydra_config(overrides=["experiment=squidpy_visium_case", "model=openai_gpt5_mini"])
+
+    assert config.benchmark.kind == "case_study"
+    assert config.benchmark.case_id == "squidpy_visium_hne_spatial"
+    assert config.benchmark.sandbox.backend == "local_venv"
+    assert config.executor.allow_offline_fallback is False
+
+
 def test_nested_config_shape_is_still_supported() -> None:
     config = {
         "experiment": {

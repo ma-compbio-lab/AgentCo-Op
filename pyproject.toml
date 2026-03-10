@@ -22,6 +22,9 @@ dynaforge-exp = "dynaforge.experiment_cli:main"
 dev = [
   "pytest>=8.2,<9",
 ]
+analysis = [
+  "matplotlib>=3.8,<4",
+]
 benchmarks = [
   "datasets>=3,<4",
 ]

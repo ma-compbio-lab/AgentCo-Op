@@ -98,7 +98,6 @@ blueprint:
           required:
             - final_answer_label
             - final_answer_text
-            - rationale
   base_edges:
     - edge_id: medqa_plan
       src: planner
@@ -167,7 +166,6 @@ blueprint:
               required:
                 - final_answer_label
                 - final_answer_text
-                - rationale
       edges:
         - edge_id: medqa_review_from_responder
           src: responder

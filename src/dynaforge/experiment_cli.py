@@ -5,7 +5,12 @@ import json
 import sys
 
 from dynaforge.config import load_hydra_config
-from dynaforge.experiment_runner import aggregate_medqa_runs, run_medqa_experiment, run_stage0_validation
+from dynaforge.experiment_runner import (
+    aggregate_medqa_runs,
+    run_case_study_experiment,
+    run_medqa_experiment,
+    run_stage0_validation,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,6 +47,12 @@ def main(argv: list[str] | None = None) -> int:
     medqa_aggregate.add_argument("--base-dir", default="runs")
     medqa_aggregate.add_argument("run_dirs", nargs="+")
 
+    case_study = subparsers.add_parser("case-study")
+    case_study.add_argument("--experiment", default="scanpy_pbmc3k_case")
+    case_study.add_argument("--base-dir", default="runs")
+    case_study.add_argument("--model", default="openai_gpt5_mini")
+    case_study.add_argument("overrides", nargs="*")
+
     args = parser.parse_args(argv)
     if args.command == "stage0":
         medqa_cfg = load_hydra_config(overrides=["experiment=medqa", f"model={args.medqa_model}", *args.overrides])
@@ -77,6 +88,12 @@ def main(argv: list[str] | None = None) -> int:
         summary = aggregate_medqa_runs(args.run_dirs, base_dir=args.base_dir)
         print(json.dumps(summary, ensure_ascii=True, indent=2))
         return 0 if summary.get("task_count", 0) > 0 else 1
+
+    if args.command == "case-study":
+        cfg = load_hydra_config(overrides=[f"experiment={args.experiment}", f"model={args.model}", *args.overrides])
+        summary = run_case_study_experiment(cfg, base_dir=args.base_dir)
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("success") else 1
 
     parser.print_help()
     return 1

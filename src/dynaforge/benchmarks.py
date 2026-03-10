@@ -432,6 +432,254 @@ def prepare_spatialbench_manifests(config: Mapping[str, Any]) -> dict[str, Any]:
     return manifest
 
 
+def prepare_scanpy_pbmc3k_case_study(config: Mapping[str, Any]) -> dict[str, Any]:
+    settings = get_benchmark_settings(config)
+    if settings.get("kind") != "case_study":
+        raise BenchmarkSetupError("Benchmark config kind must be 'case_study'")
+    if str(settings.get("case_id", "")) != "scanpy_pbmc3k_umap":
+        raise BenchmarkSetupError("Unsupported case-study id for this helper")
+
+    from dynaforge.case_studies.scanpy_pbmc3k_job import DEFAULT_ANALYSIS_CONFIG
+
+    case_root = Path(str(settings.get("case_root", "benchmarks/case_studies/scanpy_pbmc3k"))).resolve()
+    repos_root = Path(str(settings.get("repo_root", "external/case_studies/scanpy_pbmc3k/repos"))).resolve()
+    methods_path = case_root / "materials" / "methods_excerpt.txt"
+    target_desc_path = case_root / "materials" / "target_figure_description.txt"
+    candidate_repo_path = case_root / "candidate_repos.json"
+    task_spec_path = case_root / "task_spec.json"
+    data_manifest_path = case_root / "data_manifest.json"
+    reference_dir = case_root / "reference"
+    generated_dir = case_root / "generated"
+    data_dir = case_root / "data"
+    for path in (reference_dir, generated_dir, data_dir, methods_path.parent):
+        path.mkdir(parents=True, exist_ok=True)
+
+    methods_excerpt = str(
+        settings.get(
+            "methods_excerpt",
+            (
+                "Filter PBMC3k cells with fewer than 200 genes and genes seen in fewer than 3 cells. "
+                "Normalize counts per cell to a target sum of 10,000, apply log1p, keep the top 2,000 highly variable genes, "
+                "scale values with max_value=10, run PCA, build a 10-nearest-neighbor graph using up to 40 PCs, compute UMAP, "
+                "cluster with Leiden resolution 0.5, and plot a UMAP colored by the Leiden labels."
+            ),
+        )
+    )
+    target_description = str(
+        settings.get(
+            "target_figure_description",
+            (
+                "Produce a PNG UMAP embedding of PBMC3k cells colored by Leiden clusters. "
+                "The figure should have multiple visually distinct clusters and preserve a standard single-cell Scanpy style."
+            ),
+        )
+    )
+    candidate_repos = list(
+        settings.get(
+            "candidate_repos",
+            [
+                {"name": "scanpy", "url": "https://github.com/scverse/scanpy.git"},
+                {"name": "scanpy-tutorials", "url": "https://github.com/scverse/scanpy-tutorials.git"},
+            ],
+        )
+    )
+
+    repo_records: list[dict[str, Any]] = []
+    for repo in candidate_repos:
+        repo_name = str(repo.get("name", "")).strip()
+        repo_url = str(repo.get("url", "")).strip()
+        if not repo_name or not repo_url:
+            raise BenchmarkSetupError(f"Invalid candidate repo entry: {repo}")
+        repo_path = repos_root / repo_name
+        if (repo_path / ".git").exists():
+            action = "updated"
+            _run_command(["git", "-C", str(repo_path), "pull", "--ff-only"])
+        else:
+            action = "cloned"
+            repo_path.parent.mkdir(parents=True, exist_ok=True)
+            _run_command(["git", "clone", "--depth", "1", repo_url, str(repo_path)])
+        repo_records.append(
+            {
+                "name": repo_name,
+                "url": repo_url,
+                "path": str(repo_path),
+                "action": action,
+            }
+        )
+
+    methods_path.write_text(methods_excerpt + "\n", encoding="utf-8")
+    target_desc_path.write_text(target_description + "\n", encoding="utf-8")
+    _write_json(candidate_repo_path, repo_records)
+
+    raw_data_path = data_dir / "pbmc3k_raw.h5ad"
+    reference_figure_path = reference_dir / "reference_umap.png"
+    reference_summary_path = reference_dir / "reference_summary.json"
+    generated_figure_path = generated_dir / "generated_umap.png"
+    generated_summary_path = generated_dir / "generated_summary.json"
+
+    task_spec = {
+        "case_id": "scanpy_pbmc3k_umap",
+        "title": str(settings.get("title", "Scanpy PBMC3k UMAP reproduction")),
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "reference_figure_path": str(reference_figure_path),
+        "reference_summary_path": str(reference_summary_path),
+        "raw_data_path": str(raw_data_path),
+        "default_generated_figure_path": str(generated_figure_path),
+        "default_generated_summary_path": str(generated_summary_path),
+        "default_analysis_config": DEFAULT_ANALYSIS_CONFIG,
+    }
+    _write_json(task_spec_path, task_spec)
+
+    manifest = {
+        "case_id": "scanpy_pbmc3k_umap",
+        "case_root": str(case_root),
+        "repo_root": str(repos_root),
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "task_spec_path": str(task_spec_path),
+        "raw_data_path": str(raw_data_path),
+        "reference_figure_path": str(reference_figure_path),
+        "reference_summary_path": str(reference_summary_path),
+        "generated_figure_path": str(generated_figure_path),
+        "generated_summary_path": str(generated_summary_path),
+        "candidate_repos": repo_records,
+    }
+    _write_json(data_manifest_path, manifest)
+    return manifest
+
+
+def prepare_squidpy_visium_case_study(config: Mapping[str, Any]) -> dict[str, Any]:
+    settings = get_benchmark_settings(config)
+    if settings.get("kind") != "case_study":
+        raise BenchmarkSetupError("Benchmark config kind must be 'case_study'")
+    if str(settings.get("case_id", "")) != "squidpy_visium_hne_spatial":
+        raise BenchmarkSetupError("Unsupported case-study id for this helper")
+
+    from dynaforge.case_studies.squidpy_visium_job import DEFAULT_ANALYSIS_CONFIG
+
+    case_root = Path(str(settings.get("case_root", "benchmarks/case_studies/squidpy_visium_hne"))).resolve()
+    repos_root = Path(str(settings.get("repo_root", "external/case_studies/squidpy_spatial/repos"))).resolve()
+    methods_path = case_root / "materials" / "methods_excerpt.txt"
+    target_desc_path = case_root / "materials" / "target_figure_description.txt"
+    candidate_repo_path = case_root / "candidate_repos.json"
+    task_spec_path = case_root / "task_spec.json"
+    data_manifest_path = case_root / "data_manifest.json"
+    reference_dir = case_root / "reference"
+    generated_dir = case_root / "generated"
+    data_dir = case_root / "data"
+    for path in (reference_dir, generated_dir, data_dir, methods_path.parent):
+        path.mkdir(parents=True, exist_ok=True)
+
+    methods_excerpt = str(
+        settings.get(
+            "methods_excerpt",
+            (
+                "Load the public cropped Visium H&E dataset, preserve the spatial image metadata, "
+                "construct a spatial-neighbor graph, and render a spatial scatter plot colored by the cluster labels "
+                "on the tissue image. Keep the output faithful to a standard Squidpy spatial visualization."
+            ),
+        )
+    )
+    target_description = str(
+        settings.get(
+            "target_figure_description",
+            (
+                "Produce a PNG spatial scatter plot for the cropped Visium H&E dataset with cluster labels overlaid "
+                "on the tissue image. The figure should show a coherent spatial layout, visible tissue background, "
+                "and clearly distinguishable labeled regions."
+            ),
+        )
+    )
+    candidate_repos = list(
+        settings.get(
+            "candidate_repos",
+            [
+                {"name": "squidpy", "url": "https://github.com/scverse/squidpy.git"},
+                {"name": "scanpy", "url": "https://github.com/scverse/scanpy.git"},
+            ],
+        )
+    )
+
+    repo_records: list[dict[str, Any]] = []
+    for repo in candidate_repos:
+        repo_name = str(repo.get("name", "")).strip()
+        repo_url = str(repo.get("url", "")).strip()
+        if not repo_name or not repo_url:
+            raise BenchmarkSetupError(f"Invalid candidate repo entry: {repo}")
+        repo_path = repos_root / repo_name
+        if (repo_path / ".git").exists():
+            action = "updated"
+            _run_command(["git", "-C", str(repo_path), "pull", "--ff-only"])
+        else:
+            action = "cloned"
+            repo_path.parent.mkdir(parents=True, exist_ok=True)
+            _run_command(["git", "clone", "--depth", "1", repo_url, str(repo_path)])
+        repo_records.append(
+            {
+                "name": repo_name,
+                "url": repo_url,
+                "path": str(repo_path),
+                "action": action,
+            }
+        )
+
+    methods_path.write_text(methods_excerpt + "\n", encoding="utf-8")
+    target_desc_path.write_text(target_description + "\n", encoding="utf-8")
+    _write_json(candidate_repo_path, repo_records)
+
+    raw_data_path = data_dir / "visium_hne_adata_crop.h5ad"
+    reference_figure_path = reference_dir / "reference_spatial.png"
+    reference_summary_path = reference_dir / "reference_summary.json"
+    generated_figure_path = generated_dir / "generated_spatial.png"
+    generated_summary_path = generated_dir / "generated_summary.json"
+
+    task_spec = {
+        "case_id": "squidpy_visium_hne_spatial",
+        "title": str(settings.get("title", "Squidpy Visium H&E spatial plot reproduction")),
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "reference_figure_path": str(reference_figure_path),
+        "reference_summary_path": str(reference_summary_path),
+        "raw_data_path": str(raw_data_path),
+        "default_generated_figure_path": str(generated_figure_path),
+        "default_generated_summary_path": str(generated_summary_path),
+        "default_analysis_config": DEFAULT_ANALYSIS_CONFIG,
+    }
+    _write_json(task_spec_path, task_spec)
+
+    manifest = {
+        "case_id": "squidpy_visium_hne_spatial",
+        "case_root": str(case_root),
+        "repo_root": str(repos_root),
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "task_spec_path": str(task_spec_path),
+        "raw_data_path": str(raw_data_path),
+        "reference_figure_path": str(reference_figure_path),
+        "reference_summary_path": str(reference_summary_path),
+        "generated_figure_path": str(generated_figure_path),
+        "generated_summary_path": str(generated_summary_path),
+        "candidate_repos": repo_records,
+    }
+    _write_json(data_manifest_path, manifest)
+    return manifest
+
+
+def prepare_case_study_assets(config: Mapping[str, Any]) -> dict[str, Any]:
+    settings = get_benchmark_settings(config)
+    case_id = str(settings.get("case_id", ""))
+    if case_id == "scanpy_pbmc3k_umap":
+        return prepare_scanpy_pbmc3k_case_study(config)
+    if case_id == "squidpy_visium_hne_spatial":
+        return prepare_squidpy_visium_case_study(config)
+    raise BenchmarkSetupError(f"Unsupported case-study id: {case_id}")
+
+
 def _choose_medqa_config(config_names: Sequence[str]) -> str:
     for name in config_names:
         if "bigbio_qa" in name:

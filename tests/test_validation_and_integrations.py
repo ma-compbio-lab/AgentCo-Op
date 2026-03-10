@@ -10,11 +10,12 @@ from dynaforge.ir import (
     NodeKind,
     NodeSpec,
     Repo2RunSpec,
+    SandboxBackend,
     SandboxSpec,
     TaskSpec,
     WorkflowBlueprint,
 )
-from dynaforge.integrations.sandbox import DockerSandboxRunner
+from dynaforge.integrations.sandbox import DockerSandboxRunner, LocalVenvSandboxRunner
 from dynaforge.runtime.executor import BlueprintExecutor
 from dynaforge.runtime.llm import LLMRouter
 from dynaforge.runtime.validation import validate_json_payload
@@ -204,3 +205,57 @@ def test_docker_sandbox_runner_invokes_repo2run_and_docker(monkeypatch) -> None:
     assert calls[1]["cmd"][:3] == ["docker", "run", "-d"]
     assert calls[2]["cmd"][:2] == ["docker", "exec"]
     assert server_ref.stdio_cmd[:4] == ["docker", "exec", "-i", "dynaforge-bio"]
+
+
+def test_local_venv_sandbox_runner_materializes_repo_and_executes(tmp_path) -> None:
+    repo_dir = tmp_path / "demo_repo"
+    package_dir = repo_dir / "demo_pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
+    (repo_dir / "pyproject.toml").write_text(
+        """
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "demo-pkg"
+version = "0.0.1"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    script_path = tmp_path / "echo_env.py"
+    script_path.write_text(
+        "import os\n"
+        "print(os.environ.get('DYNaforge_SANDBOX_REPO', ''))\n",
+        encoding="utf-8",
+    )
+
+    runner = LocalVenvSandboxRunner(sandbox_root=tmp_path / "sandboxes", project_root=tmp_path)
+    sandbox = SandboxSpec(
+        sandbox_id="local-demo",
+        image="python:3.11",
+        backend=SandboxBackend.local_venv,
+        repo2run=Repo2RunSpec(source=str(repo_dir)),
+    )
+
+    materialized = runner.ensure_materialized(sandbox)
+    completed = runner.run_in_sandbox(
+        sandbox,
+        ["python", "-c", "import demo_pkg; print(demo_pkg.VALUE)"],
+    )
+    server_ref = runner.materialize_server_ref(
+        MCPServerRef(
+            name="local-toolbox",
+            transport="stdio",
+            sandbox=sandbox,
+            stdio_cmd=["python", str(script_path)],
+        )
+    )
+
+    assert materialized.backend == SandboxBackend.local_venv
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "7"
+    assert server_ref.stdio_cmd[0].endswith("python")
+    assert server_ref.env["DYNaforge_SANDBOX_REPO"].endswith("repo")

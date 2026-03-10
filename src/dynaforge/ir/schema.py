@@ -14,6 +14,11 @@ class Transport(str, Enum):
     sse = "sse"
 
 
+class SandboxBackend(str, Enum):
+    docker = "docker"
+    local_venv = "local_venv"
+
+
 class NodeKind(str, Enum):
     agent = "agent"
     tool = "tool"
@@ -115,6 +120,7 @@ class SandboxSpec(BaseModel):
 
     sandbox_id: str
     image: str
+    backend: SandboxBackend = SandboxBackend.docker
     entrypoint: Optional[List[str]] = Field(default=None)
     cmd: Optional[List[str]] = Field(default=None)
     workdir: Optional[str] = Field(default=None)
@@ -126,6 +132,7 @@ class SandboxSpec(BaseModel):
     host_port: Optional[int] = Field(default=None, ge=1, le=65535)
     auto_remove: bool = True
     repo2run: Optional[Repo2RunSpec] = Field(default=None)
+    bootstrap_cmds: List[List[str]] = Field(default_factory=list)
     mcp_transport: Transport = Transport.streamable_http
     mcp_url: Optional[str] = Field(default=None)
 

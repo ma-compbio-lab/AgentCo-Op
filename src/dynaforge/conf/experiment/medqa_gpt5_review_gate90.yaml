@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - medqa_gpt5_review
+
+blueprint:
+  gates:
+    - gate_id: medqa_low_conf_review
+      trigger:
+        all_of:
+          - field: node.node_id
+            op: ==
+            value: responder
+          - any_of:
+              - field: report.confidence
+                op: <
+                value: 0.90
+              - field: report.failure_type
+                op: ==
+                value: low_confidence
+      enable_subgraphs:
+        - sg_review
+      disable_edges: []
+      cooldown_steps: 0
+      max_activations: 1

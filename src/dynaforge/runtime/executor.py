@@ -11,7 +11,7 @@ from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set
 
 from dynaforge.ir.schema import FailureType, NodeKind, NodeSpec, TraceAssertion, WorkflowBlueprint
 from dynaforge.integrations.mcp_client import MCPClientManager
-from dynaforge.integrations.sandbox import DockerSandboxRunner, SandboxError
+from dynaforge.integrations.sandbox import CompositeSandboxRunner, SandboxError, SandboxRunner
 from dynaforge.runtime.blame import BlameAssigner, FailureClassifier
 from dynaforge.runtime.cache import ArtifactStore
 from dynaforge.runtime.conditions import evaluate_trigger
@@ -52,7 +52,7 @@ class NodeExecutionContext:
     budget_remaining: Dict[str, Any]
     llm_router: LLMRouter
     mcp_client: MCPClientManager
-    sandbox_runner: DockerSandboxRunner
+    sandbox_runner: SandboxRunner
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -67,7 +67,7 @@ class BlueprintExecutor:
         blame_assigner: Optional[BlameAssigner] = None,
         llm_router: Optional[LLMRouter] = None,
         mcp_client: Optional[MCPClientManager] = None,
-        sandbox_runner: Optional[DockerSandboxRunner] = None,
+        sandbox_runner: Optional[SandboxRunner] = None,
         allow_offline_fallback: bool = True,
     ):
         self.artifact_store = ArtifactStore(artifact_root)
@@ -76,7 +76,7 @@ class BlueprintExecutor:
         self.failure_classifier = FailureClassifier()
         self.llm_router = llm_router or LLMRouter(allow_offline_fallback=allow_offline_fallback)
         self.mcp_client = mcp_client or MCPClientManager()
-        self.sandbox_runner = sandbox_runner or DockerSandboxRunner()
+        self.sandbox_runner = sandbox_runner or CompositeSandboxRunner()
         self._memoized_results: Dict[str, NodeExecutionResult] = {}
 
     def execute_blueprint(
