@@ -95,3 +95,39 @@ def test_subgraph_integrity() -> None:
 
     assert blueprint.subgraph_map()["sg_review"].purpose == "Review path"
 
+
+def test_subgraph_edges_may_reference_base_nodes() -> None:
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="t4", title="Task", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="planner",
+                kind=NodeKind.agent,
+                role="Planner",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+            )
+        ],
+        base_edges=[],
+        subgraphs=[
+            {
+                "subgraph_id": "sg_review",
+                "purpose": "Review path",
+                "nodes": [
+                    NodeSpec(
+                        node_id="reviewer",
+                        kind=NodeKind.evaluator,
+                        role="Reviewer",
+                        model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                    )
+                ],
+                "edges": [
+                    EdgeSpec(edge_id="plan_to_review", src="planner", dst="reviewer"),
+                ],
+                "entry_nodes": ["reviewer"],
+                "exit_nodes": ["reviewer"],
+                "default_enabled": False,
+            }
+        ],
+    )
+
+    assert blueprint.subgraph_map()["sg_review"].edges[0].src == "planner"

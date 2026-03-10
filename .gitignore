@@ -208,3 +208,8 @@ __marimo__/
 findings.md
 progress.md
 task_plan.md
+experiments.md
+.secrets/
+runs/
+benchmarks/
+*.out

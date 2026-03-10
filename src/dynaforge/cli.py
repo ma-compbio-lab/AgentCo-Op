@@ -4,6 +4,7 @@ import sys
 from typing import Sequence
 
 from dynaforge.config import load_hydra_config, run_configured_experiment
+from dynaforge.secrets import load_local_secrets
 
 
 HELP_TEXT = """Usage:
@@ -22,6 +23,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(HELP_TEXT)
         return 0
 
+    load_local_secrets()
     config = load_hydra_config(overrides=args)
     _, report = run_configured_experiment(config)
     print(report.model_dump_json(indent=2))

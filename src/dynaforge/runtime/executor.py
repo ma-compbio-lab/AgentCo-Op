@@ -152,7 +152,7 @@ class BlueprintExecutor:
                     break
 
                 node = node_map[node_id]
-                inputs = self._assemble_inputs(node_id, parent_map, active_edges, node_results)
+                inputs = self._assemble_inputs(blueprint, node_id, parent_map, active_edges, node_results)
                 input_violations = self._validate_input_contract(node, inputs)
                 if input_violations:
                     contract_violations.extend(input_violations)
@@ -322,6 +322,7 @@ class BlueprintExecutor:
 
     def _assemble_inputs(
         self,
+        blueprint: WorkflowBlueprint,
         node_id: str,
         parent_map: Mapping[str, Set[str]],
         active_edges: Sequence[Any],
@@ -346,7 +347,16 @@ class BlueprintExecutor:
                 upstream = node_results.get(parent)
                 if upstream is not None:
                     payload[parent] = upstream.outputs
+        for key, value in self._initial_task_payload(blueprint).items():
+            payload.setdefault(key, value)
         return payload
+
+    @staticmethod
+    def _initial_task_payload(blueprint: WorkflowBlueprint) -> JsonDict:
+        return {
+            "task": blueprint.task.model_dump(),
+            "workflow_meta": blueprint.meta,
+        }
 
     @staticmethod
     def _extract_path(source: JsonDict, dotted_path: Any) -> Any:

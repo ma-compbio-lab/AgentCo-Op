@@ -19,7 +19,7 @@
     "med_qa_tw_zh_bigbio_qa"
   ],
   "chosen_config": "med_qa_en_bigbio_qa",
-  "chosen_split": "train",
+  "chosen_split": "test",
   "sample_count_loaded": 1,
   "preview_path": "benchmarks/medqa/medqa_preview.json"
 }

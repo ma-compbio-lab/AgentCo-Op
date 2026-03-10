@@ -7,6 +7,11 @@ benchmark:
   venv_path: external/spatialbench/.venv
   validation_eval: evals_canonical/qc/xenium_xenium_qc_filter_min_umi_counts.json
   validation_output_path: benchmarks/spatialbench/validation_summary.json
+  manifest_path: external/spatialbench/evals_canonical/manifest.json
+  processed_dir: benchmarks/spatialbench/processed
+  smoke_count: 2
+  full_count: 10
+  seed: 7
 
 blueprint:
   task:
@@ -39,4 +44,3 @@ blueprint:
     benchmark: spatialbench
     repo_path: ${benchmark.repo_path}
     validation_eval: ${benchmark.validation_eval}
-

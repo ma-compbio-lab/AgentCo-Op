@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 dynaforge-run = "dynaforge.cli:main"
+dynaforge-exp = "dynaforge.experiment_cli:main"
 
 [project.optional-dependencies]
 dev = [

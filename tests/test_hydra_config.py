@@ -61,6 +61,49 @@ def test_experiment_group_can_override_executor_settings() -> None:
     assert config.executor.max_repair_iterations == 2
 
 
+def test_medqa_config_uses_advisory_planner_mapping() -> None:
+    config = load_hydra_config(overrides=["experiment=medqa", "model=openai_gpt5_mini"])
+    blueprint = build_blueprint_from_config(config)
+
+    medqa_edge = blueprint.base_edges[0]
+    medqa_gate = blueprint.gates[0]
+
+    assert config.benchmark.split == "test"
+    assert config.benchmark.full_count == "all"
+    assert medqa_edge.mapping == {
+        "planner_question_type": "question_type",
+        "planner_key_clues": "key_clues",
+        "planner_most_discriminating_clue": "most_discriminating_clue",
+        "planner_rationale_outline": "rationale_outline",
+    }
+    assert medqa_gate.trigger.all_of[0].field == "node.node_id"
+    assert medqa_gate.trigger.all_of[0].value == "responder"
+    assert medqa_gate.trigger.all_of[1].any_of[0].value == 0.86
+
+
+def test_medqa_planner_gate_config_preserves_legacy_gate() -> None:
+    config = load_hydra_config(overrides=["experiment=medqa_planner_gate", "model=openai_gpt5_mini"])
+    blueprint = build_blueprint_from_config(config)
+
+    medqa_gate = blueprint.gates[0]
+
+    assert medqa_gate.trigger.any_of[0].field == "report.confidence"
+    assert medqa_gate.trigger.any_of[0].value == 0.86
+
+
+def test_medqa_gpt5_review_config_uses_stronger_review_model() -> None:
+    config = load_hydra_config(overrides=["experiment=medqa_gpt5_review", "model=openai_gpt5_mini"])
+    blueprint = build_blueprint_from_config(config)
+
+    review_nodes = blueprint.subgraphs[0].nodes
+    reviewer = next(node for node in review_nodes if node.node_id == "reviewer")
+    reviser = next(node for node in review_nodes if node.node_id == "reviser")
+
+    assert reviewer.model.name == "gpt-5"
+    assert reviser.model.name == "gpt-5"
+    assert blueprint.node_map()["responder"].model.name == "gpt-5-mini"
+
+
 def test_nested_config_shape_is_still_supported() -> None:
     config = {
         "experiment": {

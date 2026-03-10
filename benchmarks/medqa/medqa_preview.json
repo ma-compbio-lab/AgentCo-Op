@@ -3,18 +3,18 @@
     "id": "0",
     "question_id": "0",
     "document_id": "0",
-    "question": "A 23-year-old pregnant woman at 22 weeks gestation presents with burning upon urination. She states it started 1 day ago and has been worsening despite drinking more water and taking cranberry extract. She otherwise feels well and is followed by a doctor for her pregnancy. Her temperature is 97.7\u00b0F (36.5\u00b0C), blood pressure is 122/77 mmHg, pulse is 80/min, respirations are 19/min, and oxygen saturation is 98% on room air. Physical exam is notable for an absence of costovertebral angle tenderness and a gravid uterus. Which of the following is the best treatment for this patient?",
+    "question": "A junior orthopaedic surgery resident is completing a carpal tunnel repair with the department chairman as the attending physician. During the case, the resident inadvertently cuts a flexor tendon. The tendon is repaired without complication. The attending tells the resident that the patient will do fine, and there is no need to report this minor complication that will not harm the patient, as he does not want to make the patient worry unnecessarily. He tells the resident to leave this complication out of the operative report. Which of the following is the correct next action for the resident to take?",
     "type": "multiple_choice",
     "choices": [
-      "Ampicillin",
-      "Ceftriaxone",
-      "Ciprofloxacin",
-      "Doxycycline",
-      "Nitrofurantoin"
+      "Disclose the error to the patient but leave it out of the operative report",
+      "Disclose the error to the patient and put it in the operative report",
+      "Tell the attending that he cannot fail to disclose this mistake",
+      "Report the physician to the ethics committee",
+      "Refuse to dictate the operative report"
     ],
     "context": "",
     "answer": [
-      "Nitrofurantoin"
+      "Tell the attending that he cannot fail to disclose this mistake"
     ]
   }
 ]

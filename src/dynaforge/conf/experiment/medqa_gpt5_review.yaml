@@ -18,6 +18,16 @@ benchmark:
     - reviewer
     - responder
 
+review_model:
+  provider: openai
+  name: gpt-5
+  temperature: 0.2
+  max_output_tokens: 2048
+  usd_per_1k_input: 0.00125
+  usd_per_1k_output: 0.01
+  meta:
+    reasoning_effort: minimal
+
 blueprint:
   task:
     task_id: medqa
@@ -105,7 +115,7 @@ blueprint:
         - node_id: reviewer
           kind: evaluator
           role: Reviewer
-          model: ${model}
+          model: ${review_model}
           description: Audit the draft answer against the question and options.
           system_prompt: |
             You are the MedQA reviewer.
@@ -130,7 +140,7 @@ blueprint:
         - node_id: reviser
           kind: agent
           role: Reviser
-          model: ${model}
+          model: ${review_model}
           description: Produce the final corrected answer after review.
           system_prompt: |
             You are the MedQA final revision node.

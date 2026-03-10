@@ -16,8 +16,32 @@ from dynaforge.ir import (
 )
 from dynaforge.runtime.conditions import evaluate_trigger
 from dynaforge.runtime.executor import BlueprintExecutor
+from dynaforge.runtime.llm import LLMRouter
 from dynaforge.runtime.patching import DeterministicPatchPolicy, apply_patch_plan
 from dynaforge.runtime.reports import BlameCandidate, ExecutionReport, NodeExecutionResult
+
+
+class StubLLMClient:
+    def complete(self, model, messages, *, response_format=None):
+        node_id = "stub"
+        content = messages[-1]["content"]
+        for line in content.splitlines():
+            if line.startswith("Node ID: "):
+                node_id = line.split("Node ID: ", 1)[1].strip()
+                break
+        return {
+            "content": (
+                '{"output":{"result":{"node_id":"%s"}},"confidence":0.9,"summary":"ok"}' % node_id
+            ),
+            "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+        }
+
+
+def make_stub_executor() -> BlueprintExecutor:
+    return BlueprintExecutor(
+        llm_router=LLMRouter(client=StubLLMClient(), allow_offline_fallback=False),
+        allow_offline_fallback=False,
+    )
 
 
 def test_trigger_evaluation() -> None:
@@ -49,7 +73,7 @@ def test_executor_runs_minimal_blueprint() -> None:
         base_edges=[EdgeSpec(edge_id="e1", src="planner", dst="worker")],
     )
 
-    report = BlueprintExecutor().execute_blueprint(blueprint)
+    report = make_stub_executor().execute_blueprint(blueprint)
 
     assert report.success
     assert report.failure_type.value == "none"
@@ -211,7 +235,7 @@ def test_forced_subgraph_node_is_reexecuted() -> None:
         ],
     )
 
-    report = BlueprintExecutor().execute_blueprint(
+    report = make_stub_executor().execute_blueprint(
         blueprint,
         resume_state={"review": NodeExecutionResult(outputs={"result": {"cached": True}})},
         force_nodes={"review"},
@@ -278,7 +302,10 @@ def test_conditional_false_edge_does_not_block_or_inject_inputs() -> None:
     report = BlueprintExecutor().execute_blueprint(blueprint, handlers={"A": handler, "B": handler})
 
     assert report.success
-    assert seen_inputs["b"] == {}
+    assert seen_inputs["b"] == {
+        "task": blueprint.task.model_dump(),
+        "workflow_meta": blueprint.meta,
+    }
 
 
 def test_broken_hard_check_returns_failed_report() -> None:

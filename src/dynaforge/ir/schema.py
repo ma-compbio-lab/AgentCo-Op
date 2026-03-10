@@ -287,8 +287,8 @@ class SubgraphSpec(BaseModel):
     def validate_references(self) -> "SubgraphSpec":
         node_ids = {node.node_id for node in self.nodes}
         for edge in self.edges:
-            if edge.src not in node_ids or edge.dst not in node_ids:
-                raise ValueError(f"subgraph edge {edge.edge_id} references missing node")
+            if edge.src not in node_ids and edge.dst not in node_ids:
+                raise ValueError(f"subgraph edge {edge.edge_id} must touch at least one subgraph node")
         for node_id in self.entry_nodes + self.exit_nodes:
             if node_id not in node_ids:
                 raise ValueError(f"subgraph references unknown boundary node {node_id}")
@@ -415,9 +415,17 @@ class WorkflowBlueprint(BaseModel):
     @model_validator(mode="after")
     def validate_graph_integrity(self) -> "WorkflowBlueprint":
         base_ids = {node.node_id for node in self.base_nodes}
+        all_node_ids = [node.node_id for node in self.all_nodes()]
+        if len(all_node_ids) != len(set(all_node_ids)):
+            raise ValueError("duplicate node IDs across blueprint")
         for edge in self.base_edges:
             if edge.src not in base_ids or edge.dst not in base_ids:
                 raise ValueError(f"base edge {edge.edge_id} references unknown node")
+        valid_node_ids = set(all_node_ids)
+        for subgraph in self.subgraphs:
+            for edge in subgraph.edges:
+                if edge.src not in valid_node_ids or edge.dst not in valid_node_ids:
+                    raise ValueError(f"subgraph edge {edge.edge_id} references unknown node")
         subgraph_ids = {subgraph.subgraph_id for subgraph in self.subgraphs}
         if len(subgraph_ids) != len(self.subgraphs):
             raise ValueError("duplicate subgraph IDs")

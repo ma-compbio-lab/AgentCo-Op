@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
@@ -22,8 +23,10 @@ class LLMClientError(RuntimeError):
 class OpenAICompatibleLLMClient:
     """Minimal OpenAI-compatible chat completions client using the stdlib HTTP stack."""
 
-    def __init__(self, timeout_s: int = 120):
+    def __init__(self, timeout_s: int = 120, *, max_retries: int = 3, retry_backoff_s: float = 2.0):
         self.timeout_s = timeout_s
+        self.max_retries = max_retries
+        self.retry_backoff_s = retry_backoff_s
 
     def complete(
         self,
@@ -37,10 +40,14 @@ class OpenAICompatibleLLMClient:
         payload: Dict[str, Any] = {
             "model": model.name,
             "messages": messages,
-            "temperature": model.temperature,
         }
+        if self._supports_temperature(model):
+            payload["temperature"] = model.temperature
         if model.max_output_tokens is not None:
-            payload["max_tokens"] = model.max_output_tokens
+            payload[self._max_tokens_field(model)] = model.max_output_tokens
+        reasoning_effort = model.meta.get("reasoning_effort")
+        if isinstance(reasoning_effort, str) and reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
         if response_format is not None:
             payload["response_format"] = response_format
 
@@ -62,14 +69,33 @@ class OpenAICompatibleLLMClient:
             headers=headers,
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
-                raw_body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise LLMClientError(f"HTTP {exc.code}: {body}") from exc
-        except urllib.error.URLError as exc:
-            raise LLMClientError(str(exc.reason)) from exc
+        last_error: Optional[Exception] = None
+        max_retries = self._max_retries(model)
+        for attempt in range(max_retries + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                    raw_body = response.read().decode("utf-8")
+                break
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                body = exc.read().decode("utf-8", errors="replace")
+                if attempt < max_retries and self._is_retryable_http_error(exc.code):
+                    self._sleep_before_retry(model, attempt, retry_after=self._parse_retry_after(exc))
+                    continue
+                raise LLMClientError(f"HTTP {exc.code}: {body}") from exc
+            except urllib.error.URLError as exc:
+                last_error = exc
+                if attempt < max_retries:
+                    self._sleep_before_retry(model, attempt)
+                    continue
+                raise LLMClientError(str(exc.reason)) from exc
+        else:
+            if isinstance(last_error, urllib.error.HTTPError):
+                body = last_error.read().decode("utf-8", errors="replace")
+                raise LLMClientError(f"HTTP {last_error.code}: {body}") from last_error
+            if isinstance(last_error, urllib.error.URLError):
+                raise LLMClientError(str(last_error.reason)) from last_error
+            raise LLMClientError("LLM backend request failed before a response was received")
 
         try:
             parsed = json.loads(raw_body)
@@ -101,6 +127,18 @@ class OpenAICompatibleLLMClient:
             "usage": parsed.get("usage", {}),
             "raw": parsed,
         }
+
+    @staticmethod
+    def _max_tokens_field(model: ModelSpec) -> str:
+        model_name = model.name.strip().lower()
+        if model_name.startswith("gpt-5"):
+            return "max_completion_tokens"
+        return "max_tokens"
+
+    @staticmethod
+    def _supports_temperature(model: ModelSpec) -> bool:
+        model_name = model.name.strip().lower()
+        return not model_name.startswith("gpt-5")
 
     @staticmethod
     def _chat_url(model: ModelSpec) -> str:
@@ -147,6 +185,42 @@ class OpenAICompatibleLLMClient:
             ModelProvider.google,
             ModelProvider.deepseek,
         }
+
+    def _max_retries(self, model: ModelSpec) -> int:
+        value = model.meta.get("api_max_retries")
+        if value is None:
+            return self.max_retries
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return self.max_retries
+
+    def _retry_backoff(self, model: ModelSpec, attempt: int) -> float:
+        value = model.meta.get("retry_backoff_s")
+        try:
+            base = float(value) if value is not None else float(self.retry_backoff_s)
+        except (TypeError, ValueError):
+            base = float(self.retry_backoff_s)
+        return max(0.0, base * (2**attempt))
+
+    def _sleep_before_retry(self, model: ModelSpec, attempt: int, *, retry_after: Optional[float] = None) -> None:
+        delay = retry_after if retry_after is not None else self._retry_backoff(model, attempt)
+        if delay > 0:
+            time.sleep(delay)
+
+    @staticmethod
+    def _is_retryable_http_error(status_code: int) -> bool:
+        return status_code in {408, 409, 429, 500, 502, 503, 504}
+
+    @staticmethod
+    def _parse_retry_after(exc: urllib.error.HTTPError) -> Optional[float]:
+        retry_after = exc.headers.get("Retry-After")
+        if retry_after is None:
+            return None
+        try:
+            return max(0.0, float(retry_after))
+        except (TypeError, ValueError):
+            return None
 
 
 class LLMRouter:
@@ -348,8 +422,24 @@ class LLMRouter:
     def _normalize_output(payload: Mapping[str, Any]) -> Dict[str, Any]:
         if "output" in payload and isinstance(payload["output"], dict):
             return dict(payload["output"])
+        meta_keys = {"confidence", "summary", "action", "tool", "arguments"}
+        dotted_output = {
+            key.split(".", 1)[1]: value
+            for key, value in payload.items()
+            if isinstance(key, str) and key.startswith("output.")
+        }
+        if dotted_output:
+            passthrough = {
+                key: value
+                for key, value in payload.items()
+                if key not in meta_keys and not (isinstance(key, str) and key.startswith("output."))
+            }
+            return {**dotted_output, **passthrough}
         if "result" in payload and isinstance(payload["result"], dict):
             return {"result": dict(payload["result"])}
+        direct_output = {key: value for key, value in payload.items() if key not in meta_keys}
+        if direct_output:
+            return direct_output
         return {"result": dict(payload)}
 
     @staticmethod
