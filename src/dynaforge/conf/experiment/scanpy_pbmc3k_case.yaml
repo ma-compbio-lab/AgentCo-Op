@@ -31,6 +31,8 @@ benchmark:
     seed: 0
     color_by: leiden
     dpi: 150
+  enable_refinement_subgraph: true
+  refinement_threshold: 8.0
   review_model: ${model}
   sandbox:
     sandbox_id: scanpy-pbmc3k

@@ -1,0 +1,7 @@
+provider: openai
+name: gpt-4o-mini
+temperature: 0.2
+max_output_tokens: 1024
+usd_per_1k_input: 0.00015
+usd_per_1k_output: 0.0006
+meta: {}

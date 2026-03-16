@@ -6,8 +6,12 @@ import sys
 
 from dynaforge.config import load_hydra_config
 from dynaforge.experiment_runner import (
+    aggregate_humaneval_runs,
     aggregate_medqa_runs,
+    aggregate_math_runs,
     run_case_study_experiment,
+    run_humaneval_experiment,
+    run_math_experiment,
     run_medqa_experiment,
     run_stage0_validation,
 )
@@ -19,7 +23,8 @@ def main(argv: list[str] | None = None) -> int:
 
     stage0 = subparsers.add_parser("stage0")
     stage0.add_argument("--base-dir", default="runs")
-    stage0.add_argument("--medqa-model", default="openai_gpt5_mini")
+    stage0.add_argument("--medqa-model", default="openai_gpt4o_mini")
+    stage0.add_argument("--benchmark-model", default="openai_gpt4o_mini")
     stage0.add_argument("--medqa-smoke-limit", type=int, default=1)
     stage0.add_argument("overrides", nargs="*")
 
@@ -40,12 +45,44 @@ def main(argv: list[str] | None = None) -> int:
         help="Reuse an existing MedQA run directory and skip already-completed task results.",
     )
     medqa.add_argument("--base-dir", default="runs")
-    medqa.add_argument("--model", default="openai_gpt5_mini")
+    medqa.add_argument("--model", default="openai_gpt4o_mini")
     medqa.add_argument("overrides", nargs="*")
 
     medqa_aggregate = subparsers.add_parser("medqa-aggregate")
     medqa_aggregate.add_argument("--base-dir", default="runs")
     medqa_aggregate.add_argument("run_dirs", nargs="+")
+
+    math_aggregate = subparsers.add_parser("math-aggregate")
+    math_aggregate.add_argument("--base-dir", default="runs")
+    math_aggregate.add_argument("run_dirs", nargs="+")
+
+    humaneval_aggregate = subparsers.add_parser("humaneval-aggregate")
+    humaneval_aggregate.add_argument("--base-dir", default="runs")
+    humaneval_aggregate.add_argument("run_dirs", nargs="+")
+
+    math = subparsers.add_parser("math")
+    math.add_argument("--experiment", default="math")
+    math.add_argument("--subset", choices=("smoke", "validation", "test"), default="validation")
+    math.add_argument("--limit", type=int, default=None)
+    math.add_argument("--task-ids", default="")
+    math.add_argument("--num-shards", type=int, default=1)
+    math.add_argument("--shard-index", type=int, default=0)
+    math.add_argument("--resume-run-dir", default="")
+    math.add_argument("--base-dir", default="runs")
+    math.add_argument("--model", default="openai_gpt4o_mini")
+    math.add_argument("overrides", nargs="*")
+
+    humaneval = subparsers.add_parser("humaneval")
+    humaneval.add_argument("--experiment", default="humaneval")
+    humaneval.add_argument("--subset", choices=("smoke", "validation", "test"), default="validation")
+    humaneval.add_argument("--limit", type=int, default=None)
+    humaneval.add_argument("--task-ids", default="")
+    humaneval.add_argument("--num-shards", type=int, default=1)
+    humaneval.add_argument("--shard-index", type=int, default=0)
+    humaneval.add_argument("--resume-run-dir", default="")
+    humaneval.add_argument("--base-dir", default="runs")
+    humaneval.add_argument("--model", default="openai_gpt4o_mini")
+    humaneval.add_argument("overrides", nargs="*")
 
     case_study = subparsers.add_parser("case-study")
     case_study.add_argument("--experiment", default="scanpy_pbmc3k_case")
@@ -56,12 +93,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "stage0":
         medqa_cfg = load_hydra_config(overrides=["experiment=medqa", f"model={args.medqa_model}", *args.overrides])
-        spatialbench_cfg = load_hydra_config(
-            overrides=["experiment=spatialbench", f"model={args.medqa_model}", *args.overrides]
+        math_cfg = load_hydra_config(overrides=["experiment=math", f"model={args.benchmark_model}", *args.overrides])
+        humaneval_cfg = load_hydra_config(
+            overrides=["experiment=humaneval", f"model={args.benchmark_model}", *args.overrides]
         )
         summary = run_stage0_validation(
             medqa_cfg,
-            spatialbench_cfg,
+            math_cfg,
+            humaneval_cfg,
             base_dir=args.base_dir,
             medqa_smoke_limit=args.medqa_smoke_limit,
         )
@@ -86,6 +125,48 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "medqa-aggregate":
         summary = aggregate_medqa_runs(args.run_dirs, base_dir=args.base_dir)
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("task_count", 0) > 0 else 1
+
+    if args.command == "math-aggregate":
+        summary = aggregate_math_runs(args.run_dirs, base_dir=args.base_dir)
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("task_count", 0) > 0 else 1
+
+    if args.command == "humaneval-aggregate":
+        summary = aggregate_humaneval_runs(args.run_dirs, base_dir=args.base_dir)
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("task_count", 0) > 0 else 1
+
+    if args.command == "math":
+        cfg = load_hydra_config(overrides=[f"experiment={args.experiment}", f"model={args.model}", *args.overrides])
+        task_ids = [item.strip() for item in args.task_ids.split(",") if item.strip()]
+        summary = run_math_experiment(
+            cfg,
+            subset=args.subset,
+            limit=args.limit,
+            task_ids=task_ids,
+            num_shards=args.num_shards,
+            shard_index=args.shard_index,
+            base_dir=args.base_dir,
+            resume_run_dir=args.resume_run_dir or None,
+        )
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("task_count", 0) > 0 else 1
+
+    if args.command == "humaneval":
+        cfg = load_hydra_config(overrides=[f"experiment={args.experiment}", f"model={args.model}", *args.overrides])
+        task_ids = [item.strip() for item in args.task_ids.split(",") if item.strip()]
+        summary = run_humaneval_experiment(
+            cfg,
+            subset=args.subset,
+            limit=args.limit,
+            task_ids=task_ids,
+            num_shards=args.num_shards,
+            shard_index=args.shard_index,
+            base_dir=args.base_dir,
+            resume_run_dir=args.resume_run_dir or None,
+        )
         print(json.dumps(summary, ensure_ascii=True, indent=2))
         return 0 if summary.get("task_count", 0) > 0 else 1
 

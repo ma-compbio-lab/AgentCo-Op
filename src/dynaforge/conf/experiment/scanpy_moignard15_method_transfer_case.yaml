@@ -1,0 +1,76 @@
+# @package _global_
+
+benchmark:
+  kind: case_study
+  case_id: scanpy_moignard15_method_transfer
+  title: Scanpy Moignard15 method transfer
+  case_root: benchmarks/case_studies/scanpy_moignard15_transfer_v2
+  repo_root: external/case_studies/scanpy_paul15/repos
+  methods_excerpt: |
+    Transfer the Paul15-style hematopoiesis trajectory workflow to the public Moignard15 dataset:
+    preserve the dataset-native preprocessed qRT-PCR representation, run PCA and a neighborhood graph,
+    cluster cells, infer coarse lineage structure with PAGA, compute diffusion-based pseudotime from the dataset-default root cell,
+    and produce a paper-style figure package with a trajectory embedding, a PAGA graph, and a dynamic-gene evidence panel linked to pseudotime progression.
+  target_figure_description: |
+    Apply the Paul15 trajectory-analysis method family to the Moignard15 dataset and produce a figure package with
+    a trajectory plot, a PAGA graph, and a dynamic-gene panel. Respect the fact that Moignard15 is already preprocessed qRT-PCR data,
+    and preserve stage metadata plus root-selection provenance in the summary.
+  candidate_repos:
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+    - name: scanpy-tutorials
+      url: https://github.com/scverse/scanpy-tutorials.git
+  planner_mode: llm_first
+  analysis_config:
+    dataset_id: moignard15
+    target_sum: 10000.0
+    n_top_genes: 32
+    n_neighbors: 10
+    n_pcs: 10
+    resolution: 0.55
+    max_scale_value: 10.0
+    seed: 0
+    cluster_key: leiden
+    root_strategy: dataset_default
+    dpi: 150
+    paga_threshold: 0.03
+    marker_top_n: 3
+    dynamic_gene_top_n: 5
+    dynamic_gene_panel_top_n: 4
+  enable_refinement_subgraph: true
+  refinement_threshold: 8.0
+  review_model: ${model}
+  sandbox:
+    sandbox_id: scanpy-moignard15-transfer-v2
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: scanpy-paul15
+      MCP_TRANSPORT: stdio
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 8192
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/scanpy_paul15/repos/scanpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, leidenalg, igraph, pillow, mcp, openpyxl]
+
+blueprint:
+  task:
+    task_id: scanpy_moignard15_transfer_case
+    title: Scanpy Moignard15 method transfer
+    description: Transfer a Paul15-style trajectory workflow to Moignard15 using a sandboxed external repo.
+  budget:
+    max_total_usd: 12.0
+    max_total_tokens: 45000
+    max_wall_time_s: 3600
+    max_tool_calls: 6
+    max_container_starts: 4
+
+executor:
+  artifact_root: .dynaforge_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

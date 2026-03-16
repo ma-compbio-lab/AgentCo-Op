@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -273,6 +274,24 @@ class LocalVenvSandboxRunner:
 
         python_bin = self._python_bin(venv_dir)
         repo_dir: Optional[Path] = None
+        manifest_path = root_dir / "materialization_manifest.json"
+        expected_manifest = self._materialization_manifest(sandbox)
+
+        if sandbox.repo2run is not None:
+            repo_dir = self._materialize_repo_source(root_dir, sandbox)
+
+        if self._materialization_matches(manifest_path, expected_manifest):
+            materialized = MaterializedSandbox(
+                sandbox_id=sandbox.sandbox_id,
+                backend=SandboxBackend.local_venv,
+                image=sandbox.image,
+                root_dir=str(root_dir),
+                python_bin=str(python_bin),
+                repo_dir=str(repo_dir) if repo_dir is not None else None,
+                mcp_url=sandbox.mcp_url,
+            )
+            self._materialized[sandbox.sandbox_id] = materialized
+            return materialized
 
         self._run_local(
             [str(python_bin), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
@@ -281,20 +300,32 @@ class LocalVenvSandboxRunner:
             check=True,
         )
 
-        if sandbox.repo2run is not None:
-            repo_dir = self._materialize_repo_source(root_dir, sandbox)
+        if sandbox.repo2run is not None and repo_dir is not None:
             self._install_repo(root_dir, repo_dir, sandbox, python_bin)
 
         for bootstrap_cmd in sandbox.bootstrap_cmds:
-            self._run_local(
-                self._rewrite_python_cmd(bootstrap_cmd, python_bin),
-                cwd=self._resolve_workdir(sandbox, root_dir, repo_dir),
-                env=self._sandbox_env(sandbox, root_dir, python_bin, repo_dir),
-                check=True,
-            )
+            rewritten_cmd = self._rewrite_python_cmd(bootstrap_cmd, python_bin)
+            try:
+                self._run_local(
+                    rewritten_cmd,
+                    cwd=self._resolve_workdir(sandbox, root_dir, repo_dir),
+                    env=self._sandbox_env(sandbox, root_dir, python_bin, repo_dir),
+                    check=True,
+                )
+            except SandboxError:
+                if not self._is_pip_like_command(rewritten_cmd):
+                    raise
+                self._run_local(
+                    rewritten_cmd,
+                    cwd=self._resolve_workdir(sandbox, root_dir, repo_dir),
+                    env=self._sandbox_env(sandbox, root_dir, python_bin, repo_dir),
+                    check=True,
+                )
 
         if sandbox.repo2run and sandbox.repo2run.smoke_test_cmd:
             self.run_in_sandbox(sandbox, sandbox.repo2run.smoke_test_cmd, env=sandbox.repo2run.env)
+
+        manifest_path.write_text(json.dumps(expected_manifest, ensure_ascii=True, indent=2), encoding="utf-8")
 
         materialized = MaterializedSandbox(
             sandbox_id=sandbox.sandbox_id,
@@ -307,6 +338,38 @@ class LocalVenvSandboxRunner:
         )
         self._materialized[sandbox.sandbox_id] = materialized
         return materialized
+
+    @staticmethod
+    def _materialization_manifest(sandbox: SandboxSpec) -> Dict[str, object]:
+        repo_spec: Dict[str, object] = {}
+        if sandbox.repo2run is not None:
+            repo_spec = {
+                "source": sandbox.repo2run.source,
+                "build_cmd": list(sandbox.repo2run.build_cmd or []),
+                "smoke_test_cmd": list(sandbox.repo2run.smoke_test_cmd or []),
+                "env": dict(sandbox.repo2run.env),
+            }
+        return {
+            "image": sandbox.image,
+            "backend": sandbox.backend.value,
+            "repo2run": repo_spec,
+            "bootstrap_cmds": [list(cmd) for cmd in sandbox.bootstrap_cmds],
+        }
+
+    @staticmethod
+    def _materialization_matches(path: Path, expected: Dict[str, object]) -> bool:
+        if not path.exists():
+            return False
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return current == expected
+
+    @staticmethod
+    def _is_pip_like_command(cmd: Sequence[str]) -> bool:
+        lowered = [str(item).lower() for item in cmd]
+        return any(part.endswith("/pip") or part == "pip" or part.startswith("pip") for part in lowered)
 
     def materialize_server_ref(self, server_ref: MCPServerRef) -> MCPServerRef:
         if server_ref.sandbox is None:

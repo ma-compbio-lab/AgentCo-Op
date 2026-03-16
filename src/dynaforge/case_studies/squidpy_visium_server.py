@@ -26,9 +26,14 @@ def describe_capabilities() -> Dict[str, Any]:
     return {
         "name": os.environ.get("MCP_SERVER_NAME", "squidpy-visium"),
         "domain": "spatial-transcriptomics",
-        "case_study": "squidpy_visium_hne_spatial",
+        "case_study": "squidpy_visium",
         "candidate_repos": ["squidpy", "scanpy"],
-        "outputs": ["Spatial scatter PNG", "summary JSON", "raw h5ad snapshot"],
+        "outputs": [
+            "Spatial scatter PNG",
+            "optional neighborhood-enrichment PNG",
+            "summary JSON",
+            "raw h5ad snapshot",
+        ],
         "default_analysis_config": DEFAULT_ANALYSIS_CONFIG,
     }
 
@@ -50,6 +55,7 @@ def generate_spatial_plot(
                 output_dir=hints["output_dir"],
                 figure_path=hints["figure_path"],
                 summary_path=hints["summary_path"],
+                interaction_figure_path=hints.get("interaction_figure_path"),
                 raw_data_path=hints.get("raw_data_path"),
                 selected_repo=selected_repo or "squidpy",
                 config=analysis_config or {},

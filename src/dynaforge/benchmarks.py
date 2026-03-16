@@ -7,6 +7,9 @@ import random
 import re
 import subprocess
 import sys
+import tarfile
+import tempfile
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -24,6 +27,13 @@ class BenchmarkSetupError(RuntimeError):
 
 
 _OPTION_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_AFLOW_MATH_TYPES = (
+    "Counting & Probability",
+    "Number Theory",
+    "Prealgebra",
+    "Precalculus",
+)
+_AFLOW_DATASET_URL = "https://drive.google.com/uc?export=download&id=1DNoegtZiUhWtvkd2xoIuElmIi4ah7k8e"
 
 
 def prepare_medqa_assets(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -99,56 +109,401 @@ def prepare_medqa_assets(config: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
-def setup_spatialbench_workspace(config: Mapping[str, Any]) -> dict[str, Any]:
+def prepare_math_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
     settings = get_benchmark_settings(config)
-    if settings.get("kind") != "spatialbench":
-        raise BenchmarkSetupError("Benchmark config kind must be 'spatialbench'")
+    if settings.get("kind") != "math":
+        raise BenchmarkSetupError("Benchmark config kind must be 'math'")
 
-    repo_url = str(settings.get("repo_url", "https://github.com/latchbio/spatialbench"))
-    repo_path = Path(str(settings.get("repo_path", "external/spatialbench"))).resolve()
-    venv_path = Path(str(settings.get("venv_path", repo_path / ".venv"))).resolve()
-    validation_eval = str(
-        settings.get(
-            "validation_eval",
-            "evals_canonical/qc/xenium_xenium_qc_filter_min_umi_counts.json",
+    data_source = str(settings.get("data_source", "huggingface")).strip().lower()
+    dataset_id = str(settings.get("dataset_id", "EleutherAI/hendrycks_math"))
+    processed_dir = Path(str(settings.get("processed_dir", "benchmarks/math/processed"))).resolve()
+    records_path = processed_dir / "records.jsonl"
+    smoke_indices_path = processed_dir / "smoke_indices.json"
+    validation_indices_path = processed_dir / "validation_indices.json"
+    test_indices_path = processed_dir / "test_indices.json"
+    metadata_path = processed_dir / "dataset_manifest.json"
+    smoke_count = _coerce_desired_count(settings.get("smoke_count", 20))
+    split_seed = int(settings.get("split_seed", 42))
+    validation_fraction = float(settings.get("validation_fraction", 0.2))
+    level_filter = str(settings.get("level_filter", "Level 5")).strip()
+    source_split = str(settings.get("source_split", "test"))
+    selected_types = tuple(str(item).strip() for item in settings.get("selected_types", _AFLOW_MATH_TYPES))
+
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    with _file_lock(processed_dir / ".prepare.lock"):
+        cached_manifest = _load_generic_cached_manifest(
+            metadata_path,
+            required_fields={
+                "dataset_id": dataset_id,
+                "data_source": data_source,
+                "source_split": source_split,
+                "split_seed": split_seed,
+                "validation_fraction": validation_fraction,
+                "level_filter": level_filter,
+                "selected_types": list(selected_types),
+            },
         )
-    )
-    summary_path = Path(
-        str(settings.get("validation_output_path", "benchmarks/spatialbench/validation_summary.json"))
-    ).resolve()
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
+        if cached_manifest is not None:
+            upstream_manifest = _prepare_math_upstream_assets(
+                settings,
+                dataset_id=dataset_id,
+                split_seed=split_seed,
+            )
+            cached_manifest = dict(cached_manifest)
+            cached_manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+            cached_manifest["upstream_train_count"] = int(upstream_manifest.get("train_count", 0))
+            cached_manifest["upstream_test_count"] = int(upstream_manifest.get("test_count", 0))
+            cached_manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+            _write_json(metadata_path, cached_manifest)
+            return cached_manifest
 
-    if (repo_path / ".git").exists():
-        repo_action = "updated"
-        _run_command(["git", "-C", str(repo_path), "pull", "--ff-only"])
-    else:
-        repo_action = "cloned"
-        repo_path.parent.mkdir(parents=True, exist_ok=True)
-        _run_command(["git", "clone", repo_url, str(repo_path)])
+        if data_source == "aflow_package":
+            archive_path = _prepare_aflow_public_benchmark_archive(settings)
+            validation_source_records = _read_aflow_jsonl_records(archive_path, "math_validate.jsonl")
+            test_source_records = _read_aflow_jsonl_records(archive_path, "math_test.jsonl")
+            validation_records = [
+                {
+                    **normalize_math_record(item, config_name="aflow_validate", record_index=index),
+                    "source_split": "validation",
+                }
+                for index, item in enumerate(validation_source_records)
+            ]
+            test_records = [
+                {
+                    **normalize_math_record(item, config_name="aflow_test", record_index=index),
+                    "source_split": "test",
+                }
+                for index, item in enumerate(test_source_records)
+            ]
+            records = [*validation_records, *test_records]
+            validation_indices = list(range(len(validation_records)))
+            test_indices = list(range(len(validation_records), len(records)))
+            config_names = ["aflow_validate", "aflow_test"]
+        else:
+            datasets_module = _import_datasets_module()
+            config_names = list(settings.get("config_names") or datasets_module.get_dataset_config_names(dataset_id))
+            if not config_names:
+                raise BenchmarkSetupError(f"No dataset configs found for {dataset_id}")
 
-    python_exec, cli_exec = _venv_binaries(venv_path)
-    if not python_exec.exists():
-        _run_command([sys.executable, "-m", "venv", str(venv_path)])
+            records = []
+            for config_name in config_names:
+                dataset = datasets_module.load_dataset(dataset_id, config_name, split=source_split)
+                for record_index, item in enumerate(dataset):
+                    normalized = normalize_math_record(item, config_name=config_name, record_index=record_index)
+                    if level_filter and normalized["level"] != level_filter:
+                        continue
+                    if selected_types and normalized["type"] not in selected_types:
+                        continue
+                    records.append(normalized)
+            records.sort(key=lambda item: str(item["id"]))
+            validation_indices, test_indices = _split_validation_test_indices(
+                len(records),
+                validation_fraction=validation_fraction,
+                seed=split_seed,
+            )
 
-    _run_command([str(python_exec), "-m", "pip", "install", "-e", "."], cwd=repo_path)
-    validate_result = _run_command(
-        [str(cli_exec), "validate", validation_eval],
-        cwd=repo_path,
-        capture_output=True,
-    )
+        _write_jsonl(records_path, records)
+        smoke_source = validation_indices if validation_indices else test_indices
+        smoke_goal = len(smoke_source) if smoke_count is None else min(smoke_count, len(smoke_source))
+        smoke_indices = smoke_source[:smoke_goal]
+        _write_json(smoke_indices_path, smoke_indices)
+        _write_json(validation_indices_path, validation_indices)
+        _write_json(test_indices_path, test_indices)
 
-    summary = {
-        "repo_url": repo_url,
-        "repo_path": str(repo_path),
-        "repo_action": repo_action,
-        "venv_path": str(venv_path),
-        "validation_eval": validation_eval,
-        "validation_returncode": validate_result.returncode,
-        "validation_stdout": validate_result.stdout,
-        "validation_stderr": validate_result.stderr,
+        manifest = {
+            "dataset_id": dataset_id,
+            "data_source": data_source,
+            "config_names": config_names,
+            "source_split": source_split,
+            "record_count": len(records),
+            "smoke_count": len(smoke_indices),
+            "validation_count": len(validation_indices),
+            "test_count": len(test_indices),
+            "split_seed": split_seed,
+            "validation_fraction": validation_fraction,
+            "level_filter": level_filter,
+            "selected_types": list(selected_types),
+            "records_path": str(records_path),
+            "smoke_indices_path": str(smoke_indices_path),
+            "validation_indices_path": str(validation_indices_path),
+            "test_indices_path": str(test_indices_path),
+            "metric": "solve_rate",
+            "paper_reference_subset": "AFlow MATH Level-5 public subset",
+            "paper_reference_expected_count": 617,
+            "paper_reference_observed_count": len(records),
+            "paper_reference_note": (
+                "AFlow reports 617 level-5 MATH problems across four subject areas in the paper text. "
+                "The official packaged public split and the current Hugging Face mirror both yield the observed count recorded here."
+            ),
+        }
+        if data_source == "aflow_package":
+            manifest["aflow_archive_path"] = str(archive_path)
+        upstream_manifest = _prepare_math_upstream_assets(
+            settings,
+            dataset_id=dataset_id,
+            split_seed=split_seed,
+        )
+        manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+        manifest["upstream_train_count"] = int(upstream_manifest.get("train_count", 0))
+        manifest["upstream_test_count"] = int(upstream_manifest.get("test_count", 0))
+        manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+        _write_json(metadata_path, manifest)
+        return manifest
+
+
+def normalize_math_record(
+    record: Mapping[str, Any],
+    *,
+    config_name: str,
+    record_index: int,
+) -> dict[str, Any]:
+    problem = str(record.get("problem", "")).strip()
+    solution = str(record.get("solution", "")).strip()
+    answer = _extract_boxed_text(solution) or solution.splitlines()[-1].strip()
+    level = str(record.get("level", "")).strip()
+    math_type = str(record.get("type", config_name)).strip()
+    prompt_lines = [
+        "Solve the following competition mathematics problem.",
+        problem,
+        "",
+        "Return JSON with:",
+        "- output.final_answer: the final exact answer only",
+        "- output.solution_outline: concise reasoning outline",
+        "- confidence: 0..1",
+        "- summary: short string",
+        "If the answer is naturally written in LaTeX, return the mathematical content only without surrounding prose.",
+    ]
+    return {
+        "id": f"{config_name}:{record_index:04d}",
+        "question": problem,
+        "prompt": "\n".join(prompt_lines),
+        "solution": solution,
+        "gold_answer": answer,
+        "level": level,
+        "type": math_type,
+        "source_config": config_name,
+        "source_index": record_index,
     }
-    _write_json(summary_path, summary)
-    return summary
+
+
+def parse_math_answer(raw_prediction: Any) -> str:
+    candidates: list[str] = []
+    if isinstance(raw_prediction, Mapping):
+        for key in ("final_answer", "corrected_answer", "answer", "answer_text", "result", "text"):
+            value = raw_prediction.get(key)
+            if value is None:
+                continue
+            if isinstance(value, (list, tuple)):
+                candidates.extend(str(item) for item in value if str(item).strip())
+            else:
+                candidates.append(str(value))
+    elif raw_prediction is not None:
+        candidates.append(str(raw_prediction))
+
+    for candidate in candidates:
+        boxed = _extract_boxed_text(candidate)
+        if boxed:
+            return boxed
+
+    for candidate in reversed(candidates):
+        stripped = candidate.strip()
+        if stripped:
+            lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+            if lines:
+                return lines[-1]
+    return ""
+
+
+def grade_math_prediction(raw_prediction: Any, sample: Mapping[str, Any]) -> dict[str, Any]:
+    prediction = parse_math_answer(raw_prediction)
+    gold_answer = str(sample.get("gold_answer", "")).strip()
+    return {
+        "prediction_answer": prediction,
+        "gold_answer": gold_answer,
+        "correct": _math_equal(prediction, gold_answer),
+    }
+
+
+def prepare_humaneval_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
+    settings = get_benchmark_settings(config)
+    if settings.get("kind") != "humaneval":
+        raise BenchmarkSetupError("Benchmark config kind must be 'humaneval'")
+
+    data_source = str(settings.get("data_source", "huggingface")).strip().lower()
+    dataset_id = str(settings.get("dataset_id", "openai/openai_humaneval"))
+    source_split = str(settings.get("source_split", "test"))
+    processed_dir = Path(str(settings.get("processed_dir", "benchmarks/humaneval/processed"))).resolve()
+    records_path = processed_dir / "records.jsonl"
+    smoke_indices_path = processed_dir / "smoke_indices.json"
+    validation_indices_path = processed_dir / "validation_indices.json"
+    test_indices_path = processed_dir / "test_indices.json"
+    metadata_path = processed_dir / "dataset_manifest.json"
+    smoke_count = _coerce_desired_count(settings.get("smoke_count", 20))
+    split_seed = int(settings.get("split_seed", 42))
+    validation_fraction = float(settings.get("validation_fraction", 0.2))
+
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    with _file_lock(processed_dir / ".prepare.lock"):
+        cached_manifest = _load_generic_cached_manifest(
+            metadata_path,
+            required_fields={
+                "dataset_id": dataset_id,
+                "data_source": data_source,
+                "source_split": source_split,
+                "split_seed": split_seed,
+                "validation_fraction": validation_fraction,
+            },
+        )
+        if cached_manifest is not None:
+            upstream_manifest = _prepare_humaneval_upstream_assets(
+                settings,
+                dataset_id=dataset_id,
+                split_seed=split_seed,
+            )
+            cached_manifest = dict(cached_manifest)
+            cached_manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+            cached_manifest["upstream_train_available"] = bool(upstream_manifest.get("train_available", False))
+            cached_manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+            _write_json(metadata_path, cached_manifest)
+            return cached_manifest
+
+        if data_source == "aflow_package":
+            archive_path = _prepare_aflow_public_benchmark_archive(settings)
+            validation_source_records = _read_aflow_jsonl_records(archive_path, "humaneval_validate.jsonl")
+            test_source_records = _read_aflow_jsonl_records(archive_path, "humaneval_test.jsonl")
+            validation_records = [
+                {**normalize_humaneval_record(item, record_index=index), "source_split": "validation"}
+                for index, item in enumerate(validation_source_records)
+            ]
+            test_records = [
+                {**normalize_humaneval_record(item, record_index=index), "source_split": "test"}
+                for index, item in enumerate(test_source_records)
+            ]
+            records = [*validation_records, *test_records]
+            validation_indices = list(range(len(validation_records)))
+            test_indices = list(range(len(validation_records), len(records)))
+        else:
+            datasets_module = _import_datasets_module()
+            dataset = datasets_module.load_dataset(dataset_id, split=source_split)
+            records = [normalize_humaneval_record(item, record_index=index) for index, item in enumerate(dataset)]
+            validation_indices, test_indices = _split_validation_test_indices(
+                len(records),
+                validation_fraction=validation_fraction,
+                seed=split_seed,
+            )
+
+        _write_jsonl(records_path, records)
+        smoke_source = validation_indices if validation_indices else test_indices
+        smoke_goal = len(smoke_source) if smoke_count is None else min(smoke_count, len(smoke_source))
+        smoke_indices = smoke_source[:smoke_goal]
+        _write_json(smoke_indices_path, smoke_indices)
+        _write_json(validation_indices_path, validation_indices)
+        _write_json(test_indices_path, test_indices)
+
+        manifest = {
+            "dataset_id": dataset_id,
+            "data_source": data_source,
+            "source_split": source_split,
+            "record_count": len(records),
+            "smoke_count": len(smoke_indices),
+            "validation_count": len(validation_indices),
+            "test_count": len(test_indices),
+            "split_seed": split_seed,
+            "validation_fraction": validation_fraction,
+            "records_path": str(records_path),
+            "smoke_indices_path": str(smoke_indices_path),
+            "validation_indices_path": str(validation_indices_path),
+            "test_indices_path": str(test_indices_path),
+            "metric": "pass@1",
+            "paper_reference_subset": "AFlow HumanEval public set",
+        }
+        if data_source == "aflow_package":
+            manifest["aflow_archive_path"] = str(archive_path)
+        upstream_manifest = _prepare_humaneval_upstream_assets(
+            settings,
+            dataset_id=dataset_id,
+            split_seed=split_seed,
+        )
+        manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+        manifest["upstream_train_available"] = bool(upstream_manifest.get("train_available", False))
+        manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+        _write_json(metadata_path, manifest)
+        return manifest
+
+
+def normalize_humaneval_record(record: Mapping[str, Any], *, record_index: int) -> dict[str, Any]:
+    task_id = str(record.get("task_id", f"HumanEval/{record_index}")).strip()
+    prompt = str(record.get("prompt", "")).rstrip()
+    entry_point = str(record.get("entry_point", "")).strip()
+    prompt_lines = [
+        "Write a correct Python solution for the following HumanEval task.",
+        "Return JSON with:",
+        "- output.completion: complete Python code containing the function definition",
+        "- output.notes: brief notes about the approach",
+        "- confidence: 0..1",
+        "- summary: short string",
+        "",
+        prompt,
+    ]
+    return {
+        "id": task_id,
+        "task_id": task_id,
+        "prompt": prompt,
+        "entry_point": entry_point,
+        "test": str(record.get("test", "")),
+        "canonical_solution": str(record.get("canonical_solution", "")),
+        "question": prompt,
+        "model_prompt": "\n".join(prompt_lines),
+    }
+
+
+def extract_humaneval_completion(raw_prediction: Any) -> str:
+    candidates: list[str] = []
+    if isinstance(raw_prediction, Mapping):
+        for key in ("completion", "corrected_completion", "code", "final_code", "answer", "text"):
+            value = raw_prediction.get(key)
+            if value is None:
+                continue
+            candidates.append(str(value))
+    elif raw_prediction is not None:
+        candidates.append(str(raw_prediction))
+
+    for candidate in candidates:
+        code = _extract_code_block(candidate) or candidate.strip()
+        if code:
+            return code.strip()
+    return ""
+
+
+def grade_humaneval_prediction(
+    raw_prediction: Any,
+    sample: Mapping[str, Any],
+    *,
+    python_executable: str | None = None,
+    timeout_s: int = 15,
+) -> dict[str, Any]:
+    completion = extract_humaneval_completion(raw_prediction)
+    if not completion:
+        return {
+            "prediction_code": "",
+            "passed": False,
+            "result": "empty_completion",
+            "correct": False,
+        }
+
+    status, detail = _execute_humaneval_check(
+        completion=completion,
+        test=str(sample.get("test", "")),
+        entry_point=str(sample.get("entry_point", "")),
+        python_executable=python_executable or sys.executable,
+        timeout_s=timeout_s,
+    )
+    return {
+        "prediction_code": completion,
+        "passed": status == "passed",
+        "result": detail,
+        "correct": status == "passed",
+    }
 
 
 def prepare_medqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -192,6 +547,20 @@ def prepare_medqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
             seed=seed,
         )
         if cached_manifest is not None:
+            all_splits_manifest = _prepare_medqa_all_splits_assets(
+                settings,
+                datasets_module=datasets_module,
+                dataset_id=dataset_id,
+                chosen_config=chosen_config,
+                trust_remote_code=trust_remote_code,
+                seed=seed,
+            )
+            cached_manifest = dict(cached_manifest)
+            cached_manifest["all_splits_manifest_path"] = str(Path(all_splits_manifest["manifest_path"]).resolve())
+            cached_manifest["train_record_count"] = int(all_splits_manifest.get("split_record_counts", {}).get("train", 0))
+            cached_manifest["test_record_count"] = int(all_splits_manifest.get("split_record_counts", {}).get("test", 0))
+            cached_manifest["train_sample_count"] = int(all_splits_manifest.get("train_sample_count", 0))
+            _write_json(metadata_path, cached_manifest)
             return cached_manifest
 
         chosen_split: str | None = None
@@ -235,6 +604,20 @@ def prepare_medqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
             "smoke_indices_path": str(smoke_indices_path),
             "full_indices_path": str(full_indices_path),
         }
+        all_splits_manifest = _prepare_medqa_all_splits_assets(
+            settings,
+            datasets_module=datasets_module,
+            dataset_id=dataset_id,
+            chosen_config=chosen_config,
+            trust_remote_code=trust_remote_code,
+            seed=seed,
+            preloaded_split_name=chosen_split,
+            preloaded_records=records,
+        )
+        manifest["all_splits_manifest_path"] = str(Path(all_splits_manifest["manifest_path"]).resolve())
+        manifest["train_record_count"] = int(all_splits_manifest.get("split_record_counts", {}).get("train", 0))
+        manifest["test_record_count"] = int(all_splits_manifest.get("split_record_counts", {}).get("test", 0))
+        manifest["train_sample_count"] = int(all_splits_manifest.get("train_sample_count", 0))
         _write_json(metadata_path, manifest)
         return manifest
 
@@ -365,71 +748,264 @@ def grade_medqa_prediction(raw_prediction: Any, sample: Mapping[str, Any]) -> di
     }
 
 
-def prepare_spatialbench_manifests(config: Mapping[str, Any]) -> dict[str, Any]:
-    settings = get_benchmark_settings(config)
-    if settings.get("kind") != "spatialbench":
-        raise BenchmarkSetupError("Benchmark config kind must be 'spatialbench'")
-
-    repo_path = Path(str(settings.get("repo_path", "external/spatialbench"))).resolve()
-    manifest_path = Path(str(settings.get("manifest_path", repo_path / "evals_canonical" / "manifest.json"))).resolve()
-    processed_dir = Path(str(settings.get("processed_dir", "benchmarks/spatialbench/processed"))).resolve()
-    records_path = processed_dir / "records.jsonl"
-    smoke_indices_path = processed_dir / "smoke_indices.json"
-    full_indices_path = processed_dir / "full_indices.json"
-    metadata_path = processed_dir / "dataset_manifest.json"
-    smoke_count = int(settings.get("smoke_count", 2))
-    full_count = int(settings.get("full_count", 10))
-    seed = int(settings.get("seed", 0))
-
-    if not manifest_path.exists():
-        raise BenchmarkSetupError(f"SpatialBench manifest not found: {manifest_path}")
-
-    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    examples = manifest_payload.get("examples", [])
-    records: list[dict[str, Any]] = []
-    for example in examples:
-        dest = Path(str(example.get("dest", ""))).name
-        eval_matches = list(repo_path.rglob(dest))
-        if not eval_matches:
-            raise BenchmarkSetupError(f"Unable to resolve eval file for manifest entry: {dest}")
-        eval_path = eval_matches[0].resolve()
-        eval_payload = json.loads(eval_path.read_text(encoding="utf-8"))
-        records.append(
-            {
-                "id": str(example.get("id", eval_payload.get("id", eval_path.stem))),
-                "task_category": str(example.get("task_cat", "")),
-                "platform": str(example.get("platform", "")),
-                "grader_type": str(example.get("grader", eval_payload.get("grader", {}).get("type", ""))),
-                "eval_path": str(eval_path),
-                "task": str(eval_payload.get("task", "")),
-                "data_node": eval_payload.get("data_node"),
-                "grader": eval_payload.get("grader", {}),
-                "timeout": eval_payload.get("timeout"),
-                "agent_timeout": eval_payload.get("agent_timeout"),
-                "download_timeout": eval_payload.get("download_timeout"),
-            }
+def _prepare_medqa_all_splits_assets(
+    settings: Mapping[str, Any],
+    *,
+    datasets_module: Any,
+    dataset_id: str,
+    chosen_config: str,
+    trust_remote_code: bool,
+    seed: int,
+    preloaded_split_name: str | None = None,
+    preloaded_records: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    processed_dir = Path(str(settings.get("processed_dir", "benchmarks/medqa/processed"))).resolve()
+    all_splits_dir = Path(str(settings.get("all_splits_dir", processed_dir.parent / "all_splits"))).resolve()
+    metadata_path = all_splits_dir / "dataset_manifest.json"
+    train_sample_count = _coerce_desired_count(settings.get("train_sample_count", 1000))
+    train_sample_seed = int(settings.get("train_sample_seed", seed))
+    split_names = [
+        str(item)
+        for item in _ordered_unique(
+            _get_dataset_split_names(
+                datasets_module,
+                dataset_id,
+                chosen_config,
+                trust_remote_code=trust_remote_code,
+            )
         )
+        if item is not None
+    ]
 
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    _write_jsonl(records_path, records)
-    full_indices = _sample_indices(len(records), full_count, seed=seed)
-    smoke_indices = full_indices[: min(smoke_count, len(full_indices))]
-    _write_json(full_indices_path, full_indices)
-    _write_json(smoke_indices_path, smoke_indices)
+    all_splits_dir.mkdir(parents=True, exist_ok=True)
+    with _file_lock(all_splits_dir / ".prepare.lock"):
+        cached = _load_cached_split_manifest(
+            metadata_path,
+            required_fields={
+                "dataset_id": dataset_id,
+                "chosen_config": chosen_config,
+                "available_splits": split_names,
+                "train_sample_requested_count": train_sample_count,
+                "train_sample_seed": train_sample_seed,
+            },
+        )
+        if cached is not None:
+            return cached
 
-    manifest = {
-        "record_count": len(records),
-        "smoke_count": len(smoke_indices),
-        "full_count": len(full_indices),
-        "seed": seed,
-        "records_path": str(records_path),
-        "smoke_indices_path": str(smoke_indices_path),
-        "full_indices_path": str(full_indices_path),
-        "manifest_path": str(manifest_path),
-        "requires_latch_download": any(record.get("data_node") is not None for record in records),
-    }
-    _write_json(metadata_path, manifest)
-    return manifest
+        split_record_counts: dict[str, int] = {}
+        split_record_paths: dict[str, str] = {}
+        train_sample_indices: list[int] = []
+        train_sample_records: list[dict[str, Any]] = []
+
+        for split_name in split_names:
+            if split_name == preloaded_split_name and preloaded_records is not None:
+                records = [dict(item) for item in preloaded_records]
+            else:
+                dataset = datasets_module.load_dataset(
+                    dataset_id,
+                    chosen_config,
+                    split=split_name,
+                    trust_remote_code=trust_remote_code,
+                )
+                records = [normalize_medqa_record(item) for item in dataset]
+            records_path = all_splits_dir / f"{split_name}_records.jsonl"
+            _write_jsonl(records_path, records)
+            split_record_counts[split_name] = len(records)
+            split_record_paths[split_name] = str(records_path)
+            if split_name == "train":
+                train_sample_indices = _sample_indices(len(records), train_sample_count, seed=train_sample_seed)
+                train_sample_records = [records[index] for index in train_sample_indices]
+
+        train_sample_indices_path = all_splits_dir / "train_sample_indices.json"
+        train_sample_records_path = all_splits_dir / "train_sample_records.jsonl"
+        _write_json(train_sample_indices_path, train_sample_indices)
+        _write_jsonl(train_sample_records_path, train_sample_records)
+
+        manifest = {
+            "manifest_path": str(metadata_path),
+            "dataset_id": dataset_id,
+            "chosen_config": chosen_config,
+            "available_splits": split_names,
+            "split_record_counts": split_record_counts,
+            "split_record_paths": split_record_paths,
+            "train_records_path": split_record_paths.get("train", ""),
+            "test_records_path": split_record_paths.get("test", ""),
+            "validation_records_path": split_record_paths.get("validation", ""),
+            "train_sample_requested_count": train_sample_count,
+            "train_sample_seed": train_sample_seed,
+            "train_sample_count": len(train_sample_indices),
+            "train_sample_indices_path": str(train_sample_indices_path),
+            "train_sample_records_path": str(train_sample_records_path),
+        }
+        _write_json(metadata_path, manifest)
+        return manifest
+
+
+def _prepare_math_upstream_assets(
+    settings: Mapping[str, Any],
+    *,
+    dataset_id: str,
+    split_seed: int,
+) -> dict[str, Any]:
+    datasets_module = _import_datasets_module()
+    config_names = list(settings.get("config_names") or datasets_module.get_dataset_config_names(dataset_id))
+    selected_types = [str(item).strip() for item in settings.get("selected_types", _AFLOW_MATH_TYPES)]
+    processed_dir = Path(str(settings.get("processed_dir", "benchmarks/math/processed"))).resolve()
+    upstream_dir = Path(str(settings.get("upstream_dir", processed_dir.parent / "upstream_full"))).resolve()
+    metadata_path = upstream_dir / "dataset_manifest.json"
+    train_sample_count = _coerce_desired_count(settings.get("train_sample_count", 1000))
+    train_sample_seed = int(settings.get("train_sample_seed", split_seed))
+
+    split_names = _ordered_unique(
+        split_name
+        for config_name in config_names
+        for split_name in _get_dataset_split_names(datasets_module, dataset_id, config_name)
+    )
+    available_splits = [str(item) for item in split_names if item is not None]
+
+    upstream_dir.mkdir(parents=True, exist_ok=True)
+    with _file_lock(upstream_dir / ".prepare.lock"):
+        cached = _load_cached_split_manifest(
+            metadata_path,
+            required_fields={
+                "dataset_id": dataset_id,
+                "config_names": config_names,
+                "selected_types": selected_types,
+                "available_splits": available_splits,
+                "train_sample_requested_count": train_sample_count,
+                "train_sample_seed": train_sample_seed,
+            },
+        )
+        if cached is not None:
+            return cached
+
+        split_record_counts: dict[str, int] = {}
+        split_record_paths: dict[str, str] = {}
+        train_sample_indices: list[int] = []
+        train_sample_records: list[dict[str, Any]] = []
+
+        for split_name in available_splits:
+            split_records: list[dict[str, Any]] = []
+            for config_name in config_names:
+                if split_name not in _get_dataset_split_names(datasets_module, dataset_id, config_name):
+                    continue
+                dataset = datasets_module.load_dataset(dataset_id, config_name, split=split_name)
+                for record_index, item in enumerate(dataset):
+                    normalized = normalize_math_record(item, config_name=config_name, record_index=record_index)
+                    normalized["source_split"] = split_name
+                    split_records.append(normalized)
+            split_records.sort(key=lambda item: str(item["id"]))
+            records_path = upstream_dir / f"{split_name}_records.jsonl"
+            _write_jsonl(records_path, split_records)
+            split_record_counts[split_name] = len(split_records)
+            split_record_paths[split_name] = str(records_path)
+            if split_name == "train":
+                train_sample_indices = _sample_indices(len(split_records), train_sample_count, seed=train_sample_seed)
+                train_sample_records = [split_records[index] for index in train_sample_indices]
+
+        train_sample_indices_path = upstream_dir / "train_sample_indices.json"
+        train_sample_records_path = upstream_dir / "train_sample_records.jsonl"
+        _write_json(train_sample_indices_path, train_sample_indices)
+        _write_jsonl(train_sample_records_path, train_sample_records)
+
+        manifest = {
+            "manifest_path": str(metadata_path),
+            "dataset_id": dataset_id,
+            "config_names": config_names,
+            "selected_types": selected_types,
+            "available_splits": available_splits,
+            "split_record_counts": split_record_counts,
+            "split_record_paths": split_record_paths,
+            "train_count": split_record_counts.get("train", 0),
+            "test_count": split_record_counts.get("test", 0),
+            "train_records_path": split_record_paths.get("train", ""),
+            "test_records_path": split_record_paths.get("test", ""),
+            "train_sample_requested_count": train_sample_count,
+            "train_sample_seed": train_sample_seed,
+            "train_sample_count": len(train_sample_indices),
+            "train_sample_indices_path": str(train_sample_indices_path),
+            "train_sample_records_path": str(train_sample_records_path),
+            "aflow_eval_alignment": True,
+            "note": "Canonical benchmark validation/test remains the packaged AFlow split; upstream full splits are downloaded for train/test completeness and train sampling.",
+        }
+        _write_json(metadata_path, manifest)
+        return manifest
+
+
+def _prepare_humaneval_upstream_assets(
+    settings: Mapping[str, Any],
+    *,
+    dataset_id: str,
+    split_seed: int,
+) -> dict[str, Any]:
+    datasets_module = _import_datasets_module()
+    processed_dir = Path(str(settings.get("processed_dir", "benchmarks/humaneval/processed"))).resolve()
+    upstream_dir = Path(str(settings.get("upstream_dir", processed_dir.parent / "upstream_full"))).resolve()
+    metadata_path = upstream_dir / "dataset_manifest.json"
+    train_sample_count = _coerce_desired_count(settings.get("train_sample_count", 1000))
+    train_sample_seed = int(settings.get("train_sample_seed", split_seed))
+    available_splits = [
+        str(item)
+        for item in _ordered_unique(_get_dataset_split_names(datasets_module, dataset_id))
+        if item is not None
+    ]
+
+    upstream_dir.mkdir(parents=True, exist_ok=True)
+    with _file_lock(upstream_dir / ".prepare.lock"):
+        cached = _load_cached_split_manifest(
+            metadata_path,
+            required_fields={
+                "dataset_id": dataset_id,
+                "available_splits": available_splits,
+                "train_sample_requested_count": train_sample_count,
+                "train_sample_seed": train_sample_seed,
+            },
+        )
+        if cached is not None:
+            return cached
+
+        split_record_counts: dict[str, int] = {}
+        split_record_paths: dict[str, str] = {}
+        train_sample_indices: list[int] = []
+        train_sample_records: list[dict[str, Any]] = []
+
+        for split_name in available_splits:
+            dataset = datasets_module.load_dataset(dataset_id, split=split_name)
+            records = [normalize_humaneval_record(item, record_index=index) for index, item in enumerate(dataset)]
+            records_path = upstream_dir / f"{split_name}_records.jsonl"
+            _write_jsonl(records_path, records)
+            split_record_counts[split_name] = len(records)
+            split_record_paths[split_name] = str(records_path)
+            if split_name == "train":
+                train_sample_indices = _sample_indices(len(records), train_sample_count, seed=train_sample_seed)
+                train_sample_records = [records[index] for index in train_sample_indices]
+
+        train_sample_indices_path = upstream_dir / "train_sample_indices.json"
+        train_sample_records_path = upstream_dir / "train_sample_records.jsonl"
+        _write_json(train_sample_indices_path, train_sample_indices)
+        _write_jsonl(train_sample_records_path, train_sample_records)
+
+        manifest = {
+            "manifest_path": str(metadata_path),
+            "dataset_id": dataset_id,
+            "available_splits": available_splits,
+            "split_record_counts": split_record_counts,
+            "split_record_paths": split_record_paths,
+            "train_available": "train" in split_record_counts,
+            "train_count": split_record_counts.get("train", 0),
+            "test_count": split_record_counts.get("test", 0),
+            "train_records_path": split_record_paths.get("train", ""),
+            "test_records_path": split_record_paths.get("test", ""),
+            "train_sample_requested_count": train_sample_count,
+            "train_sample_seed": train_sample_seed,
+            "train_sample_count": len(train_sample_indices),
+            "train_sample_indices_path": str(train_sample_indices_path),
+            "train_sample_records_path": str(train_sample_records_path),
+            "aflow_eval_alignment": True,
+            "note": "Canonical benchmark validation/test remains the packaged AFlow split. The upstream official dataset currently exposes only the recorded available splits.",
+        }
+        _write_json(metadata_path, manifest)
+        return manifest
 
 
 def prepare_scanpy_pbmc3k_case_study(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -551,16 +1127,260 @@ def prepare_scanpy_pbmc3k_case_study(config: Mapping[str, Any]) -> dict[str, Any
     return manifest
 
 
+def prepare_scanpy_paul15_case_study(config: Mapping[str, Any]) -> dict[str, Any]:
+    settings = get_benchmark_settings(config)
+    if settings.get("kind") != "case_study":
+        raise BenchmarkSetupError("Benchmark config kind must be 'case_study'")
+    case_id = str(settings.get("case_id", ""))
+    if case_id not in {
+        "scanpy_paul15_trajectory",
+        "scanpy_paul15_paper_figure",
+        "scanpy_paul15_specialized_collaboration",
+        "scanpy_moignard15_method_transfer",
+        "scanpy_moignard15_specialized_collaboration",
+        "scanpy_krumsiek11_method_transfer",
+        "scanpy_krumsiek11_specialized_collaboration",
+    }:
+        raise BenchmarkSetupError("Unsupported case-study id for this helper")
+    collaboration_case = case_id in {
+        "scanpy_paul15_specialized_collaboration",
+        "scanpy_moignard15_specialized_collaboration",
+        "scanpy_krumsiek11_specialized_collaboration",
+    }
+    transfer_case = case_id in {
+        "scanpy_moignard15_method_transfer",
+        "scanpy_moignard15_specialized_collaboration",
+        "scanpy_krumsiek11_method_transfer",
+        "scanpy_krumsiek11_specialized_collaboration",
+    }
+    paper_figure_case = case_id in {
+        "scanpy_paul15_paper_figure",
+        "scanpy_paul15_specialized_collaboration",
+        "scanpy_moignard15_method_transfer",
+        "scanpy_moignard15_specialized_collaboration",
+        "scanpy_krumsiek11_method_transfer",
+        "scanpy_krumsiek11_specialized_collaboration",
+    }
+    if "krumsiek11" in case_id:
+        dataset_id = "krumsiek11"
+        dataset_label = "Krumsiek11"
+    elif "moignard15" in case_id:
+        dataset_id = "moignard15"
+        dataset_label = "Moignard15"
+    else:
+        dataset_id = "paul15"
+        dataset_label = "Paul15"
+
+    from dynaforge.case_studies.scanpy_paul15_job import DEFAULT_ANALYSIS_CONFIG
+
+    if case_id == "scanpy_paul15_specialized_collaboration":
+        default_case_root = "benchmarks/case_studies/scanpy_paul15_collaboration"
+    elif case_id == "scanpy_paul15_paper_figure":
+        default_case_root = "benchmarks/case_studies/scanpy_paul15_paper_figure"
+    elif case_id == "scanpy_moignard15_specialized_collaboration":
+        default_case_root = "benchmarks/case_studies/scanpy_moignard15_collaboration"
+    elif case_id == "scanpy_moignard15_method_transfer":
+        default_case_root = "benchmarks/case_studies/scanpy_moignard15_transfer"
+    elif case_id == "scanpy_krumsiek11_specialized_collaboration":
+        default_case_root = "benchmarks/case_studies/scanpy_krumsiek11_collaboration"
+    elif case_id == "scanpy_krumsiek11_method_transfer":
+        default_case_root = "benchmarks/case_studies/scanpy_krumsiek11_transfer"
+    else:
+        default_case_root = "benchmarks/case_studies/scanpy_paul15"
+    case_root = Path(str(settings.get("case_root", default_case_root))).resolve()
+    repos_root = Path(str(settings.get("repo_root", "external/case_studies/scanpy_paul15/repos"))).resolve()
+    methods_path = case_root / "materials" / "methods_excerpt.txt"
+    target_desc_path = case_root / "materials" / "target_figure_description.txt"
+    candidate_repo_path = case_root / "candidate_repos.json"
+    task_spec_path = case_root / "task_spec.json"
+    data_manifest_path = case_root / "data_manifest.json"
+    reference_dir = case_root / "reference"
+    generated_dir = case_root / "generated"
+    data_dir = case_root / "data"
+    for path in (reference_dir, generated_dir, data_dir, methods_path.parent):
+        path.mkdir(parents=True, exist_ok=True)
+
+    default_transfer_excerpt = (
+        f"Transfer the Paul15-style hematopoiesis trajectory method to the public {dataset_label} dataset: "
+        "run PCA and a neighborhood graph, cluster cells, infer coarse lineage structure with PAGA, "
+        "compute diffusion-based pseudotime from the dataset-default root cell when available, and produce a paper-style "
+        "figure package with a trajectory embedding, a PAGA graph, and a dynamic-gene evidence panel linked to pseudotime progression. "
+        "Preserve dataset-native metadata and avoid source-dataset assumptions that do not hold on the target dataset."
+    )
+    default_source_excerpt = (
+        f"Load the public {dataset_label} hematopoiesis dataset, normalize counts, log-transform, select highly variable genes, "
+        "run PCA and a neighborhood graph, cluster cells, infer coarse lineage structure with PAGA, compute diffusion-based "
+        "pseudotime from an automatically selected root cell, and reproduce a paper-style figure package with a trajectory embedding, "
+        "a PAGA graph, and a dynamic-gene evidence panel linked to pseudotime progression."
+    )
+    default_plain_excerpt = (
+        f"Load the public {dataset_label} hematopoiesis dataset, normalize counts, log-transform, select highly variable genes, "
+        "run PCA and a neighborhood graph, cluster cells, infer coarse lineage structure with PAGA, compute diffusion-based "
+        "pseudotime from an automatically selected root cell, and produce both a trajectory embedding and a PAGA graph."
+    )
+    methods_excerpt = str(
+        settings.get(
+            "methods_excerpt",
+            default_plain_excerpt if not paper_figure_case else (default_transfer_excerpt if transfer_case else default_source_excerpt),
+        )
+    )
+    default_transfer_target = (
+        f"Transfer the Paul15 figure-production method to the {dataset_label} dataset and produce a paper-style figure package "
+        "consisting of a trajectory figure, a PAGA graph, and a dynamic-gene panel. Preserve dataset provenance, root-selection metadata, "
+        "and target-dataset group annotations in the summary."
+    )
+    default_source_target = (
+        f"Produce a paper-style figure package for the {dataset_label} dataset consisting of a trajectory figure, a PAGA graph, "
+        "and a dynamic-gene panel that shows genes whose expression varies strongly along pseudotime."
+    )
+    default_plain_target = (
+        f"Produce a trajectory figure for the {dataset_label} dataset that shows cluster structure and pseudotime progression, "
+        "plus a second PAGA graph figure summarizing connectivity between cell-state groups."
+    )
+    target_description = str(
+        settings.get(
+            "target_figure_description",
+            default_plain_target if not paper_figure_case else (default_transfer_target if transfer_case else default_source_target),
+        )
+    )
+    candidate_repos = list(
+        settings.get(
+            "candidate_repos",
+            [
+                {"name": "scanpy", "url": "https://github.com/scverse/scanpy.git"},
+                {"name": "scanpy-tutorials", "url": "https://github.com/scverse/scanpy-tutorials.git"},
+            ],
+        )
+    )
+
+    repo_records: list[dict[str, Any]] = []
+    for repo in candidate_repos:
+        repo_name = str(repo.get("name", "")).strip()
+        repo_url = str(repo.get("url", "")).strip()
+        if not repo_name or not repo_url:
+            raise BenchmarkSetupError(f"Invalid candidate repo entry: {repo}")
+        repo_path = repos_root / repo_name
+        if (repo_path / ".git").exists():
+            action = "updated"
+            _run_command(["git", "-C", str(repo_path), "pull", "--ff-only"])
+        else:
+            action = "cloned"
+            repo_path.parent.mkdir(parents=True, exist_ok=True)
+            _run_command(["git", "clone", "--depth", "1", repo_url, str(repo_path)])
+        repo_records.append(
+            {
+                "name": repo_name,
+                "url": repo_url,
+                "path": str(repo_path),
+                "action": action,
+            }
+        )
+
+    methods_path.write_text(methods_excerpt + "\n", encoding="utf-8")
+    target_desc_path.write_text(target_description + "\n", encoding="utf-8")
+    _write_json(candidate_repo_path, repo_records)
+
+    raw_data_path = data_dir / f"{dataset_id}_raw.h5ad"
+    reference_figure_path = reference_dir / "reference_trajectory.png"
+    reference_paga_figure_path = reference_dir / "reference_paga.png"
+    reference_gene_trend_figure_path = reference_dir / "reference_dynamic_genes.png"
+    reference_summary_path = reference_dir / "reference_summary.json"
+    generated_figure_path = generated_dir / "generated_trajectory.png"
+    generated_paga_figure_path = generated_dir / "generated_paga.png"
+    generated_gene_trend_figure_path = generated_dir / "generated_dynamic_genes.png"
+    generated_summary_path = generated_dir / "generated_summary.json"
+
+    task_spec = {
+        "case_id": case_id,
+        "title": str(
+            settings.get(
+                "title",
+                "Scanpy Moignard15 specialized-agent method transfer"
+                if case_id == "scanpy_moignard15_specialized_collaboration"
+                else "Scanpy Krumsiek11 specialized-agent method transfer"
+                if case_id == "scanpy_krumsiek11_specialized_collaboration"
+                else "Scanpy Paul15 specialized-agent collaboration"
+                if case_id == "scanpy_paul15_specialized_collaboration"
+                else "Scanpy Moignard15 method transfer"
+                if case_id == "scanpy_moignard15_method_transfer"
+                else "Scanpy Krumsiek11 method transfer"
+                if case_id == "scanpy_krumsiek11_method_transfer"
+                else "Scanpy Paul15 paper-figure reproduction"
+                if case_id == "scanpy_paul15_paper_figure"
+                else "Scanpy Paul15 trajectory reconstruction",
+            )
+        ),
+        "dataset_id": dataset_id,
+        "dataset_label": dataset_label,
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "reference_figure_path": str(reference_figure_path),
+        "reference_paga_figure_path": str(reference_paga_figure_path),
+        "reference_gene_trend_figure_path": str(reference_gene_trend_figure_path) if paper_figure_case else "",
+        "reference_summary_path": str(reference_summary_path),
+        "raw_data_path": str(raw_data_path),
+        "default_generated_figure_path": str(generated_figure_path),
+        "default_generated_paga_figure_path": str(generated_paga_figure_path),
+        "default_generated_gene_trend_figure_path": str(generated_gene_trend_figure_path) if paper_figure_case else "",
+        "default_generated_summary_path": str(generated_summary_path),
+        "default_analysis_config": {
+            **DEFAULT_ANALYSIS_CONFIG,
+            "dataset_id": dataset_id,
+            "root_strategy": "dataset_default" if transfer_case else DEFAULT_ANALYSIS_CONFIG.get("root_strategy", "min_diffmap_1"),
+        },
+    }
+    _write_json(task_spec_path, task_spec)
+
+    manifest = {
+        "case_id": case_id,
+        "dataset_id": dataset_id,
+        "dataset_label": dataset_label,
+        "case_root": str(case_root),
+        "repo_root": str(repos_root),
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "task_spec_path": str(task_spec_path),
+        "raw_data_path": str(raw_data_path),
+        "reference_figure_path": str(reference_figure_path),
+        "reference_paga_figure_path": str(reference_paga_figure_path),
+        "reference_gene_trend_figure_path": str(reference_gene_trend_figure_path) if paper_figure_case else "",
+        "reference_summary_path": str(reference_summary_path),
+        "generated_figure_path": str(generated_figure_path),
+        "generated_paga_figure_path": str(generated_paga_figure_path),
+        "generated_gene_trend_figure_path": str(generated_gene_trend_figure_path) if paper_figure_case else "",
+        "generated_summary_path": str(generated_summary_path),
+        "candidate_repos": repo_records,
+    }
+    _write_json(data_manifest_path, manifest)
+    return manifest
+
+
 def prepare_squidpy_visium_case_study(config: Mapping[str, Any]) -> dict[str, Any]:
     settings = get_benchmark_settings(config)
     if settings.get("kind") != "case_study":
         raise BenchmarkSetupError("Benchmark config kind must be 'case_study'")
-    if str(settings.get("case_id", "")) != "squidpy_visium_hne_spatial":
+    case_id = str(settings.get("case_id", ""))
+    if case_id not in {"squidpy_visium_hne_spatial", "squidpy_visium_hne_interactions", "squidpy_seqfish_method_transfer"}:
         raise BenchmarkSetupError("Unsupported case-study id for this helper")
+    interaction_case = case_id in {"squidpy_visium_hne_interactions", "squidpy_seqfish_method_transfer"}
+    transfer_case = case_id == "squidpy_seqfish_method_transfer"
+    dataset_id = "seqfish" if transfer_case else "visium_hne_adata_crop"
+    dataset_label = "seqFISH" if transfer_case else "Visium H&E"
 
-    from dynaforge.case_studies.squidpy_visium_job import DEFAULT_ANALYSIS_CONFIG
+    if interaction_case:
+        from dynaforge.case_studies.squidpy_visium_interactions_job import DEFAULT_ANALYSIS_CONFIG
+    else:
+        from dynaforge.case_studies.squidpy_visium_job import DEFAULT_ANALYSIS_CONFIG
 
-    case_root = Path(str(settings.get("case_root", "benchmarks/case_studies/squidpy_visium_hne"))).resolve()
+    if case_id == "squidpy_seqfish_method_transfer":
+        default_case_root = "benchmarks/case_studies/squidpy_seqfish_transfer"
+    elif interaction_case:
+        default_case_root = "benchmarks/case_studies/squidpy_visium_interactions"
+    else:
+        default_case_root = "benchmarks/case_studies/squidpy_visium_hne"
+    case_root = Path(str(settings.get("case_root", default_case_root))).resolve()
     repos_root = Path(str(settings.get("repo_root", "external/case_studies/squidpy_spatial/repos"))).resolve()
     methods_path = case_root / "materials" / "methods_excerpt.txt"
     target_desc_path = case_root / "materials" / "target_figure_description.txt"
@@ -580,6 +1400,19 @@ def prepare_squidpy_visium_case_study(config: Mapping[str, Any]) -> dict[str, An
                 "Load the public cropped Visium H&E dataset, preserve the spatial image metadata, "
                 "construct a spatial-neighbor graph, and render a spatial scatter plot colored by the cluster labels "
                 "on the tissue image. Keep the output faithful to a standard Squidpy spatial visualization."
+                if not interaction_case
+                else (
+                "Load the public cropped Visium H&E dataset, preserve the spatial image metadata, "
+                "construct a spatial-neighbor graph, compute neighborhood enrichment across cluster labels, "
+                "and produce both a spatial scatter plot and a neighborhood-enrichment heatmap. "
+                "Keep the analysis faithful to a standard Squidpy spatial-interaction workflow."
+                if not transfer_case
+                else
+                "Transfer the Squidpy spatial-neighborhood workflow to the public seqFISH dataset. "
+                "Use the published cell-type annotations in `celltype_mapped_refined`, construct spatial neighbors, "
+                "compute neighborhood enrichment across those labels, and generate a spatial plot plus an interaction heatmap. "
+                "Keep the analysis faithful to the official Squidpy seqFISH neighborhood-enrichment workflow."
+                )
             ),
         )
     )
@@ -590,6 +1423,17 @@ def prepare_squidpy_visium_case_study(config: Mapping[str, Any]) -> dict[str, An
                 "Produce a PNG spatial scatter plot for the cropped Visium H&E dataset with cluster labels overlaid "
                 "on the tissue image. The figure should show a coherent spatial layout, visible tissue background, "
                 "and clearly distinguishable labeled regions."
+                if not interaction_case
+                else (
+                "Produce a PNG spatial scatter plot for the cropped Visium H&E dataset and a second PNG "
+                "neighborhood-enrichment heatmap that summarizes interaction strengths between cluster labels. "
+                "The outputs should preserve the tissue image background and expose meaningful enriched spatial neighborhoods."
+                if not transfer_case
+                else
+                "Produce a PNG seqFISH spatial scatter plot colored by `celltype_mapped_refined` and a second PNG "
+                "neighborhood-enrichment heatmap summarizing enriched cell-type interactions. "
+                "The outputs should expose the expected mesoderm / endothelial neighborhood structure from the official seqFISH example."
+                )
             ),
         )
     )
@@ -630,40 +1474,269 @@ def prepare_squidpy_visium_case_study(config: Mapping[str, Any]) -> dict[str, An
     target_desc_path.write_text(target_description + "\n", encoding="utf-8")
     _write_json(candidate_repo_path, repo_records)
 
-    raw_data_path = data_dir / "visium_hne_adata_crop.h5ad"
+    raw_data_filename = "seqfish.h5ad" if transfer_case else "visium_hne_adata_crop.h5ad"
+    raw_data_path = data_dir / raw_data_filename
     reference_figure_path = reference_dir / "reference_spatial.png"
+    reference_interaction_figure_path = reference_dir / "reference_nhood_enrichment.png"
     reference_summary_path = reference_dir / "reference_summary.json"
     generated_figure_path = generated_dir / "generated_spatial.png"
+    generated_interaction_figure_path = generated_dir / "generated_nhood_enrichment.png"
     generated_summary_path = generated_dir / "generated_summary.json"
 
     task_spec = {
-        "case_id": "squidpy_visium_hne_spatial",
-        "title": str(settings.get("title", "Squidpy Visium H&E spatial plot reproduction")),
+        "case_id": case_id,
+        "title": str(
+            settings.get(
+                "title",
+                f"Squidpy {dataset_label} method transfer"
+                if transfer_case
+                else (
+                    "Squidpy Visium H&E interaction analysis"
+                    if interaction_case
+                    else "Squidpy Visium H&E spatial plot reproduction"
+                ),
+            )
+        ),
+        "dataset_id": dataset_id,
+        "dataset_label": dataset_label,
         "methods_excerpt_path": str(methods_path),
         "target_figure_description_path": str(target_desc_path),
         "candidate_repos_path": str(candidate_repo_path),
         "reference_figure_path": str(reference_figure_path),
+        "reference_interaction_figure_path": str(reference_interaction_figure_path) if interaction_case else "",
         "reference_summary_path": str(reference_summary_path),
         "raw_data_path": str(raw_data_path),
         "default_generated_figure_path": str(generated_figure_path),
+        "default_generated_interaction_figure_path": str(generated_interaction_figure_path) if interaction_case else "",
         "default_generated_summary_path": str(generated_summary_path),
         "default_analysis_config": DEFAULT_ANALYSIS_CONFIG,
     }
     _write_json(task_spec_path, task_spec)
 
     manifest = {
-        "case_id": "squidpy_visium_hne_spatial",
+        "case_id": case_id,
         "case_root": str(case_root),
         "repo_root": str(repos_root),
+        "dataset_id": dataset_id,
+        "dataset_label": dataset_label,
         "methods_excerpt_path": str(methods_path),
         "target_figure_description_path": str(target_desc_path),
         "candidate_repos_path": str(candidate_repo_path),
         "task_spec_path": str(task_spec_path),
         "raw_data_path": str(raw_data_path),
         "reference_figure_path": str(reference_figure_path),
+        "reference_interaction_figure_path": str(reference_interaction_figure_path) if interaction_case else "",
         "reference_summary_path": str(reference_summary_path),
         "generated_figure_path": str(generated_figure_path),
+        "generated_interaction_figure_path": str(generated_interaction_figure_path) if interaction_case else "",
         "generated_summary_path": str(generated_summary_path),
+        "candidate_repos": repo_records,
+    }
+    _write_json(data_manifest_path, manifest)
+    return manifest
+
+
+def prepare_visium_multi_agent_case_study(config: Mapping[str, Any]) -> dict[str, Any]:
+    settings = get_benchmark_settings(config)
+    if settings.get("kind") != "case_study":
+        raise BenchmarkSetupError("Benchmark config kind must be 'case_study'")
+    case_id = str(settings.get("case_id", ""))
+    if case_id not in {
+        "visium_multi_agent_collaboration",
+        "visium_multi_agent_monolith",
+        "seqfish_multi_agent_collaboration",
+        "seqfish_multi_agent_monolith",
+    }:
+        raise BenchmarkSetupError("Unsupported case-study id for this helper")
+    monolith_case = case_id in {"visium_multi_agent_monolith", "seqfish_multi_agent_monolith"}
+    seqfish_case = case_id in {"seqfish_multi_agent_collaboration", "seqfish_multi_agent_monolith"}
+    dataset_id = "seqfish" if seqfish_case else "visium_hne_adata_crop"
+    dataset_label = "seqFISH" if seqfish_case else "Visium H&E"
+
+    from dynaforge.case_studies.scanpy_visium_cluster_job import DEFAULT_ANALYSIS_CONFIG as SCANPY_CLUSTER_DEFAULTS
+    from dynaforge.case_studies.squidpy_visium_interactions_job import DEFAULT_ANALYSIS_CONFIG as SQUIDPY_INTERACTION_DEFAULTS
+
+    if seqfish_case:
+        default_case_root = (
+            "benchmarks/case_studies/seqfish_multi_agent_monolith"
+            if monolith_case
+            else "benchmarks/case_studies/seqfish_multi_agent_collaboration"
+        )
+    else:
+        default_case_root = (
+            "benchmarks/case_studies/visium_multi_agent_monolith"
+            if monolith_case
+            else "benchmarks/case_studies/visium_multi_agent_collaboration"
+        )
+    case_root = Path(str(settings.get("case_root", default_case_root))).resolve()
+    repos_root = Path(str(settings.get("repo_root", "external/case_studies/visium_multi_agent/repos"))).resolve()
+    methods_path = case_root / "materials" / "methods_excerpt.txt"
+    target_desc_path = case_root / "materials" / "target_figure_description.txt"
+    candidate_repo_path = case_root / "candidate_repos.json"
+    task_spec_path = case_root / "task_spec.json"
+    data_manifest_path = case_root / "data_manifest.json"
+    reference_dir = case_root / "reference"
+    generated_dir = case_root / "generated"
+    data_dir = case_root / "data"
+    for path in (reference_dir, generated_dir, data_dir, methods_path.parent):
+        path.mkdir(parents=True, exist_ok=True)
+
+    methods_excerpt = str(
+        settings.get(
+            "methods_excerpt",
+            (
+                (
+                    "Load the public cropped Visium H&E dataset. First run a Scanpy-style gene-expression workflow to normalize counts, "
+                    "select highly variable genes, build a PCA/neighborhood graph, cluster spots, and summarize marker genes. Then feed the annotated data "
+                    "into a Squidpy-style spatial workflow that constructs a spatial-neighbor graph and computes neighborhood enrichment across the learned clusters."
+                )
+                if not seqfish_case
+                else
+                (
+                    "Load the public seqFISH dataset. First run a Scanpy-style gene-expression workflow to normalize counts, "
+                    "select highly variable genes, build a PCA/neighborhood graph, cluster cells, and summarize marker genes. Then feed the annotated data "
+                    "into a Squidpy-style spatial workflow that constructs a spatial-neighbor graph and computes neighborhood enrichment across the learned clusters."
+                )
+            ),
+        )
+    )
+    target_description = str(
+        settings.get(
+            "target_figure_description",
+            (
+                (
+                    "Produce a collaboration-style figure package consisting of a Scanpy cluster UMAP, a Scanpy marker heatmap, a Squidpy spatial cluster plot, "
+                    "and a Squidpy neighborhood-enrichment heatmap, along with structured clustering and interaction summaries."
+                )
+                if not seqfish_case
+                else
+                (
+                    "Produce a collaboration-style figure package consisting of a Scanpy cluster UMAP, a Scanpy marker heatmap, a Squidpy seqFISH spatial plot, "
+                    "and a Squidpy neighborhood-enrichment heatmap, along with structured clustering and interaction summaries."
+                )
+            ),
+        )
+    )
+    candidate_repos = list(
+        settings.get(
+            "candidate_repos",
+            [
+                {"name": "scanpy", "url": "https://github.com/scverse/scanpy.git"},
+                {"name": "scanpy-tutorials", "url": "https://github.com/scverse/scanpy-tutorials.git"},
+                {"name": "squidpy", "url": "https://github.com/scverse/squidpy.git"},
+            ],
+        )
+    )
+
+    repo_records: list[dict[str, Any]] = []
+    for repo in candidate_repos:
+        repo_name = str(repo.get("name", "")).strip()
+        repo_url = str(repo.get("url", "")).strip()
+        if not repo_name or not repo_url:
+            raise BenchmarkSetupError(f"Invalid candidate repo entry: {repo}")
+        repo_path = repos_root / repo_name
+        if (repo_path / ".git").exists():
+            action = "updated"
+            _run_command(["git", "-C", str(repo_path), "pull", "--ff-only"])
+        else:
+            action = "cloned"
+            repo_path.parent.mkdir(parents=True, exist_ok=True)
+            _run_command(["git", "clone", "--depth", "1", repo_url, str(repo_path)])
+        repo_records.append(
+            {
+                "name": repo_name,
+                "url": repo_url,
+                "path": str(repo_path),
+                "action": action,
+            }
+        )
+
+    methods_path.write_text(methods_excerpt + "\n", encoding="utf-8")
+    target_desc_path.write_text(target_description + "\n", encoding="utf-8")
+    _write_json(candidate_repo_path, repo_records)
+
+    raw_data_path = data_dir / ("seqfish_raw.h5ad" if seqfish_case else "visium_hne_raw.h5ad")
+    reference_cluster_figure_path = reference_dir / "reference_cluster_umap.png"
+    reference_marker_figure_path = reference_dir / "reference_marker_heatmap.png"
+    reference_spatial_figure_path = reference_dir / "reference_spatial.png"
+    reference_interaction_figure_path = reference_dir / "reference_nhood_enrichment.png"
+    reference_cluster_summary_path = reference_dir / "reference_cluster_summary.json"
+    reference_interaction_summary_path = reference_dir / "reference_interaction_summary.json"
+    reference_summary_path = reference_dir / "reference_summary.json"
+
+    generated_cluster_figure_path = generated_dir / "generated_cluster_umap.png"
+    generated_marker_figure_path = generated_dir / "generated_marker_heatmap.png"
+    generated_spatial_figure_path = generated_dir / "generated_spatial.png"
+    generated_interaction_figure_path = generated_dir / "generated_nhood_enrichment.png"
+    generated_cluster_summary_path = generated_dir / "generated_cluster_summary.json"
+    generated_interaction_summary_path = generated_dir / "generated_interaction_summary.json"
+    generated_summary_path = generated_dir / "generated_summary.json"
+    generated_annotated_data_path = generated_dir / "generated_annotated_visium.h5ad"
+
+    task_spec = {
+        "case_id": case_id,
+        "title": str(
+            settings.get(
+                "title",
+                (
+                    f"{dataset_label} multi-specialized-agent monolith baseline"
+                    if monolith_case
+                    else f"{dataset_label} multi-specialized-agent collaboration"
+                ),
+            )
+        ),
+        "dataset_id": dataset_id,
+        "dataset_label": dataset_label,
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "raw_data_path": str(raw_data_path),
+        "reference_cluster_figure_path": str(reference_cluster_figure_path),
+        "reference_marker_figure_path": str(reference_marker_figure_path),
+        "reference_spatial_figure_path": str(reference_spatial_figure_path),
+        "reference_interaction_figure_path": str(reference_interaction_figure_path),
+        "reference_cluster_summary_path": str(reference_cluster_summary_path),
+        "reference_interaction_summary_path": str(reference_interaction_summary_path),
+        "reference_summary_path": str(reference_summary_path),
+        "default_generated_cluster_figure_path": str(generated_cluster_figure_path),
+        "default_generated_marker_figure_path": str(generated_marker_figure_path),
+        "default_generated_spatial_figure_path": str(generated_spatial_figure_path),
+        "default_generated_interaction_figure_path": str(generated_interaction_figure_path),
+        "default_generated_cluster_summary_path": str(generated_cluster_summary_path),
+        "default_generated_interaction_summary_path": str(generated_interaction_summary_path),
+        "default_generated_summary_path": str(generated_summary_path),
+        "default_generated_annotated_data_path": str(generated_annotated_data_path),
+        "default_cluster_analysis_config": SCANPY_CLUSTER_DEFAULTS,
+        "default_interaction_analysis_config": SQUIDPY_INTERACTION_DEFAULTS,
+    }
+    _write_json(task_spec_path, task_spec)
+
+    manifest = {
+        "case_id": case_id,
+        "case_root": str(case_root),
+        "repo_root": str(repos_root),
+        "dataset_id": dataset_id,
+        "dataset_label": dataset_label,
+        "methods_excerpt_path": str(methods_path),
+        "target_figure_description_path": str(target_desc_path),
+        "candidate_repos_path": str(candidate_repo_path),
+        "task_spec_path": str(task_spec_path),
+        "raw_data_path": str(raw_data_path),
+        "reference_cluster_figure_path": str(reference_cluster_figure_path),
+        "reference_marker_figure_path": str(reference_marker_figure_path),
+        "reference_spatial_figure_path": str(reference_spatial_figure_path),
+        "reference_interaction_figure_path": str(reference_interaction_figure_path),
+        "reference_cluster_summary_path": str(reference_cluster_summary_path),
+        "reference_interaction_summary_path": str(reference_interaction_summary_path),
+        "reference_summary_path": str(reference_summary_path),
+        "generated_cluster_figure_path": str(generated_cluster_figure_path),
+        "generated_marker_figure_path": str(generated_marker_figure_path),
+        "generated_spatial_figure_path": str(generated_spatial_figure_path),
+        "generated_interaction_figure_path": str(generated_interaction_figure_path),
+        "generated_cluster_summary_path": str(generated_cluster_summary_path),
+        "generated_interaction_summary_path": str(generated_interaction_summary_path),
+        "generated_summary_path": str(generated_summary_path),
+        "generated_annotated_data_path": str(generated_annotated_data_path),
         "candidate_repos": repo_records,
     }
     _write_json(data_manifest_path, manifest)
@@ -675,7 +1748,24 @@ def prepare_case_study_assets(config: Mapping[str, Any]) -> dict[str, Any]:
     case_id = str(settings.get("case_id", ""))
     if case_id == "scanpy_pbmc3k_umap":
         return prepare_scanpy_pbmc3k_case_study(config)
-    if case_id == "squidpy_visium_hne_spatial":
+    if case_id in {
+        "scanpy_paul15_trajectory",
+        "scanpy_paul15_paper_figure",
+        "scanpy_paul15_specialized_collaboration",
+        "scanpy_moignard15_method_transfer",
+        "scanpy_moignard15_specialized_collaboration",
+        "scanpy_krumsiek11_method_transfer",
+        "scanpy_krumsiek11_specialized_collaboration",
+    }:
+        return prepare_scanpy_paul15_case_study(config)
+    if case_id in {
+        "visium_multi_agent_collaboration",
+        "visium_multi_agent_monolith",
+        "seqfish_multi_agent_collaboration",
+        "seqfish_multi_agent_monolith",
+    }:
+        return prepare_visium_multi_agent_case_study(config)
+    if case_id in {"squidpy_visium_hne_spatial", "squidpy_visium_hne_interactions", "squidpy_seqfish_method_transfer"}:
         return prepare_squidpy_visium_case_study(config)
     raise BenchmarkSetupError(f"Unsupported case-study id: {case_id}")
 
@@ -703,17 +1793,9 @@ def _import_datasets_module() -> Any:
         import datasets
     except ImportError as exc:  # pragma: no cover - depends on runtime env
         raise BenchmarkSetupError(
-            "MedQA preparation requires the 'datasets' package. Install with `pip install -e '.[benchmarks]'`."
+            "Benchmark preparation requires the 'datasets' package. Install with `pip install -e '.[benchmarks]'`."
         ) from exc
     return datasets
-
-
-def _venv_binaries(venv_path: Path) -> tuple[Path, Path]:
-    if os.name == "nt":
-        scripts_dir = venv_path / "Scripts"
-        return scripts_dir / "python.exe", scripts_dir / "spatialbench.exe"
-    bin_dir = venv_path / "bin"
-    return bin_dir / "python", bin_dir / "spatialbench"
 
 
 def _run_command(
@@ -793,6 +1875,129 @@ def _load_cached_medqa_manifest(
     return manifest
 
 
+def _prepare_aflow_public_benchmark_archive(settings: Mapping[str, Any]) -> Path:
+    cache_dir = Path(str(settings.get("aflow_cache_dir", "benchmarks/aflow_public"))).resolve()
+    archive_path = Path(str(settings.get("aflow_archive_path", cache_dir / "aflow_data.tar.gz"))).resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    if archive_path.exists():
+        return archive_path
+
+    temp_path = archive_path.with_name(f".{archive_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with urllib.request.urlopen(str(settings.get("aflow_package_url", _AFLOW_DATASET_URL)), timeout=120) as response:
+            with temp_path.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+        os.replace(temp_path, archive_path)
+    except Exception as exc:  # pragma: no cover - network-dependent
+        if temp_path.exists():
+            temp_path.unlink()
+        raise BenchmarkSetupError(f"Failed to download AFlow public benchmark archive: {exc}") from exc
+    return archive_path
+
+
+def _read_aflow_jsonl_records(archive_path: Path, member_name: str) -> list[dict[str, Any]]:
+    with tarfile.open(archive_path, "r:gz") as archive:
+        member = archive.extractfile(member_name)
+        if member is None:
+            raise BenchmarkSetupError(f"Missing {member_name} in AFlow archive {archive_path}")
+        return [json.loads(line) for line in member]
+
+
+def _load_generic_cached_manifest(
+    metadata_path: Path,
+    *,
+    required_fields: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if not metadata_path.exists():
+        return None
+    try:
+        manifest = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+    for key, expected_value in required_fields.items():
+        if manifest.get(key) != expected_value:
+            return None
+
+    required_paths = (
+        "records_path",
+        "smoke_indices_path",
+        "validation_indices_path",
+        "test_indices_path",
+    )
+    if any(not Path(str(manifest.get(path_key, ""))).exists() for path_key in required_paths):
+        return None
+    return manifest
+
+
+def _load_cached_split_manifest(
+    metadata_path: Path,
+    *,
+    required_fields: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if not metadata_path.exists():
+        return None
+    try:
+        manifest = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+    for key, expected_value in required_fields.items():
+        if manifest.get(key) != expected_value:
+            return None
+
+    split_record_counts = manifest.get("split_record_counts", {})
+    split_record_paths = manifest.get("split_record_paths", {})
+    if not isinstance(split_record_counts, Mapping) or not isinstance(split_record_paths, Mapping):
+        return None
+    for split_name, expected_count in split_record_counts.items():
+        records_path = Path(str(split_record_paths.get(split_name, "")))
+        if not records_path.exists():
+            return None
+        if _count_lines(records_path) != int(expected_count):
+            return None
+
+    sample_indices_path = Path(str(manifest.get("train_sample_indices_path", "")))
+    sample_records_path = Path(str(manifest.get("train_sample_records_path", "")))
+    if not sample_indices_path.exists() or not sample_records_path.exists():
+        return None
+    try:
+        if len(json.loads(sample_indices_path.read_text(encoding="utf-8"))) != int(manifest.get("train_sample_count", -1)):
+            return None
+        if _count_lines(sample_records_path) != int(manifest.get("train_sample_count", -1)):
+            return None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+    return manifest
+
+
+def _get_dataset_split_names(
+    datasets_module: Any,
+    dataset_id: str,
+    config_name: str | None = None,
+    *,
+    trust_remote_code: bool = False,
+) -> list[str]:
+    getter = getattr(datasets_module, "get_dataset_split_names", None)
+    if getter is not None:
+        if config_name is None:
+            return list(getter(dataset_id, trust_remote_code=trust_remote_code))
+        return list(getter(dataset_id, config_name, trust_remote_code=trust_remote_code))
+
+    if dataset_id == "bigbio/med_qa":
+        return ["train", "test", "validation"]
+    if dataset_id == "EleutherAI/hendrycks_math":
+        return ["train", "test"]
+    if dataset_id in {"openai/openai_humaneval", "openai_humaneval"}:
+        return ["test"]
+    raise BenchmarkSetupError(f"Unable to determine dataset split names for {dataset_id}")
+
+
 def _write_json(path: Path, payload: Any) -> None:
     _atomic_write_text(path, json.dumps(payload, ensure_ascii=True, indent=2))
 
@@ -829,6 +2034,24 @@ def _sample_indices(total_size: int, desired_count: int | None, *, seed: int) ->
     return sorted(rng.sample(list(range(total_size)), count))
 
 
+def _split_validation_test_indices(
+    total_size: int,
+    *,
+    validation_fraction: float,
+    seed: int,
+) -> tuple[list[int], list[int]]:
+    if total_size <= 0:
+        return [], []
+    rng = random.Random(seed)
+    indices = list(range(total_size))
+    rng.shuffle(indices)
+    validation_count = int(round(total_size * validation_fraction))
+    validation_count = max(1, min(total_size - 1, validation_count)) if total_size > 1 else total_size
+    validation = sorted(indices[:validation_count])
+    test = sorted(indices[validation_count:])
+    return validation, test
+
+
 def _coerce_desired_count(value: Any) -> int | None:
     if value is None:
         return None
@@ -841,6 +2064,128 @@ def _coerce_desired_count(value: Any) -> int | None:
     if parsed <= 0:
         return None
     return parsed
+
+
+def _extract_boxed_text(value: str) -> str:
+    if not value:
+        return ""
+    matches = re.findall(r"\\boxed\{((?:[^{}]|(?:\{[^{}]*\}))*)\}", value, flags=re.DOTALL)
+    if matches:
+        return matches[-1].strip()
+    return ""
+
+
+def _normalize_math_expression(value: str) -> str:
+    stripped = value.strip()
+    stripped = stripped.replace("\\left", "").replace("\\right", "")
+    stripped = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", stripped)
+    stripped = stripped.strip("$")
+    stripped = stripped.rstrip(".")
+    stripped = re.sub(r"\s+", "", stripped)
+    return stripped
+
+
+def _math_equal(prediction: Any, reference: Any) -> bool:
+    predicted = _normalize_math_expression(str(prediction))
+    expected = _normalize_math_expression(str(reference))
+    if not predicted or not expected:
+        return False
+    if predicted == expected:
+        return True
+
+    prediction_number = _parse_numeric_math_value(predicted)
+    reference_number = _parse_numeric_math_value(expected)
+    if prediction_number is not None and reference_number is not None:
+        return abs(prediction_number - reference_number) <= 1e-3
+
+    try:
+        from sympy import N, simplify
+        from sympy.parsing.sympy_parser import parse_expr
+
+        parsed_prediction = parse_expr(predicted)
+        parsed_reference = parse_expr(expected)
+        if simplify(parsed_prediction - parsed_reference) == 0:
+            return True
+        return abs(float(N(parsed_prediction)) - float(N(parsed_reference))) <= 1e-3
+    except Exception:
+        return False
+
+
+def _parse_numeric_math_value(value: str) -> float | None:
+    cleaned = value.replace(",", "")
+    if cleaned.endswith("%"):
+        cleaned = cleaned[:-1]
+        try:
+            return float(cleaned) / 100.0
+        except ValueError:
+            return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _extract_code_block(value: str) -> str:
+    match = re.search(r"```(?:python)?\s*(.*?)```", value, flags=re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
+def _humaneval_support_prelude(entry_point: str) -> str:
+    if entry_point == "decode_cyclic":
+        return (
+            "def encode_cyclic(s: str):\n"
+            "    groups = [s[(3 * i):min((3 * i + 3), len(s))] for i in range((len(s) + 2) // 3)]\n"
+            "    groups = [(group[1:] + group[0]) if len(group) == 3 else group for group in groups]\n"
+            "    return ''.join(groups)\n\n"
+        )
+    if entry_point == "decode_shift":
+        return (
+            "def encode_shift(s: str):\n"
+            "    return ''.join([chr(((ord(ch) + 5 - ord('a')) % 26) + ord('a')) for ch in s])\n\n"
+        )
+    if entry_point == "find_zero":
+        return "def poly(xs: list, x: float):\n    return sum(coeff * (x ** i) for i, coeff in enumerate(xs))\n\n"
+    return ""
+
+
+def _execute_humaneval_check(
+    *,
+    completion: str,
+    test: str,
+    entry_point: str,
+    python_executable: str,
+    timeout_s: int,
+) -> tuple[str, str]:
+    support_code = _humaneval_support_prelude(entry_point)
+    harness = (
+        "import hashlib\n"
+        "import math\n"
+        "import re\n"
+        "from typing import Any, Dict, List, Optional, Tuple\n\n"
+        f"{support_code}"
+        f"{completion.strip()}\n\n"
+        f"{test.strip()}\n\n"
+        f"check({entry_point})\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="dynaforge_humaneval_") as tmp_dir:
+        script_path = Path(tmp_dir) / "check.py"
+        script_path.write_text(harness, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [python_executable, str(script_path)],
+                text=True,
+                capture_output=True,
+                timeout=timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "timeout", "execution timed out"
+    if completed.returncode == 0:
+        return "passed", "passed"
+    detail = completed.stderr.strip() or completed.stdout.strip() or f"returncode={completed.returncode}"
+    return "failed", detail
 
 
 def _extract_medqa_answer_text(answer: Any) -> str:

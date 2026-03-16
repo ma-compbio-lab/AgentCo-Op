@@ -1,0 +1,180 @@
+# @package _global_
+
+defaults:
+  - medqa
+  - _self_
+
+blueprint:
+  base_nodes:
+    - node_id: planner
+      kind: agent
+      role: Planner
+      model: ${model}
+      description: Distill the clinical question, identify the exact ask, and surface the decisive clue.
+      system_prompt: |
+        You are the MedQA planning node.
+        Read task.description and task.hints.options.
+        Return JSON with:
+        - output.distilled_question: short string
+        - output.question_type: one of diagnosis, next_step_management, next_step_diagnosis, imaging, mechanism, prognosis, other
+        - output.key_clues: array of short strings
+        - output.likely_answer_label: single uppercase option label or empty string
+        - output.best_option_family: short phrase describing the best option family
+        - output.runner_up_family: short phrase describing the strongest competing option family
+        - output.most_discriminating_clue: short string for the single clue that separates the best option from the runner-up
+        - output.rationale_outline: array of short reasoning bullets
+        - confidence: 0..1
+        - summary: short string
+        Use only a small set of high-value exam rules:
+        - identify the stem's exact ask first: diagnosis vs next-step management vs next-step diagnosis vs mechanism;
+        - in acute management questions, prefer immediate stabilization or first-line treatment over extra workup unless the stem asks for diagnosis;
+        - if a stem identifies a drug by toxicity but asks for the beneficial effect, answer with the therapeutic mechanism rather than the toxicity mechanism;
+        - for microbiology questions, direct organism and culture clues override syndrome anchoring;
+        - in professionalism / disclosure questions, prefer the immediate duty to insist on truthful reporting before punitive escalation.
+        Do not invent new options and do not output final answer prose here.
+    - node_id: responder
+      kind: agent
+      role: Responder
+      model: ${model}
+      description: Choose the single best answer option and explain it briefly.
+      system_prompt: |
+        You are the MedQA answer node.
+        Solve the question independently from task.description, task.hints.question, and task.hints.options.
+        Planner support is advisory only and is exposed via planner_question_type, planner_key_clues,
+        planner_most_discriminating_clue, and planner_rationale_outline.
+        Do not anchor on the planner's provisional answer family.
+
+        Work in this order:
+        1. Identify the stem's exact ask.
+        2. Name the decisive clue.
+        3. Compare the best option against the strongest distractor.
+        4. Choose exactly one available option.
+
+        Apply only these core rules:
+        - For next-step management, prefer immediate stabilization or first-line treatment over extra workup unless the stem explicitly asks for diagnosis.
+        - For next-step diagnosis, prefer the diagnosis that best explains the current presentation, not the downstream treatment.
+        - If toxicity clues identify a drug but the question asks for beneficial effect or mechanism, answer with the therapeutic mechanism.
+        - In microbiology questions, direct organism and culture clues outrank syndrome anchoring.
+        - In professionalism / disclosure questions, prefer the immediate duty to insist on truthful reporting before punitive escalation.
+
+        Return JSON with:
+        - output.final_answer_label: single uppercase option label
+        - output.final_answer_text: exact option text copied verbatim from the chosen option
+        - output.rationale: concise clinical reasoning
+        - output.why_not_runner_up: one sentence explaining why the closest competing option is wrong
+        - confidence: 0..1
+        - summary: short string
+      io:
+        output_schema:
+          type: object
+          required:
+            - final_answer_label
+            - final_answer_text
+  subgraphs:
+    - subgraph_id: sg_review
+      purpose: Review and revise uncertain answers.
+      nodes:
+        - node_id: reviewer
+          kind: evaluator
+          role: Reviewer
+          model: ${model}
+          description: Independently re-solve the question, then compare against the responder.
+          system_prompt: |
+            You are the MedQA reviewer.
+            Use the original question and options.
+
+            Review procedure:
+            1. Independently solve the question from scratch before considering whether the responder is correct.
+            2. Identify the stem's exact ask and the single most decisive clue.
+            3. Compare your independent answer with the responder answer.
+            4. If they disagree, prefer the choice supported by the stronger direct clue rather than the more familiar syndrome pattern.
+
+            Apply only these core rules:
+            - For next-step management, prefer immediate stabilization or first-line treatment over extra workup unless the stem explicitly asks for diagnosis.
+            - For next-step diagnosis, prefer the diagnosis that best explains the current presentation, not the downstream treatment.
+            - If toxicity clues identify a drug but the question asks for beneficial effect or mechanism, answer with the therapeutic mechanism.
+            - In microbiology questions, direct organism and culture clues outrank syndrome anchoring.
+            - In professionalism / disclosure questions, prefer the immediate duty to insist on truthful reporting before punitive escalation.
+
+            Return JSON with:
+            - output.review_verdict: "keep" or "revise"
+            - output.corrected_answer_label: single uppercase option label
+            - output.corrected_answer_text: exact option text copied verbatim from the chosen option
+            - output.independent_answer_label: single uppercase option label
+            - output.decisive_clue: short string
+            - output.critique: brief critique
+            - output.rationale: brief rationale
+            - confidence: 0..1
+            - summary: short string
+        - node_id: reviser
+          kind: agent
+          role: Reviser
+          model: ${model}
+          description: Produce the final corrected answer after review.
+          system_prompt: |
+            You are the MedQA final revision node.
+            Use the original question, options, responder output, and reviewer output.
+            Follow the answer that best matches the stem's exact ask and the reviewer's decisive_clue.
+            Do not split the difference between two options.
+            If reviewer and responder disagree, prefer the answer backed by the stronger direct clue.
+
+            Return JSON with:
+            - output.final_answer_label: single uppercase option label
+            - output.final_answer_text: exact option text copied verbatim from the chosen option
+            - output.rationale: concise final reasoning
+            - output.why_not_runner_up: one sentence explaining why the closest competing option is wrong
+            - confidence: 0..1
+            - summary: short string
+          io:
+            output_schema:
+              type: object
+              required:
+                - final_answer_label
+                - final_answer_text
+      edges:
+        - edge_id: medqa_review_from_responder
+          src: responder
+          dst: reviewer
+        - edge_id: medqa_revise
+          src: reviewer
+          dst: reviser
+      entry_nodes:
+        - reviewer
+      exit_nodes:
+        - reviser
+      default_enabled: false
+  gates:
+    - gate_id: medqa_low_conf_review
+      trigger:
+        all_of:
+          - field: node.node_id
+            op: ==
+            value: responder
+          - any_of:
+              - field: node.inputs.planner_question_type
+                op: ==
+                value: mechanism
+              - field: node.inputs.planner_question_type
+                op: ==
+                value: next_step_diagnosis
+              - all_of:
+                  - field: node.inputs.planner_question_type
+                    op: ==
+                    value: next_step_management
+                  - field: report.confidence
+                    op: <=
+                    value: 0.9
+              - field: node.inputs.planner_question_type
+                op: ==
+                value: prognosis
+              - field: report.confidence
+                op: <
+                value: 0.84
+              - field: report.failure_type
+                op: ==
+                value: low_confidence
+      enable_subgraphs:
+        - sg_review
+      disable_edges: []
+      cooldown_steps: 0
+      max_activations: 1

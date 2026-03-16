@@ -51,6 +51,17 @@ class FailureType(str, Enum):
     unknown = "unknown"
 
 
+class ToolDiscoveryMode(str, Enum):
+    disabled = "disabled"
+    registry = "registry"
+    merge = "merge"
+
+
+class SkillPromptMode(str, Enum):
+    full = "full"
+    summary = "summary"
+
+
 class ArtifactRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -167,6 +178,34 @@ class ToolRef(BaseModel):
     retry: int = Field(default=0, ge=0, le=5)
 
 
+class ToolDiscoverySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: ToolDiscoveryMode = ToolDiscoveryMode.disabled
+    server_allowlist: List[str] = Field(default_factory=list)
+    server_denylist: List[str] = Field(default_factory=list)
+    max_candidate_tools: int = Field(default=8, ge=1, le=32)
+    include_web_search: bool = False
+
+
+class SkillRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None)
+    path: Optional[str] = Field(default=None)
+    optional: bool = False
+    prompt_mode: SkillPromptMode = SkillPromptMode.full
+    notes: str = ""
+    arguments: JsonDict = Field(default_factory=dict)
+    max_chars: Optional[int] = Field(default=None, ge=64)
+
+    @model_validator(mode="after")
+    def validate_locator(self) -> "SkillRef":
+        if not self.name and not self.path:
+            raise ValueError("SkillRef requires either name or path")
+        return self
+
+
 class ModelSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -188,7 +227,9 @@ class NodeSpec(BaseModel):
     description: str = ""
     model: Optional[ModelSpec] = Field(default=None)
     system_prompt: Optional[str] = Field(default=None)
+    skills: List[SkillRef] = Field(default_factory=list)
     tools: List[ToolRef] = Field(default_factory=list)
+    tool_discovery: Optional[ToolDiscoverySpec] = Field(default=None)
     sandbox: Optional[SandboxSpec] = Field(default=None)
     io: IOContract = Field(default_factory=IOContract)
     max_steps: int = Field(default=8, ge=1)
@@ -203,6 +244,8 @@ class NodeSpec(BaseModel):
             raise ValueError(f"{self.kind.value} nodes require a model")
         if self.kind == NodeKind.tool and not self.tools:
             raise ValueError("tool nodes require at least one ToolRef")
+        if self.skills and self.kind not in (NodeKind.agent, NodeKind.evaluator, NodeKind.router):
+            raise ValueError("skills are only supported on agent/evaluator/router nodes")
         return self
 
 
@@ -442,7 +485,10 @@ class WorkflowBlueprint(BaseModel):
                     raise ValueError(f"gate {gate.gate_id} references unknown subgraph {subgraph_id}")
         server_ids = {server.name for server in self.mcp_servers}
         for node in self.all_nodes():
+            direct_sandbox_node = bool(node.meta.get("direct_sandbox_handler"))
             for tool in node.tools:
+                if direct_sandbox_node:
+                    continue
                 if tool.server not in server_ids:
                     raise ValueError(f"node {node.node_id} references unknown MCP server {tool.server}")
         return self

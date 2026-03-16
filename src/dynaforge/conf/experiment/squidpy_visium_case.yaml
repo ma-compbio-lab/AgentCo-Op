@@ -27,6 +27,8 @@ benchmark:
     size: 1.0
     dpi: 150
     compute_spatial_neighbors: true
+  enable_refinement_subgraph: true
+  refinement_threshold: 8.0
   review_model: ${model}
   sandbox:
     sandbox_id: squidpy-visium

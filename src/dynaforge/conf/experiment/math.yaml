@@ -1,0 +1,137 @@
+# @package _global_
+
+benchmark:
+  kind: math
+  dataset_id: EleutherAI/hendrycks_math
+  data_source: aflow_package
+  config_names:
+    - counting_and_probability
+    - number_theory
+    - prealgebra
+    - precalculus
+  selected_types:
+    - Counting & Probability
+    - Number Theory
+    - Prealgebra
+    - Precalculus
+  source_split: test
+  level_filter: Level 5
+  split_seed: 42
+  validation_fraction: 0.2
+  smoke_count: 20
+  processed_dir: benchmarks/math/processed
+  upstream_dir: benchmarks/math/upstream_full
+  train_sample_count: 1000
+  train_sample_seed: 42
+  aflow_cache_dir: benchmarks/aflow_public
+  metric: solve_rate
+  paper_alignment:
+    source: AFlow
+    base_model: gpt-4o-mini
+    split: 20/80 validation-test
+    seed: 42
+    subset: MATH level-5 four-type slice
+  preferred_answer_nodes:
+    - reviser
+    - reviewer
+    - solver
+
+executor:
+  allow_offline_fallback: false
+
+blueprint:
+  task:
+    task_id: math
+    title: MATH
+    description: Solve competition mathematics problems and return the final exact answer.
+  budget:
+    max_total_usd: 5.0
+    max_total_tokens: 24000
+  base_nodes:
+    - node_id: solver
+      kind: agent
+      role: Solver
+      model: ${model}
+      description: Solve the math problem and produce the final exact answer.
+      system_prompt: |
+        You are the MATH solver node.
+        Solve the problem in task.description.
+        Return JSON with:
+        - output.final_answer: final exact answer only
+        - output.solution_outline: concise reasoning outline
+        - confidence: 0..1
+        - summary: short string
+        Do not include extra prose outside JSON.
+      io:
+        output_schema:
+          type: object
+          required:
+            - final_answer
+  base_edges: []
+  subgraphs:
+    - subgraph_id: sg_review
+      purpose: Review uncertain math answers.
+      nodes:
+        - node_id: reviewer
+          kind: evaluator
+          role: Reviewer
+          model: ${model}
+          description: Audit the candidate answer and fix obvious mistakes.
+          system_prompt: |
+            You are the MATH reviewer node.
+            Re-check the final answer against the problem.
+            Return JSON with:
+            - output.review_verdict: "keep" or "revise"
+            - output.corrected_answer: final exact answer only
+            - output.review_notes: short critique
+            - confidence: 0..1
+            - summary: short string
+        - node_id: reviser
+          kind: agent
+          role: Reviser
+          model: ${model}
+          description: Emit the final corrected answer after review.
+          system_prompt: |
+            You are the MATH reviser node.
+            Use the original problem, solver answer, and reviewer answer.
+            Return JSON with:
+            - output.final_answer: final exact answer only
+            - output.solution_outline: concise reasoning outline
+            - confidence: 0..1
+            - summary: short string
+          io:
+            output_schema:
+              type: object
+              required:
+                - final_answer
+      edges:
+        - edge_id: math_review
+          src: solver
+          dst: reviewer
+        - edge_id: math_revise
+          src: reviewer
+          dst: reviser
+      entry_nodes:
+        - reviewer
+      exit_nodes:
+        - reviser
+      default_enabled: false
+  gates:
+    - gate_id: math_low_conf_review
+      trigger:
+        all_of:
+          - field: node.node_id
+            op: ==
+            value: solver
+          - field: report.confidence
+            op: <
+            value: 0.7
+      enable_subgraphs:
+        - sg_review
+      disable_edges: []
+      cooldown_steps: 0
+      max_activations: 1
+  meta:
+    benchmark: math
+    dataset_id: ${benchmark.dataset_id}
+    aflow_alignment: ${benchmark.paper_alignment}

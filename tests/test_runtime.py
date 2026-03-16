@@ -80,6 +80,76 @@ def test_executor_runs_minimal_blueprint() -> None:
     assert len(report.traces) == 2
 
 
+def test_executor_extracts_nested_output_confidence() -> None:
+    class NestedConfidenceLLMClient:
+        def complete(self, model, messages, *, response_format=None):
+            return {
+                "content": (
+                    '{"output":{"result":{"ok":true},"confidence":0.92,"summary":"nested"},"summary":"top"}'
+                ),
+                "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+            }
+
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="runtime-nested-confidence", title="Runtime", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="planner",
+                kind=NodeKind.agent,
+                role="Planner",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                io={"output_schema": {"type": "object", "required": ["result"]}},
+            )
+        ],
+        base_edges=[],
+    )
+
+    executor = BlueprintExecutor(
+        llm_router=LLMRouter(client=NestedConfidenceLLMClient(), allow_offline_fallback=False),
+        allow_offline_fallback=False,
+    )
+    report = executor.execute_blueprint(blueprint)
+
+    assert report.success
+    assert report.traces[0].confidence == 0.92
+    assert report.traces[0].trace["summary"] == "top"
+
+
+def test_executor_records_wall_time(monkeypatch) -> None:
+    class SimpleLLMClient:
+        def complete(self, model, messages, *, response_format=None):
+            return {
+                "content": '{"output":{"result":{"ok":true}},"confidence":0.8,"summary":"ok"}',
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+
+    clock = iter([10.0, 10.25])
+    monkeypatch.setattr("dynaforge.runtime.executor.time.perf_counter", lambda: next(clock))
+
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="runtime-wall-time", title="Runtime", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="planner",
+                kind=NodeKind.agent,
+                role="Planner",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                io={"output_schema": {"type": "object", "required": ["result"]}},
+            )
+        ],
+        base_edges=[],
+    )
+
+    executor = BlueprintExecutor(
+        llm_router=LLMRouter(client=SimpleLLMClient(), allow_offline_fallback=False),
+        allow_offline_fallback=False,
+    )
+    report = executor.execute_blueprint(blueprint)
+
+    assert report.success
+    assert report.traces[0].cost.wall_time_s == 0.25
+
+
 def test_deterministic_patch_policy_prefers_sandbox_change_for_env_failures() -> None:
     blueprint = WorkflowBlueprint(
         task=TaskSpec(task_id="runtime-2", title="Runtime", description="Desc"),
@@ -368,3 +438,50 @@ def test_tighten_contract_preserves_existing_required_keys() -> None:
 
     required = patched.node_map()["worker"].io.output_schema["required"]
     assert set(required) == {"a", "b", "result"}
+
+
+def test_cache_key_changes_when_node_skills_change() -> None:
+    call_count = {"value": 0}
+
+    def handler(node, inputs, context):
+        call_count["value"] += 1
+        return NodeExecutionResult(outputs={"result": {"call_count": call_count["value"]}})
+
+    executor = BlueprintExecutor()
+    base_kwargs = {
+        "task": TaskSpec(task_id="runtime-10", title="Runtime", description="Desc"),
+        "base_edges": [],
+    }
+    blueprint_a = WorkflowBlueprint(
+        **base_kwargs,
+        base_nodes=[
+            NodeSpec(
+                node_id="planner",
+                kind=NodeKind.agent,
+                role="Planner",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                cacheable=True,
+                skills=[{"name": "skill-a"}],
+            )
+        ],
+    )
+    blueprint_b = WorkflowBlueprint(
+        **base_kwargs,
+        base_nodes=[
+            NodeSpec(
+                node_id="planner",
+                kind=NodeKind.agent,
+                role="Planner",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                cacheable=True,
+                skills=[{"name": "skill-b"}],
+            )
+        ],
+    )
+
+    report_a = executor.execute_blueprint(blueprint_a, handlers={"planner": handler})
+    report_b = executor.execute_blueprint(blueprint_b, handlers={"planner": handler})
+
+    assert report_a.success
+    assert report_b.success
+    assert call_count["value"] == 2

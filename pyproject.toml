@@ -12,6 +12,7 @@ dependencies = [
   "hydra-core>=1.3,<2",
   "jsonschema>=4.23,<5",
   "pydantic>=2.8,<3",
+  "PyYAML>=6,<7",
 ]
 
 [project.scripts]
@@ -27,6 +28,7 @@ analysis = [
 ]
 benchmarks = [
   "datasets>=3,<4",
+  "sympy>=1.13,<2",
 ]
 mcp = [
   "mcp[cli]>=1.0.0",
@@ -39,7 +41,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-dynaforge = ["conf/**/*.yaml"]
+dynaforge = ["conf/**/*.yaml", "skills/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

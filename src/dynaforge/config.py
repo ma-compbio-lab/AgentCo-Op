@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from dynaforge.ir import WorkflowBlueprint
 from dynaforge.runtime.executor import BlueprintExecutor
 from dynaforge.runtime.reports import ExecutionReport
+from dynaforge.runtime.skills import SkillRegistry
 
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "conf"
 
@@ -82,6 +83,13 @@ def build_executor_from_config(
         "artifact_root": executor_cfg.get("artifact_root", ".dynaforge_artifacts"),
         "allow_offline_fallback": executor_cfg.get("allow_offline_fallback", True),
     }
+    skill_search_paths = executor_cfg.get("skill_search_paths")
+    skill_project_root = executor_cfg.get("skill_project_root")
+    if skill_search_paths is not None or skill_project_root is not None:
+        kwargs["skill_registry"] = SkillRegistry(
+            search_paths=skill_search_paths,
+            project_root=skill_project_root,
+        )
     kwargs.update(overrides)
     return BlueprintExecutor(**kwargs)
 

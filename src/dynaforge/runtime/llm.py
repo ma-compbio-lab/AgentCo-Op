@@ -7,8 +7,10 @@ import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
+from dynaforge.integrations.tool_registry import ToolCandidate
 from dynaforge.ir.schema import FailureType, ModelProvider, ModelSpec, NodeSpec
 from dynaforge.runtime.reports import ExecutionCost, NodeExecutionResult
+from dynaforge.runtime.skills import SkillPromptBundle
 
 if TYPE_CHECKING:
     from dynaforge.runtime.executor import NodeExecutionContext
@@ -63,15 +65,15 @@ class OpenAICompatibleLLMClient:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        request = urllib.request.Request(
-            chat_url,
-            data=json.dumps(payload, ensure_ascii=True).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
         last_error: Optional[Exception] = None
         max_retries = self._max_retries(model)
         for attempt in range(max_retries + 1):
+            request = urllib.request.Request(
+                chat_url,
+                data=json.dumps(payload, ensure_ascii=True).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
                     raw_body = response.read().decode("utf-8")
@@ -79,7 +81,7 @@ class OpenAICompatibleLLMClient:
             except urllib.error.HTTPError as exc:
                 last_error = exc
                 body = exc.read().decode("utf-8", errors="replace")
-                if attempt < max_retries and self._is_retryable_http_error(exc.code):
+                if attempt < max_retries and self._is_retryable_http_error(exc.code, body):
                     self._sleep_before_retry(model, attempt, retry_after=self._parse_retry_after(exc))
                     continue
                 raise LLMClientError(f"HTTP {exc.code}: {body}") from exc
@@ -209,8 +211,14 @@ class OpenAICompatibleLLMClient:
             time.sleep(delay)
 
     @staticmethod
-    def _is_retryable_http_error(status_code: int) -> bool:
-        return status_code in {408, 409, 429, 500, 502, 503, 504}
+    def _is_retryable_http_error(status_code: int, body: str = "") -> bool:
+        if status_code in {408, 409, 429, 500, 502, 503, 504}:
+            return True
+        if status_code == 400:
+            normalized = body.lower()
+            if "could not parse the json body of your request" in normalized:
+                return True
+        return False
 
     @staticmethod
     def _parse_retry_after(exc: urllib.error.HTTPError) -> Optional[float]:
@@ -242,17 +250,42 @@ class LLMRouter:
                 error=f"Node {node.node_id} is missing model configuration",
             )
 
-        if node.tools:
-            return self._run_tool_loop(node, inputs, context)
-        return self._run_prompt_only(node, inputs, context)
+        skill_bundle = context.skill_registry.render_prompt_for_node(node)
+        if skill_bundle.missing_required:
+            trace = {"live_llm": False}
+            if skill_bundle.has_trace():
+                trace["skills"] = skill_bundle.trace_payload()
+            return NodeExecutionResult(
+                failure_type=FailureType.unknown,
+                error="Required skills could not be resolved: " + "; ".join(skill_bundle.missing_required),
+                trace=trace,
+            )
+
+        tool_candidates: List[ToolCandidate] = []
+        discovery_trace: Optional[JsonDict] = None
+        if node.tools or node.tool_discovery is not None:
+            tool_candidates, discovery_trace = self._resolve_tool_candidates(node, inputs, context, skill_bundle=skill_bundle)
+        if tool_candidates:
+            return self._run_tool_loop(
+                node,
+                inputs,
+                context,
+                tool_candidates=tool_candidates,
+                discovery_trace=discovery_trace or {},
+                skill_bundle=skill_bundle,
+            )
+        return self._run_prompt_only(node, inputs, context, skill_bundle=skill_bundle, discovery_trace=discovery_trace)
 
     def _run_prompt_only(
         self,
         node: NodeSpec,
         inputs: JsonDict,
         context: "NodeExecutionContext",
+        *,
+        skill_bundle: SkillPromptBundle,
+        discovery_trace: Optional[JsonDict],
     ) -> NodeExecutionResult:
-        messages = self._base_messages(node, inputs)
+        messages = self._base_messages(node, inputs, skill_bundle=skill_bundle)
         try:
             response = self.client.complete(
                 node.model,
@@ -261,43 +294,61 @@ class LLMRouter:
             )
             parsed = self._parse_payload(response["content"])
             output_payload = self._normalize_output(parsed)
-            confidence = self._normalize_confidence(parsed.get("confidence"), default=0.75)
+            confidence = self._extract_confidence(parsed, default=0.75)
+            trace = {
+                "live_llm": True,
+                "provider": node.model.provider.value,
+                "model": node.model.name,
+                "summary": self._extract_summary(parsed),
+            }
+            if discovery_trace is not None:
+                trace["tool_discovery"] = discovery_trace
+            if skill_bundle.has_trace():
+                trace["skills"] = skill_bundle.trace_payload()
             return NodeExecutionResult(
                 outputs=output_payload,
-                trace={
-                    "live_llm": True,
-                    "provider": node.model.provider.value,
-                    "model": node.model.name,
-                    "summary": parsed.get("summary", ""),
-                },
+                trace=trace,
                 cost=self._cost_from_usage(node.model, response.get("usage", {})),
                 confidence=confidence,
             )
         except LLMClientError as exc:
             if not self.allow_offline_fallback:
+                trace = {}
+                if discovery_trace is not None:
+                    trace["tool_discovery"] = discovery_trace
+                if skill_bundle.has_trace():
+                    trace["skills"] = skill_bundle.trace_payload()
                 return NodeExecutionResult(
                     failure_type=FailureType.tool_runtime_error,
                     error=f"LLM backend error: {exc}",
+                    trace=trace,
                 )
-            return self._offline_fallback(node, inputs, reason=str(exc))
+            return self._offline_fallback(
+                node,
+                inputs,
+                reason=str(exc),
+                skill_bundle=skill_bundle,
+                discovery_trace=discovery_trace,
+            )
 
     def _run_tool_loop(
         self,
         node: NodeSpec,
         inputs: JsonDict,
         context: "NodeExecutionContext",
+        *,
+        tool_candidates: List[ToolCandidate],
+        discovery_trace: JsonDict,
+        skill_bundle: SkillPromptBundle,
     ) -> NodeExecutionResult:
-        tool_descriptors = context.mcp_client.describe_tools(
-            node.tools,
-            blueprint=context.blueprint,
-            sandbox_runner=context.sandbox_runner,
-        )
+        tool_refs = [candidate.ref for candidate in tool_candidates]
+        tool_descriptors = [dict(candidate.descriptor) for candidate in tool_candidates]
         history: List[Dict[str, Any]] = []
         aggregate_cost = ExecutionCost()
         tool_calls = 0
 
         for _ in range(node.max_steps):
-            messages = self._tool_loop_messages(node, inputs, tool_descriptors, history)
+            messages = self._tool_loop_messages(node, inputs, tool_descriptors, history, skill_bundle=skill_bundle)
             try:
                 response = self.client.complete(
                     node.model,
@@ -307,11 +358,21 @@ class LLMRouter:
                 aggregate_cost = aggregate_cost.add(self._cost_from_usage(node.model, response.get("usage", {})))
             except LLMClientError as exc:
                 if not self.allow_offline_fallback:
+                    trace = {"tool_discovery": discovery_trace}
+                    if skill_bundle.has_trace():
+                        trace["skills"] = skill_bundle.trace_payload()
                     return NodeExecutionResult(
                         failure_type=FailureType.tool_runtime_error,
                         error=f"LLM backend error: {exc}",
+                        trace=trace,
                     )
-                return self._offline_fallback(node, inputs, reason=str(exc))
+                return self._offline_fallback(
+                    node,
+                    inputs,
+                    reason=str(exc),
+                    skill_bundle=skill_bundle,
+                    discovery_trace=discovery_trace,
+                )
 
             decision = self._parse_payload(response["content"])
             action = decision.get("action", "final")
@@ -320,17 +381,20 @@ class LLMRouter:
                 arguments = decision.get("arguments", {})
                 try:
                     tool_result = context.mcp_client.call_bound_tool(
-                        node.tools,
+                        tool_refs,
                         requested_tool,
                         arguments if isinstance(arguments, dict) else {},
                         blueprint=context.blueprint,
                         sandbox_runner=context.sandbox_runner,
                     )
                 except Exception as exc:
+                    trace = {"live_llm": True, "tool_loop": history, "tool_discovery": discovery_trace}
+                    if skill_bundle.has_trace():
+                        trace["skills"] = skill_bundle.trace_payload()
                     return NodeExecutionResult(
                         failure_type=FailureType.tool_runtime_error,
                         error=f"Tool call failed: {exc}",
-                        trace={"live_llm": True, "tool_loop": history},
+                        trace=trace,
                         cost=aggregate_cost.add(ExecutionCost(tool_calls=tool_calls)),
                     )
                 tool_calls += 1
@@ -345,32 +409,88 @@ class LLMRouter:
                 continue
 
             output_payload = self._normalize_output(decision)
-            confidence = self._normalize_confidence(decision.get("confidence"), default=0.7)
+            confidence = self._extract_confidence(decision, default=0.7)
+            trace = {
+                "live_llm": True,
+                "provider": node.model.provider.value,
+                "model": node.model.name,
+                "tool_loop": history,
+                "tool_discovery": discovery_trace,
+                "summary": self._extract_summary(decision),
+            }
+            if skill_bundle.has_trace():
+                trace["skills"] = skill_bundle.trace_payload()
             return NodeExecutionResult(
                 outputs=output_payload,
-                trace={
-                    "live_llm": True,
-                    "provider": node.model.provider.value,
-                    "model": node.model.name,
-                    "tool_loop": history,
-                    "summary": decision.get("summary", ""),
-                },
+                trace=trace,
                 cost=aggregate_cost.add(ExecutionCost(tool_calls=tool_calls)),
                 confidence=confidence,
             )
 
+        trace = {"live_llm": True, "tool_loop": history, "tool_discovery": discovery_trace}
+        if skill_bundle.has_trace():
+            trace["skills"] = skill_bundle.trace_payload()
         return NodeExecutionResult(
             failure_type=FailureType.reasoning_inconsistency,
             error=f"Exceeded max_steps={node.max_steps} without a final answer",
-            trace={"live_llm": True, "tool_loop": history},
+            trace=trace,
             cost=aggregate_cost.add(ExecutionCost(tool_calls=tool_calls)),
         )
 
-    def _base_messages(self, node: NodeSpec, inputs: JsonDict) -> List[Dict[str, str]]:
-        system_prompt = node.system_prompt or (
+    def _resolve_tool_candidates(
+        self,
+        node: NodeSpec,
+        inputs: JsonDict,
+        context: "NodeExecutionContext",
+        *,
+        skill_bundle: SkillPromptBundle,
+    ) -> tuple[List[ToolCandidate], JsonDict]:
+        discovery = node.tool_discovery
+        if discovery is None or discovery.mode.value == "disabled":
+            candidates = context.tool_registry.describe_bound_tools(
+                node,
+                blueprint=context.blueprint,
+                sandbox_runner=context.sandbox_runner,
+            )
+            filtered_candidates, policy_trace = skill_bundle.apply_tool_policy(candidates)
+            return filtered_candidates, {
+                "enabled": False,
+                "candidate_count": len(candidates),
+                "skill_tool_policy": policy_trace,
+                "selected_candidates": [
+                    {"server": candidate.ref.server, "tool": candidate.ref.tool, "source": candidate.source}
+                    for candidate in filtered_candidates
+                ],
+            }
+
+        discovered = context.tool_registry.discover_for_node(
+            node,
+            blueprint=context.blueprint,
+            sandbox_runner=context.sandbox_runner,
+        )
+        filtered_candidates, policy_trace = skill_bundle.apply_tool_policy(discovered)
+        selected, scout_summary = context.tool_scout.select_candidates(
+            node,
+            inputs,
+            filtered_candidates,
+            discovery=discovery,
+            skill_text=skill_bundle.prompt_text,
+        )
+        return selected, {
+            "enabled": True,
+            "mode": discovery.mode.value,
+            "candidate_count": len(discovered),
+            "post_policy_candidate_count": len(filtered_candidates),
+            "skill_tool_policy": policy_trace,
+            **scout_summary,
+        }
+
+    def _base_messages(self, node: NodeSpec, inputs: JsonDict, *, skill_bundle: SkillPromptBundle) -> List[Dict[str, str]]:
+        base_system_prompt = node.system_prompt or (
             f"You are the {node.role} node in a DynaForge workflow. "
             "Respond with a JSON object containing keys: output (object), confidence (0..1), summary (string)."
         )
+        system_prompt = self._compose_system_prompt(base_system_prompt, skill_bundle)
         user_prompt = (
             f"Node ID: {node.node_id}\n"
             f"Role: {node.role}\n"
@@ -388,13 +508,16 @@ class LLMRouter:
         inputs: JsonDict,
         tool_descriptors: List[Dict[str, Any]],
         history: List[Dict[str, Any]],
+        *,
+        skill_bundle: SkillPromptBundle,
     ) -> List[Dict[str, str]]:
-        system_prompt = node.system_prompt or (
+        base_system_prompt = node.system_prompt or (
             f"You are the {node.role} node in a DynaForge workflow. "
             "You may either call one allowed MCP tool or return a final answer. "
             "Always respond as JSON. Use action='call_tool' with keys tool and arguments, "
             "or action='final' with keys output, confidence, and summary."
         )
+        system_prompt = self._compose_system_prompt(base_system_prompt, skill_bundle)
         user_payload = {
             "node_id": node.node_id,
             "role": node.role,
@@ -407,6 +530,12 @@ class LLMRouter:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True, indent=2, sort_keys=True)},
         ]
+
+    @staticmethod
+    def _compose_system_prompt(base_system_prompt: str, skill_bundle: SkillPromptBundle) -> str:
+        if not skill_bundle.prompt_text:
+            return base_system_prompt
+        return f"{base_system_prompt}\n\n{skill_bundle.prompt_text}"
 
     @staticmethod
     def _parse_payload(raw_content: str) -> Dict[str, Any]:
@@ -450,6 +579,27 @@ class LLMRouter:
             return default
         return max(0.0, min(1.0, value))
 
+    @classmethod
+    def _extract_confidence(cls, payload: Mapping[str, Any], *, default: float) -> float:
+        if "confidence" in payload:
+            return cls._normalize_confidence(payload.get("confidence"), default=default)
+        output = payload.get("output")
+        if isinstance(output, Mapping) and "confidence" in output:
+            return cls._normalize_confidence(output.get("confidence"), default=default)
+        return default
+
+    @staticmethod
+    def _extract_summary(payload: Mapping[str, Any]) -> str:
+        summary = payload.get("summary")
+        if isinstance(summary, str):
+            return summary
+        output = payload.get("output")
+        if isinstance(output, Mapping):
+            nested = output.get("summary")
+            if isinstance(nested, str):
+                return nested
+        return ""
+
     @staticmethod
     def _cost_from_usage(model: ModelSpec, usage: Mapping[str, Any]) -> ExecutionCost:
         input_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
@@ -466,16 +616,28 @@ class LLMRouter:
         )
 
     @staticmethod
-    def _offline_fallback(node: NodeSpec, inputs: JsonDict, *, reason: str) -> NodeExecutionResult:
+    def _offline_fallback(
+        node: NodeSpec,
+        inputs: JsonDict,
+        *,
+        reason: str,
+        skill_bundle: SkillPromptBundle,
+        discovery_trace: Optional[JsonDict],
+    ) -> NodeExecutionResult:
         encoded = json.dumps(inputs, ensure_ascii=True, sort_keys=True)
+        trace: JsonDict = {
+            "offline_fallback": True,
+            "provider": node.model.provider.value if node.model else "unknown",
+            "model": node.model.name if node.model else "unknown",
+            "reason": reason,
+        }
+        if discovery_trace is not None:
+            trace["tool_discovery"] = discovery_trace
+        if skill_bundle.has_trace():
+            trace["skills"] = skill_bundle.trace_payload()
         return NodeExecutionResult(
             outputs={"result": {"node_id": node.node_id, "role": node.role, "inputs": inputs}},
-            trace={
-                "offline_fallback": True,
-                "provider": node.model.provider.value if node.model else "unknown",
-                "model": node.model.name if node.model else "unknown",
-                "reason": reason,
-            },
+            trace=trace,
             cost=ExecutionCost(
                 input_tokens=max(len(encoded) // 4, 1) if inputs else 1,
                 output_tokens=48,

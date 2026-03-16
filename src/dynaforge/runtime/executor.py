@@ -12,12 +12,16 @@ from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set
 from dynaforge.ir.schema import FailureType, NodeKind, NodeSpec, TraceAssertion, WorkflowBlueprint
 from dynaforge.integrations.mcp_client import MCPClientManager
 from dynaforge.integrations.sandbox import CompositeSandboxRunner, SandboxError, SandboxRunner
+from dynaforge.integrations.tool_registry import ToolRegistry
+from dynaforge.integrations.web_search import BUILTIN_WEB_SEARCH_SERVER, build_builtin_web_search_server_ref
 from dynaforge.runtime.blame import BlameAssigner, FailureClassifier
 from dynaforge.runtime.cache import ArtifactStore
 from dynaforge.runtime.conditions import evaluate_trigger
 from dynaforge.runtime.expression import evaluate_predicate
 from dynaforge.runtime.llm import LLMRouter
 from dynaforge.runtime.patching import DeterministicPatchPolicy, apply_patch_plan, compute_impacted_nodes
+from dynaforge.runtime.skills import SkillRegistry
+from dynaforge.runtime.tool_scout import ToolScout
 from dynaforge.runtime.reports import (
     BudgetLedger,
     ContractViolation,
@@ -52,6 +56,9 @@ class NodeExecutionContext:
     budget_remaining: Dict[str, Any]
     llm_router: LLMRouter
     mcp_client: MCPClientManager
+    tool_registry: ToolRegistry
+    tool_scout: ToolScout
+    skill_registry: SkillRegistry
     sandbox_runner: SandboxRunner
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -67,6 +74,9 @@ class BlueprintExecutor:
         blame_assigner: Optional[BlameAssigner] = None,
         llm_router: Optional[LLMRouter] = None,
         mcp_client: Optional[MCPClientManager] = None,
+        tool_registry: Optional[ToolRegistry] = None,
+        tool_scout: Optional[ToolScout] = None,
+        skill_registry: Optional[SkillRegistry] = None,
         sandbox_runner: Optional[SandboxRunner] = None,
         allow_offline_fallback: bool = True,
     ):
@@ -76,6 +86,9 @@ class BlueprintExecutor:
         self.failure_classifier = FailureClassifier()
         self.llm_router = llm_router or LLMRouter(allow_offline_fallback=allow_offline_fallback)
         self.mcp_client = mcp_client or MCPClientManager()
+        self.tool_registry = tool_registry or ToolRegistry(self.mcp_client)
+        self.tool_scout = tool_scout or ToolScout()
+        self.skill_registry = skill_registry or SkillRegistry()
         self.sandbox_runner = sandbox_runner or CompositeSandboxRunner()
         self._memoized_results: Dict[str, NodeExecutionResult] = {}
 
@@ -88,6 +101,7 @@ class BlueprintExecutor:
         force_nodes: Optional[Set[str]] = None,
         workflow_id: Optional[str] = None,
     ) -> ExecutionReport:
+        blueprint = self._augment_builtin_servers(blueprint)
         handlers = handlers or {}
         force_nodes = force_nodes or set()
         workflow_id = workflow_id or f"{blueprint.task.task_id}:{int(time.time())}"
@@ -411,8 +425,12 @@ class BlueprintExecutor:
             budget_remaining=budget_remaining,
             llm_router=self.llm_router,
             mcp_client=self.mcp_client,
+            tool_registry=self.tool_registry,
+            tool_scout=self.tool_scout,
+            skill_registry=self.skill_registry,
             sandbox_runner=self.sandbox_runner,
         )
+        start_time = time.perf_counter()
         try:
             result = handler(node, inputs, context) if handler is not None else self._default_handler(node, inputs, context)
         except Exception as exc:
@@ -421,6 +439,8 @@ class BlueprintExecutor:
                 error=str(exc),
                 trace={"exception": exc.__class__.__name__},
             )
+        elapsed_s = max(0.0, time.perf_counter() - start_time)
+        result.cost = result.cost.add(ExecutionCost(wall_time_s=round(elapsed_s, 6)))
 
         if container_starts:
             result.cost = result.cost.add(ExecutionCost(container_starts=container_starts))
@@ -490,6 +510,23 @@ class BlueprintExecutor:
                     )
                 )
         return violations
+
+    @staticmethod
+    def _augment_builtin_servers(blueprint: WorkflowBlueprint) -> WorkflowBlueprint:
+        needs_web_search = any(
+            node.tool_discovery is not None and node.tool_discovery.include_web_search
+            for node in blueprint.all_nodes()
+        )
+        if not needs_web_search:
+            return blueprint
+        if any(server.name == BUILTIN_WEB_SEARCH_SERVER for server in blueprint.mcp_servers):
+            return blueprint
+        return blueprint.model_copy(
+            update={
+                "mcp_servers": [*blueprint.mcp_servers, build_builtin_web_search_server_ref()],
+            },
+            deep=True,
+        )
 
     @staticmethod
     def _subgraphs_containing_nodes(blueprint: WorkflowBlueprint, node_ids: Set[str]) -> Set[str]:
@@ -687,10 +724,15 @@ class BlueprintExecutor:
         return json.dumps(
             {
                 "node_id": node.node_id,
+                "role": node.role,
+                "description": node.description,
                 "inputs": inputs,
                 "max_steps": node.max_steps,
+                "system_prompt": node.system_prompt,
                 "model": node.model.model_dump() if node.model else None,
                 "tools": [tool.model_dump() for tool in node.tools],
+                "tool_discovery": node.tool_discovery.model_dump() if node.tool_discovery else None,
+                "skills": [skill.model_dump() for skill in node.skills],
             },
             ensure_ascii=True,
             sort_keys=True,

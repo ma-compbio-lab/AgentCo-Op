@@ -1,0 +1,84 @@
+# @package _global_
+
+benchmark:
+  kind: case_study
+  case_id: visium_multi_agent_monolith
+  title: Visium multi-agent monolith baseline
+  case_root: benchmarks/case_studies/visium_multi_agent_monolith
+  repo_root: external/case_studies/visium_multi_agent/repos
+  methods_excerpt: |
+    Load the public cropped Visium H&E dataset. Run a single monolithic analysis workflow that normalizes counts,
+    selects highly variable genes, clusters spots, summarizes marker genes, builds the spatial-neighbor graph,
+    and computes neighborhood enrichment across the resulting clusters.
+  target_figure_description: |
+    Produce the same figure package as the collaboration case from one monolithic sandbox:
+    a cluster UMAP, marker heatmap, spatial cluster plot, and neighborhood-enrichment heatmap,
+    along with structured clustering and interaction summaries.
+  candidate_repos:
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+    - name: scanpy-tutorials
+      url: https://github.com/scverse/scanpy-tutorials.git
+    - name: squidpy
+      url: https://github.com/scverse/squidpy.git
+  planner_mode: fixed
+  cluster_analysis_config:
+    target_sum: 10000.0
+    n_top_genes: 2000
+    n_neighbors: 10
+    n_pcs: 30
+    resolution: 0.6
+    max_scale_value: 10.0
+    seed: 0
+    cluster_key: scanpy_leiden
+    dpi: 150
+    marker_top_n: 3
+    marker_cluster_limit: 6
+  interaction_analysis_config:
+    cluster_key: scanpy_leiden
+    dpi: 150
+    compute_spatial_neighbors: true
+    compute_nhood_enrichment: true
+    nhood_top_n: 5
+    linkage_method: ward
+    cmap: coolwarm
+    seed: 0
+  review_model: ${model}
+  squidpy_sandbox:
+    sandbox_id: visium-multi-agent-monolith
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: visium-multi-agent-monolith
+      MCP_TRANSPORT: stdio
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 12288
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/visium_multi_agent/repos/squidpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, leidenalg, igraph, pillow, mcp]
+
+blueprint:
+  task:
+    task_id: visium_multi_agent_monolith_case
+    title: Visium multi-agent monolith baseline
+    description: Run a single sandbox that performs both clustering and spatial interaction analysis on the Visium task.
+  budget:
+    max_total_usd: 12.0
+    max_total_tokens: 18000
+    max_wall_time_s: 3600
+    max_tool_calls: 3
+    max_container_starts: 3
+
+executor:
+  artifact_root: .dynaforge_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

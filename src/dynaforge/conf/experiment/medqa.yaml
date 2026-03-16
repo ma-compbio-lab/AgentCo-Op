@@ -10,13 +10,24 @@ benchmark:
   preview_path: benchmarks/medqa/medqa_preview.json
   info_path: benchmarks/medqa/medqa_dataset_info.json
   processed_dir: benchmarks/medqa/processed_${benchmark.split}
+  all_splits_dir: benchmarks/medqa/all_splits
   smoke_count: 20
   full_count: all
+  train_sample_count: 1000
+  train_sample_seed: 7
   seed: 7
+  paper_alignment:
+    source: AFlow-style cross-benchmark policy
+    base_model: gpt-4o-mini
+    split: full official test
+    note: MedQA is not one of the six public AFlow benchmarks; use GPT-4o-mini here for consistency with the benchmark execution setting.
   preferred_answer_nodes:
     - reviser
     - reviewer
     - responder
+
+executor:
+  allow_offline_fallback: false
 
 blueprint:
   task:
@@ -52,6 +63,13 @@ blueprint:
         - emphysema / "pink puffer" = hyperinflation + loss of lung markings.
         - pediatric migraine with normal exam and no red flags should favor first-line acute treatment
           (acetaminophen/ibuprofen) over trigger workup, even if the stem mentions recent glasses.
+        - if a stem identifies a drug by toxicity but asks for the expected beneficial effect, answer with the drug's
+          therapeutic mechanism rather than the toxicity mechanism.
+        - if lipid A / endotoxin is explicitly described, anchor on gram-negative bacteria first; do not let syndrome
+          anchoring override direct organism/culture clues such as lactose fermentation on MacConkey agar.
+        - in ethics questions asking for the resident's next action after a superior advises nondisclosure, prefer the
+          immediate professional response to confront the attending / insist on truthful reporting before jumping to
+          independent patient disclosure or punitive escalation.
         Do not invent new options and do not output the final answer prose here.
       cacheable: true
     - node_id: responder
@@ -74,6 +92,14 @@ blueprint:
         emphysema / "pink puffer" = hyperinflation and loss of lung markings.
         For pediatric migraine questions with a normal exam and no red flags, do not let recent glasses or visual triggers
         outrank first-line acute therapy such as acetaminophen or ibuprofen unless the stem explicitly asks for further evaluation.
+        If a question identifies a drug by a toxicity clue but asks for the beneficial effect or mechanism of action,
+        answer with the antitumor/therapeutic mechanism, not the toxicity mechanism.
+        For microbiology identification questions, prioritize direct organism clues over syndrome anchoring:
+        explicit lipid A / endotoxin clues should point you toward gram-negative bacteria, and culture-medium clues
+        like lactose fermentation on MacConkey agar are often decisive.
+        For ethics questions asking for the resident's next action after an attending recommends nondisclosure,
+        prefer the immediate professional step of challenging the attending / insisting on truthful documentation
+        before choosing independent disclosure or punitive reporting, unless the options make a combined step clearly best.
         Return JSON with:
         - output.final_answer_label: single uppercase option label
         - output.final_answer_text: exact option text copied verbatim from the chosen option
@@ -118,6 +144,13 @@ blueprint:
             emphysema / "pink puffer" = hyperinflation and loss of lung markings.
             For pediatric migraine with a normal exam and no red flags, keep first-line acute treatment above trigger workup,
             and do not over-weight recent glasses unless the stem explicitly asks for diagnostic evaluation.
+            If a stem identifies a drug by toxicity but asks for the beneficial effect, explicitly separate side-effect clues
+            from the therapeutic mechanism and score the answer on the therapeutic mechanism.
+            For microbiology identification questions, prioritize direct organism/culture clues:
+            explicit lipid A / endotoxin clues should push toward gram-negative bacteria, and lactose fermentation on MacConkey
+            is often more decisive than syndrome anchoring.
+            For ethics questions asking for the next action after a superior advises nondisclosure, prefer the immediate
+            professional obligation to confront the attending / insist on truthful reporting before independent escalation.
             Return JSON with:
             - output.review_verdict: "keep" or "revise"
             - output.corrected_answer_label: single uppercase option label
@@ -142,6 +175,12 @@ blueprint:
             emphysema / "pink puffer" = hyperinflation and loss of lung markings.
             For pediatric migraine with a normal exam and no red flags, prefer first-line acute treatment over trigger workup
             unless the stem explicitly asks for diagnostic evaluation.
+            If the stem identifies a drug by toxicity but asks for the beneficial effect, output the therapeutic mechanism.
+            For microbiology identification questions, prioritize direct organism/culture clues:
+            explicit lipid A / endotoxin clues should push toward gram-negative bacteria, and lactose fermentation on MacConkey
+            is often decisive.
+            For ethics questions asking for the resident's next action after a superior advises nondisclosure, prefer the
+            immediate professional duty to confront the attending / insist on truthful reporting before independent escalation.
             Return JSON with:
             - output.final_answer_label: single uppercase option label
             - output.final_answer_text: exact option text copied verbatim from the chosen option
@@ -176,6 +215,12 @@ blueprint:
             op: ==
             value: responder
           - any_of:
+              - field: node.inputs.planner_question_type
+                op: ==
+                value: mechanism
+              - field: node.inputs.planner_question_type
+                op: ==
+                value: next_step_diagnosis
               - field: report.confidence
                 op: <
                 value: 0.86

@@ -9,7 +9,10 @@ from dynaforge.ir import (
     ModelSpec,
     NodeKind,
     NodeSpec,
+    SkillPromptMode,
+    SkillRef,
     TaskSpec,
+    ToolDiscoveryMode,
     ToolRef,
     Transport,
     WorkflowBlueprint,
@@ -56,9 +59,78 @@ def test_invalid_blueprint_rejects_unknown_server() -> None:
         )
 
 
+def test_direct_sandbox_tool_node_may_skip_mcp_server_resolution() -> None:
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="t2b", title="Task", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="tool-node",
+                kind=NodeKind.tool,
+                role="Tool Node",
+                tools=[ToolRef(server="missing-server", tool="run")],
+                meta={"direct_sandbox_handler": True},
+            )
+        ],
+        base_edges=[],
+    )
+
+    assert blueprint.node_map()["tool-node"].meta["direct_sandbox_handler"] is True
+
+
 def test_agent_nodes_require_model() -> None:
     with pytest.raises(ValueError):
         NodeSpec(node_id="agent", kind=NodeKind.agent, role="Planner")
+
+
+def test_agent_node_may_enable_registry_tool_discovery_without_prebound_tools() -> None:
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="t2c", title="Task", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="planner",
+                kind=NodeKind.agent,
+                role="Planner",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                tool_discovery={
+                    "mode": ToolDiscoveryMode.registry,
+                    "include_web_search": True,
+                    "server_allowlist": ["builtin-web-search"],
+                },
+            )
+        ],
+        base_edges=[],
+    )
+
+    assert blueprint.node_map()["planner"].tool_discovery is not None
+    assert blueprint.node_map()["planner"].tool_discovery.mode == ToolDiscoveryMode.registry
+
+
+def test_skill_ref_requires_name_or_path() -> None:
+    with pytest.raises(ValueError):
+        SkillRef()
+
+
+def test_agent_node_accepts_skill_bindings() -> None:
+    node = NodeSpec(
+        node_id="planner",
+        kind=NodeKind.agent,
+        role="Planner",
+        model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+        skills=[SkillRef(name="structured-json-discipline", prompt_mode=SkillPromptMode.summary)],
+    )
+
+    assert node.skills[0].name == "structured-json-discipline"
+
+
+def test_tool_node_rejects_skill_bindings() -> None:
+    with pytest.raises(ValueError):
+        NodeSpec(
+            node_id="tool-node",
+            kind=NodeKind.tool,
+            role="Tool Node",
+            tools=[ToolRef(server="local-tools", tool="run")],
+            skills=[SkillRef(name="structured-json-discipline")],
+        )
 
 
 def test_subgraph_integrity() -> None:

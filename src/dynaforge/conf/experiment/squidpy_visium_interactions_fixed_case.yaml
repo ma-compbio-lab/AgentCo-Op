@@ -1,0 +1,73 @@
+# @package _global_
+
+benchmark:
+  kind: case_study
+  case_id: squidpy_visium_hne_interactions
+  title: Squidpy Visium H&E interaction analysis (fixed planner)
+  case_root: benchmarks/case_studies/squidpy_visium_interactions
+  repo_root: external/case_studies/squidpy_spatial/repos
+  methods_excerpt: |
+    Load the public cropped Visium H&E dataset, preserve the spatial image metadata,
+    construct a spatial-neighbor graph, compute neighborhood enrichment across cluster labels,
+    and produce both a spatial scatter plot and a neighborhood-enrichment heatmap.
+    Keep the analysis faithful to a standard Squidpy spatial-interaction workflow.
+  target_figure_description: |
+    Produce a PNG spatial scatter plot for the cropped Visium H&E dataset and a second PNG
+    neighborhood-enrichment heatmap that summarizes interaction strengths between cluster labels.
+    The outputs should preserve the tissue image background and expose meaningful enriched spatial neighborhoods.
+  candidate_repos:
+    - name: squidpy
+      url: https://github.com/scverse/squidpy.git
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+  planner_mode: fixed
+  analysis_config:
+    cluster_key: cluster
+    dpi: 150
+    compute_spatial_neighbors: true
+    compute_nhood_enrichment: true
+    nhood_top_n: 5
+    linkage_method: ward
+    cmap: coolwarm
+    seed: 0
+  enable_refinement_subgraph: false
+  refinement_threshold: 8.0
+  review_model: ${model}
+  sandbox:
+    sandbox_id: squidpy-visium-interactions-fixed
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: squidpy-visium-interactions
+      MCP_TRANSPORT: stdio
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 12288
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/squidpy_spatial/repos/squidpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, pillow, mcp]
+
+blueprint:
+  task:
+    task_id: squidpy_visium_interactions_case_fixed
+    title: Squidpy Visium H&E interaction analysis (fixed planner)
+    description: Reproduce a Visium H&E spatial interaction analysis from a methods excerpt using a fixed planner and a sandboxed external repo.
+  budget:
+    max_total_usd: 12.0
+    max_total_tokens: 24000
+    max_wall_time_s: 3600
+    max_tool_calls: 4
+    max_container_starts: 3
+
+executor:
+  artifact_root: .dynaforge_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false
