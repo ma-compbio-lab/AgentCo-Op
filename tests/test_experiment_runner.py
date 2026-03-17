@@ -7,8 +7,12 @@ from dynaforge.experiment_cli import main as experiment_main
 from dynaforge.experiment_runner import (
     RunRecorder,
     _apply_shard,
+    _build_humaneval_task_handlers,
+    _build_math_task_handlers,
     _build_visium_multi_agent_collaboration_blueprint,
+    _humaneval_public_test_handler,
     _load_existing_medqa_task_results,
+    _math_program_exec_handler,
     _medqa_evaluation_failure_type,
     _resolve_medqa_indices,
     _scanpy_planner_handler,
@@ -16,7 +20,11 @@ from dynaforge.experiment_runner import (
     _summarize_scanpy_case_study,
     _summarize_squidpy_case_study,
     aggregate_humaneval_runs,
+    aggregate_humaneval_repeats,
     aggregate_math_runs,
+    aggregate_math_repeats,
+    build_humaneval_task_blueprint,
+    build_math_task_blueprint,
     build_medqa_deep_analysis,
     run_medqa_experiment,
 )
@@ -279,6 +287,186 @@ def test_aggregate_humaneval_runs_merges_task_results(tmp_path) -> None:
 
     assert summary["task_count"] == 2
     assert summary["pass_at_1"] == 1.0
+
+
+def test_aggregate_math_repeats_averages_repeat_summaries(tmp_path) -> None:
+    repeat_dirs = []
+    for index, solve_rate in enumerate((0.9, 0.8, 1.0), start=1):
+        repeat_dir = tmp_path / f"repeat-{index}"
+        source_dir = repeat_dir / "source-shard"
+        (repeat_dir / "summaries").mkdir(parents=True)
+        (source_dir / "summaries").mkdir(parents=True)
+        (repeat_dir / "summaries" / "summary.json").write_text(
+            json.dumps(
+                {
+                    "benchmark": "math",
+                    "task_count": 486,
+                    "solve_rate": solve_rate,
+                    "average_usd": 0.001 * index,
+                    "average_input_tokens": 10 * index,
+                    "average_output_tokens": 5 * index,
+                    "average_latency_s": 2.0 * index,
+                    "source_run_dirs": [str(source_dir)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source_dir / "summaries" / "summary.json").write_text(
+            json.dumps(
+                {
+                    "benchmark": "math",
+                    "subset": "test",
+                    "manifest": {"dataset_id": "math", "record_count": 605, "test_count": 486, "metric": "solve_rate"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source_dir / "summaries" / "run_metadata.json").write_text(
+            json.dumps({"model_name": "gpt-4o-mini"}),
+            encoding="utf-8",
+        )
+        repeat_dirs.append(repeat_dir)
+
+    summary = aggregate_math_repeats(repeat_dirs, base_dir=tmp_path / "agg-repeat")
+
+    assert summary["repeat_count"] == 3
+    assert summary["subset"] == "test"
+    assert summary["model_name"] == "gpt-4o-mini"
+    assert summary["solve_rate"] == 0.9
+    assert summary["solve_rate_std"] > 0
+
+
+def test_aggregate_humaneval_repeats_averages_repeat_summaries(tmp_path) -> None:
+    repeat_dirs = []
+    for index, pass_at_1 in enumerate((0.85, 0.9, 0.95), start=1):
+        repeat_dir = tmp_path / f"repeat-h-{index}"
+        source_dir = repeat_dir / "source-shard"
+        (repeat_dir / "summaries").mkdir(parents=True)
+        (source_dir / "summaries").mkdir(parents=True)
+        (repeat_dir / "summaries" / "summary.json").write_text(
+            json.dumps(
+                {
+                    "benchmark": "humaneval",
+                    "task_count": 131,
+                    "pass_at_1": pass_at_1,
+                    "average_usd": 0.002 * index,
+                    "average_input_tokens": 20 * index,
+                    "average_output_tokens": 7 * index,
+                    "average_latency_s": 3.0 * index,
+                    "source_run_dirs": [str(source_dir)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source_dir / "summaries" / "summary.json").write_text(
+            json.dumps(
+                {
+                    "benchmark": "humaneval",
+                    "subset": "test",
+                    "manifest": {"dataset_id": "humaneval", "record_count": 164, "test_count": 131, "metric": "pass@1"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source_dir / "summaries" / "run_metadata.json").write_text(
+            json.dumps({"model_name": "gpt-4o-mini"}),
+            encoding="utf-8",
+        )
+        repeat_dirs.append(repeat_dir)
+
+    summary = aggregate_humaneval_repeats(repeat_dirs, base_dir=tmp_path / "agg-repeat")
+
+    assert summary["repeat_count"] == 3
+    assert summary["subset"] == "test"
+    assert summary["model_name"] == "gpt-4o-mini"
+    assert round(summary["pass_at_1"], 4) == 0.9
+
+
+def test_build_math_task_blueprint_does_not_leak_gold_answer() -> None:
+    from dynaforge.config import load_hydra_config, build_blueprint_from_config
+
+    config = load_hydra_config(overrides=["experiment=math_v2", "model=openai_gpt4o_mini"])
+    blueprint = build_blueprint_from_config(config)
+    task_blueprint = build_math_task_blueprint(
+        blueprint,
+        {
+            "id": "counting_and_probability:0000",
+            "prompt": "Solve x + 1 = 2.",
+            "question": "Solve x + 1 = 2.",
+            "type": "Counting & Probability",
+            "level": "Level 5",
+            "gold_answer": "1",
+        },
+    )
+
+    assert "gold_answer" not in task_blueprint.task.hints
+
+
+def test_math_program_exec_handler_runs_program() -> None:
+    node = NodeSpec.model_validate(
+        {
+            "node_id": "program_exec",
+            "kind": "tool",
+            "role": "ProgramExecutor",
+            "tools": [{"server": "direct", "tool": "math_program_exec"}],
+            "meta": {"direct_sandbox_handler": True},
+        }
+    )
+    result = _math_program_exec_handler(
+        node,
+        {"program": "FINAL_ANSWER = 42", "candidate_answer": "42"},
+        SimpleNamespace(sandbox_runner=SimpleNamespace(ensure_materialized=lambda sandbox: SimpleNamespace(python_bin=""))),
+    )
+
+    assert result.failure_type == FailureType.none
+    assert result.outputs["passed"] is True
+    assert result.outputs["executed_answer"] == "42"
+
+
+def test_humaneval_public_test_handler_runs_assertions() -> None:
+    node = NodeSpec.model_validate(
+        {
+            "node_id": "public_test_runner",
+            "kind": "tool",
+            "role": "PublicTestRunner",
+            "tools": [{"server": "direct", "tool": "humaneval_public_test_runner"}],
+            "meta": {"direct_sandbox_handler": True},
+        }
+    )
+    sample = {
+        "entry_point": "add",
+        "public_tests": ["assert candidate(2, 5) == 7"],
+    }
+    result = _humaneval_public_test_handler(
+        node,
+        {"candidate_code": "def add(a, b):\n    return a + b\n"},
+        SimpleNamespace(sandbox_runner=SimpleNamespace(ensure_materialized=lambda sandbox: SimpleNamespace(python_bin=""))),
+        sample=sample,
+    )
+
+    assert result.failure_type == FailureType.none
+    assert result.outputs["passed"] is True
+    assert result.outputs["public_test_count"] == 1
+
+
+def test_build_math_and_humaneval_handlers_detect_v2_nodes() -> None:
+    from dynaforge.config import load_hydra_config, build_blueprint_from_config
+
+    math_config = load_hydra_config(overrides=["experiment=math_v2", "model=openai_gpt4o_mini"])
+    math_blueprint = build_blueprint_from_config(math_config)
+    math_handlers = _build_math_task_handlers(math_config, math_blueprint, {"id": "m"})
+
+    humaneval_config = load_hydra_config(overrides=["experiment=humaneval_v2", "model=openai_gpt4o_mini"])
+    humaneval_blueprint = build_blueprint_from_config(humaneval_config)
+    humaneval_handlers = _build_humaneval_task_handlers(
+        humaneval_config,
+        humaneval_blueprint,
+        {"id": "h", "entry_point": "foo", "public_tests": []},
+    )
+
+    assert "program_exec" in math_handlers
+    assert "public_test_runner" in humaneval_handlers
+    assert "retest_runner" in humaneval_handlers
 
 
 def test_scanpy_case_planner_prefers_llm_result_when_valid() -> None:

@@ -53,6 +53,7 @@ DynaForge is a Python implementation of a dynamic-by-construction workflow compi
 - `scripts/prepare_medqa.py`: Download a local MedQA preview and metadata cache.
 - `scripts/prepare_math.py`: Download and normalize the AFlow-aligned MATH benchmark slice.
 - `scripts/prepare_humaneval.py`: Download and normalize the AFlow-aligned HumanEval benchmark split.
+- `scripts/aggregate_benchmark_repeats.py`: Average per-run benchmark aggregates into AFlow-style multi-run summaries.
 
 ## Quick start
 
@@ -133,6 +134,11 @@ MATH:
   - canonical AFlow-aligned eval assets under `benchmarks/math/processed/`
   - upstream selected-config full splits under `benchmarks/math/upstream_full/`
 - Exports a `train_sample_records.jsonl` sample of `1000` train examples from the AFlow-aligned subject families
+- Experimental config `experiment=math_v2` adds:
+  - a programmer branch
+  - a direct sandbox execution node
+  - a selector that arbitrates between reasoning and executed evidence
+- Use `scripts/aggregate_benchmark_repeats.py` after three full runs to produce the AFlow-style averaged report
 
 HumanEval:
 
@@ -149,6 +155,11 @@ HumanEval:
   - canonical AFlow-aligned eval assets under `benchmarks/humaneval/processed/`
   - upstream official full splits under `benchmarks/humaneval/upstream_full/`
 - The current upstream official dataset exposes only `test`, so the train-sample artifact is empty by design
+- Experimental config `experiment=humaneval_v2` adds:
+  - a public-test runner in the base path
+  - a conditional repair subgraph
+  - a retest node after revision
+- The public-test runner prefers packaged AFlow public tests and falls back to the visible task test string when needed
 
 ## Current scope and next refinements
 

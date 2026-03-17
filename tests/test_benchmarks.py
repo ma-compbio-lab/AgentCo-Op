@@ -16,6 +16,7 @@ from dynaforge.benchmarks import (
     prepare_math_dataset,
     prepare_medqa_assets,
     prepare_medqa_dataset,
+    run_humaneval_public_tests,
 )
 
 
@@ -286,25 +287,41 @@ def test_prepare_humaneval_dataset_supports_aflow_package(monkeypatch, tmp_path)
         "dynaforge.benchmarks._prepare_aflow_public_benchmark_archive",
         lambda settings: tmp_path / "aflow.tar.gz",
     )
-    monkeypatch.setattr(
-        "dynaforge.benchmarks._read_aflow_jsonl_records",
-        lambda archive_path, member_name: (
-            [{
+    records_by_member = {
+        "humaneval_validate.jsonl": [
+            {
                 "task_id": "HumanEval/0",
                 "prompt": "def add(a, b):\n",
                 "entry_point": "add",
                 "canonical_solution": "    return a + b\n",
                 "test": "def check(candidate):\n    assert candidate(1, 2) == 3\n",
-            }]
-            if member_name == "humaneval_validate.jsonl"
-            else [{
+            }
+        ],
+        "humaneval_test.jsonl": [
+            {
                 "task_id": "HumanEval/1",
                 "prompt": "def square(x):\n",
                 "entry_point": "square",
                 "canonical_solution": "    return x * x\n",
                 "test": "def check(candidate):\n    assert candidate(3) == 9\n",
-            }]
-        ),
+            }
+        ],
+        "humaneval_public_test.jsonl": [
+            {
+                "problem_id": "HumanEval/0",
+                "entry_point": "add",
+                "test": ["assert candidate(2, 5) == 7"],
+            },
+            {
+                "problem_id": "HumanEval/1",
+                "entry_point": "square",
+                "test": ["assert candidate(4) == 16"],
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        "dynaforge.benchmarks._read_aflow_jsonl_records",
+        lambda archive_path, member_name: records_by_member[member_name],
     )
 
     manifest = prepare_humaneval_dataset(
@@ -323,6 +340,39 @@ def test_prepare_humaneval_dataset_supports_aflow_package(monkeypatch, tmp_path)
     assert manifest["data_source"] == "aflow_package"
     assert manifest["validation_count"] == 1
     assert manifest["test_count"] == 1
+    first_record = json.loads(Path(manifest["records_path"]).read_text(encoding="utf-8").splitlines()[0])
+    assert first_record["public_tests"] == ["assert candidate(2, 5) == 7"]
+
+
+def test_run_humaneval_public_tests_uses_assertion_list() -> None:
+    sample = {
+        "entry_point": "add",
+        "public_tests": [
+            "assert candidate(2, 5) == 7",
+            "assert candidate(-1, 1) == 0",
+        ],
+    }
+
+    passed = run_humaneval_public_tests({"completion": "def add(a, b):\n    return a + b\n"}, sample)
+    failed = run_humaneval_public_tests({"completion": "def add(a, b):\n    return a - b\n"}, sample)
+
+    assert passed["public_passed"] is True
+    assert passed["public_test_count"] == 2
+    assert failed["public_passed"] is False
+
+
+def test_run_humaneval_public_tests_falls_back_to_visible_test_string() -> None:
+    sample = {
+        "entry_point": "square",
+        "test": "def check(candidate):\n    assert candidate(3) == 9\n    assert candidate(-2) == 4\n",
+    }
+
+    passed = run_humaneval_public_tests({"completion": "def square(x):\n    return x * x\n"}, sample)
+    failed = run_humaneval_public_tests({"completion": "def square(x):\n    return x + x\n"}, sample)
+
+    assert passed["public_passed"] is True
+    assert passed["public_test_count"] == 2
+    assert failed["public_passed"] is False
 
 
 def test_prepare_medqa_dataset_writes_processed_records(monkeypatch, tmp_path) -> None:

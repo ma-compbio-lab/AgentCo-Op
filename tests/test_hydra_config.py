@@ -161,6 +161,31 @@ def test_humaneval_config_matches_aflow_alignment() -> None:
     assert blueprint.base_nodes[0].model.name == "gpt-4o-mini"
 
 
+def test_math_v2_config_exposes_programmer_path() -> None:
+    config = load_hydra_config(overrides=["experiment=math_v2", "model=openai_gpt4o_mini"])
+    blueprint = build_blueprint_from_config(config)
+
+    assert config.benchmark.workflow_variant == "aflow_v2"
+    assert config.benchmark.reporting_protocol == "aflow_3run_average"
+    assert config.benchmark.paper_alignment.operators == ["Custom", "ScEnsemble", "Programmer"]
+    assert "program_exec" in blueprint.node_map()
+    assert blueprint.node_map()["program_exec"].meta["direct_sandbox_handler"] is True
+    assert blueprint.gates[0].trigger.all_of[0].value == "selector"
+
+
+def test_humaneval_v2_config_exposes_public_test_loop() -> None:
+    config = load_hydra_config(overrides=["experiment=humaneval_v2", "model=openai_gpt4o_mini"])
+    blueprint = build_blueprint_from_config(config)
+
+    assert config.benchmark.workflow_variant == "public_test_loop"
+    assert config.benchmark.reporting_protocol == "aflow_3run_average"
+    assert config.benchmark.paper_alignment.operators == ["Custom", "CustomCodeGenerate", "ScEnsemble", "Test"]
+    assert "public_test_runner" in blueprint.node_map()
+    assert "retest_runner" in blueprint.node_map()
+    assert blueprint.node_map()["public_test_runner"].meta["direct_sandbox_handler"] is True
+    assert blueprint.gates[0].trigger.all_of[0].value == "public_test_runner"
+
+
 def test_scanpy_case_study_config_exposes_local_venv_sandbox() -> None:
     config = load_hydra_config(overrides=["experiment=scanpy_pbmc3k_case", "model=openai_gpt5_mini"])
 

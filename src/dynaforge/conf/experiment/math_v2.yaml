@@ -1,0 +1,252 @@
+# @package _global_
+
+benchmark:
+  kind: math
+  dataset_id: EleutherAI/hendrycks_math
+  data_source: aflow_package
+  config_names:
+    - counting_and_probability
+    - number_theory
+    - prealgebra
+    - precalculus
+  selected_types:
+    - Counting & Probability
+    - Number Theory
+    - Prealgebra
+    - Precalculus
+  source_split: test
+  split_seed: 42
+  validation_fraction: 0.2
+  level_filter: Level 5
+  smoke_count: 20
+  processed_dir: benchmarks/math/processed
+  upstream_dir: benchmarks/math/upstream_full
+  train_sample_count: 1000
+  train_sample_seed: 42
+  aflow_cache_dir: benchmarks/aflow_public
+  metric: solve_rate
+  workflow_variant: aflow_v2
+  reporting_protocol: aflow_3run_average
+  paper_alignment:
+    source: AFlow
+    base_model: gpt-4o-mini
+    split: 20/80 validation-test
+    seed: 42
+    subset: MATH level-5 four-type slice
+    operators:
+      - Custom
+      - ScEnsemble
+      - Programmer
+  preferred_answer_nodes:
+    - reviser
+    - selector
+    - solver
+
+executor:
+  allow_offline_fallback: false
+
+blueprint:
+  task:
+    task_id: math
+    title: MATH
+    description: Solve competition mathematics problems and return the final exact answer.
+  budget:
+    max_total_usd: 6.0
+    max_total_tokens: 36000
+  base_nodes:
+    - node_id: solver
+      kind: agent
+      role: Solver
+      model: ${model}
+      description: Produce a direct mathematical solution.
+      system_prompt: |
+        You are the MATH solver node.
+        Solve the competition math problem in task.description.
+        Return JSON with:
+        - output.final_answer: final exact answer only
+        - output.solution_outline: short reasoning outline
+        - confidence: 0..1
+        - summary: short string
+        Do not include surrounding prose outside JSON.
+      io:
+        output_schema:
+          type: object
+          required: [final_answer]
+    - node_id: programmer
+      kind: agent
+      role: Programmer
+      model: ${model}
+      description: Write a small Python program that computes the answer.
+      system_prompt: |
+        You are the MATH programmer node.
+        Write a compact Python program for the problem in task.description.
+        The code must set FINAL_ANSWER to the final exact answer as a string, integer, fraction, or sympy expression.
+        Return JSON with:
+        - output.program: Python code only, no markdown fences
+        - output.final_answer: your best predicted final exact answer
+        - output.notes: concise execution notes
+        - confidence: 0..1
+        - summary: short string
+      io:
+        output_schema:
+          type: object
+          required: [program, final_answer]
+    - node_id: program_exec
+      kind: tool
+      role: ProgramExecutor
+      description: Execute the programmer candidate inside an isolated Python sandbox.
+      tools:
+        - server: direct
+          tool: math_program_exec
+      sandbox:
+        sandbox_id: math-program-exec-v1
+        backend: local_venv
+        image: python:3.11
+        workdir: .
+        safety:
+          allow_network: false
+          cpu_quota: 1.0
+          mem_limit_mb: 2048
+          timeout_s: 60
+        bootstrap_cmds:
+          - [python, -m, pip, install, sympy]
+      io:
+        output_schema:
+          type: object
+          required: [passed, executed_answer]
+      meta:
+        direct_sandbox_handler: true
+    - node_id: selector
+      kind: evaluator
+      role: Selector
+      model: ${model}
+      description: Select the best final answer using reasoning and executed evidence.
+      system_prompt: |
+        You are the MATH selector node.
+        You will see the problem, the solver answer, and the program execution result.
+        If program_execution_passed is true and program_executed_answer is non-empty, treat that executed answer as the authoritative program path.
+        Ignore any unexecuted programmer draft answer when it conflicts with the executed answer.
+        If the solver answer and executed answer disagree, prefer the executed answer unless it is clearly malformed.
+        Mark needs_review=true only when the execution failed, the executed answer is malformed, or you still cannot resolve the disagreement.
+        Return JSON with:
+        - output.final_answer: chosen final exact answer only
+        - output.arbitration_notes: concise explanation
+        - output.needs_review: true or false
+        - confidence: 0..1
+        - summary: short string
+      io:
+        output_schema:
+          type: object
+          required: [final_answer, needs_review]
+  base_edges:
+    - edge_id: math_solver_to_selector
+      src: solver
+      dst: selector
+      mapping:
+        solver_answer: final_answer
+        solver_outline: solution_outline
+    - edge_id: math_programmer_to_program_exec
+      src: programmer
+      dst: program_exec
+      mapping:
+        program: program
+        candidate_answer: final_answer
+    - edge_id: math_program_exec_to_selector
+      src: program_exec
+      dst: selector
+      mapping:
+        program_execution_passed: passed
+        program_executed_answer: executed_answer
+        program_execution_error: execution_error
+  subgraphs:
+    - subgraph_id: sg_review
+      purpose: Review disagreements between reasoning and programmatic paths.
+      nodes:
+        - node_id: reviewer
+          kind: evaluator
+          role: Reviewer
+          model: ${model}
+          description: Reconcile the solver and executable path.
+          system_prompt: |
+            You are the MATH reviewer node.
+            Re-evaluate the problem using the solver answer, programmer answer, execution result, and selector notes.
+            Return JSON with:
+            - output.corrected_answer: final exact answer only
+            - output.review_notes: concise critique
+            - confidence: 0..1
+            - summary: short string
+          io:
+            output_schema:
+              type: object
+              required: [corrected_answer]
+        - node_id: reviser
+          kind: agent
+          role: Reviser
+          model: ${model}
+          description: Emit the final corrected answer after review.
+          system_prompt: |
+            You are the MATH reviser node.
+            Use the original problem plus reviewer and selector outputs.
+            Return JSON with:
+            - output.final_answer: final exact answer only
+            - output.solution_outline: short reasoning outline
+            - confidence: 0..1
+            - summary: short string
+          io:
+            output_schema:
+              type: object
+              required: [final_answer]
+      edges:
+        - edge_id: math_solver_to_reviewer
+          src: solver
+          dst: reviewer
+          mapping:
+            solver_answer: final_answer
+            solver_outline: solution_outline
+        - edge_id: math_program_exec_to_reviewer
+          src: program_exec
+          dst: reviewer
+          mapping:
+            program_execution_passed: passed
+            program_executed_answer: executed_answer
+            program_execution_error: execution_error
+        - edge_id: math_selector_to_reviewer
+          src: selector
+          dst: reviewer
+          mapping:
+            selector_answer: final_answer
+            selector_notes: arbitration_notes
+        - edge_id: math_reviewer_to_reviser
+          src: reviewer
+          dst: reviser
+        - edge_id: math_selector_to_reviser
+          src: selector
+          dst: reviser
+          mapping:
+            selector_answer: final_answer
+            selector_notes: arbitration_notes
+      entry_nodes: [reviewer]
+      exit_nodes: [reviser]
+      default_enabled: false
+  gates:
+    - gate_id: math_selector_review
+      trigger:
+        all_of:
+          - field: node.node_id
+            op: ==
+            value: selector
+          - any_of:
+              - field: node.outputs.needs_review
+                op: ==
+                value: true
+              - field: report.confidence
+                op: <
+                value: 0.78
+      enable_subgraphs: [sg_review]
+      disable_edges: []
+      cooldown_steps: 0
+      max_activations: 1
+  meta:
+    benchmark: math
+    dataset_id: ${benchmark.dataset_id}
+    aflow_alignment: ${benchmark.paper_alignment}

@@ -6,8 +6,11 @@ import sys
 
 from dynaforge.config import load_hydra_config
 from dynaforge.experiment_runner import (
+    aggregate_humaneval_repeats,
     aggregate_humaneval_runs,
+    aggregate_math_repeats,
     aggregate_medqa_runs,
+    aggregate_medqa_repeats,
     aggregate_math_runs,
     run_case_study_experiment,
     run_humaneval_experiment,
@@ -59,6 +62,18 @@ def main(argv: list[str] | None = None) -> int:
     humaneval_aggregate = subparsers.add_parser("humaneval-aggregate")
     humaneval_aggregate.add_argument("--base-dir", default="runs")
     humaneval_aggregate.add_argument("run_dirs", nargs="+")
+
+    math_repeat_aggregate = subparsers.add_parser("math-repeat-aggregate")
+    math_repeat_aggregate.add_argument("--base-dir", default="runs")
+    math_repeat_aggregate.add_argument("run_dirs", nargs="+")
+
+    humaneval_repeat_aggregate = subparsers.add_parser("humaneval-repeat-aggregate")
+    humaneval_repeat_aggregate.add_argument("--base-dir", default="runs")
+    humaneval_repeat_aggregate.add_argument("run_dirs", nargs="+")
+
+    medqa_repeat_aggregate = subparsers.add_parser("medqa-repeat-aggregate")
+    medqa_repeat_aggregate.add_argument("--base-dir", default="runs")
+    medqa_repeat_aggregate.add_argument("run_dirs", nargs="+")
 
     math = subparsers.add_parser("math")
     math.add_argument("--experiment", default="math")
@@ -137,6 +152,21 @@ def main(argv: list[str] | None = None) -> int:
         summary = aggregate_humaneval_runs(args.run_dirs, base_dir=args.base_dir)
         print(json.dumps(summary, ensure_ascii=True, indent=2))
         return 0 if summary.get("task_count", 0) > 0 else 1
+
+    if args.command == "math-repeat-aggregate":
+        summary = aggregate_math_repeats(args.run_dirs, base_dir=args.base_dir)
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("repeat_count", 0) > 0 else 1
+
+    if args.command == "humaneval-repeat-aggregate":
+        summary = aggregate_humaneval_repeats(args.run_dirs, base_dir=args.base_dir)
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("repeat_count", 0) > 0 else 1
+
+    if args.command == "medqa-repeat-aggregate":
+        summary = aggregate_medqa_repeats(args.run_dirs, base_dir=args.base_dir)
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("repeat_count", 0) > 0 else 1
 
     if args.command == "math":
         cfg = load_hydra_config(overrides=[f"experiment={args.experiment}", f"model={args.model}", *args.overrides])

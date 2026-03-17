@@ -5,8 +5,10 @@ import math
 import os
 import shutil
 import socket
+import statistics
 import subprocess
 import sys
+import tempfile
 import uuid
 from collections import Counter
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ from dynaforge.benchmarks import (
     prepare_math_dataset,
     prepare_medqa_assets,
     prepare_medqa_dataset,
+    run_humaneval_public_tests,
 )
 from dynaforge.config import build_blueprint_from_config, build_executor_from_config, resolve_hydra_config
 from dynaforge.ir import (
@@ -338,8 +341,9 @@ def run_math_experiment(
         if sample_id in task_results_by_id:
             continue
         task_blueprint = build_math_task_blueprint(base_blueprint, sample)
+        handlers = _build_math_task_handlers(resolved, task_blueprint, sample)
         try:
-            _, report = _run_blueprint(resolved, task_blueprint, executor)
+            _, report = _run_blueprint(resolved, task_blueprint, executor, handlers=handlers)
             report_path = recorder.write_json(f"traces/{sample_id}.report.json", report.model_dump())
             task_result = _build_math_task_result(
                 sample=sample,
@@ -440,8 +444,9 @@ def run_humaneval_experiment(
         if sample_id in task_results_by_id:
             continue
         task_blueprint = build_humaneval_task_blueprint(base_blueprint, sample)
+        handlers = _build_humaneval_task_handlers(resolved, task_blueprint, sample)
         try:
-            _, report = _run_blueprint(resolved, task_blueprint, executor)
+            _, report = _run_blueprint(resolved, task_blueprint, executor, handlers=handlers)
             report_path = recorder.write_json(f"traces/{sample_id}.report.json", report.model_dump())
             task_result = _build_humaneval_task_result(
                 sample=sample,
@@ -798,6 +803,51 @@ def aggregate_medqa_runs(
     return summary
 
 
+def aggregate_math_repeats(
+    run_dirs: Sequence[str | Path],
+    *,
+    base_dir: str | Path = "runs",
+    run_name: str = "math_repeat_aggregate",
+) -> dict[str, Any]:
+    return _aggregate_repeat_runs(
+        run_dirs,
+        benchmark="math",
+        metric_name="solve_rate",
+        base_dir=base_dir,
+        run_name=run_name,
+    )
+
+
+def aggregate_humaneval_repeats(
+    run_dirs: Sequence[str | Path],
+    *,
+    base_dir: str | Path = "runs",
+    run_name: str = "humaneval_repeat_aggregate",
+) -> dict[str, Any]:
+    return _aggregate_repeat_runs(
+        run_dirs,
+        benchmark="humaneval",
+        metric_name="pass_at_1",
+        base_dir=base_dir,
+        run_name=run_name,
+    )
+
+
+def aggregate_medqa_repeats(
+    run_dirs: Sequence[str | Path],
+    *,
+    base_dir: str | Path = "runs",
+    run_name: str = "medqa_repeat_aggregate",
+) -> dict[str, Any]:
+    return _aggregate_repeat_runs(
+        run_dirs,
+        benchmark="medqa",
+        metric_name="accuracy",
+        base_dir=base_dir,
+        run_name=run_name,
+    )
+
+
 def _aggregate_generic_runs(
     run_dirs: Sequence[str | Path],
     *,
@@ -846,6 +896,127 @@ def _aggregate_generic_runs(
     recorder.write_json("eval/task_results.json", all_results)
     recorder.write_json("summaries/summary.json", summary)
     recorder.write_text("summaries/analysis.md", render_generic_benchmark_analysis(summary, all_results))
+    return summary
+
+
+def _aggregate_repeat_runs(
+    run_dirs: Sequence[str | Path],
+    *,
+    benchmark: str,
+    metric_name: str,
+    base_dir: str | Path,
+    run_name: str,
+) -> dict[str, Any]:
+    if not run_dirs:
+        raise BenchmarkSetupError(f"aggregate_{benchmark}_repeats requires at least one run directory")
+
+    recorder = RunRecorder(run_name, base_dir=base_dir)
+    per_repeat: list[dict[str, Any]] = []
+    source_repeat_dirs: list[str] = []
+    subset_values: set[str] = set()
+    model_values: set[str] = set()
+    task_counts: set[int] = set()
+    manifest_fingerprints: set[str] = set()
+    manifest_payload: dict[str, Any] = {}
+
+    for run_dir in [Path(path).resolve() for path in run_dirs]:
+        summary_path = run_dir / "summaries" / "summary.json"
+        if not summary_path.exists():
+            raise BenchmarkSetupError(f"Missing repeat aggregate summary: {summary_path}")
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        if str(summary.get("benchmark", "")) != benchmark:
+            raise BenchmarkSetupError(f"Repeat aggregate benchmark mismatch at {summary_path}")
+        source_run_dirs = [Path(path).resolve() for path in summary.get("source_run_dirs", [])]
+        if not source_run_dirs:
+            raise BenchmarkSetupError(f"Repeat aggregate missing source_run_dirs: {summary_path}")
+        first_source_dir = source_run_dirs[0]
+        source_summary_path = first_source_dir / "summaries" / "summary.json"
+        source_metadata_path = first_source_dir / "summaries" / "run_metadata.json"
+        if not source_summary_path.exists():
+            raise BenchmarkSetupError(f"Missing source summary for repeat aggregate: {source_summary_path}")
+        source_summary = json.loads(source_summary_path.read_text(encoding="utf-8"))
+        source_metadata = (
+            json.loads(source_metadata_path.read_text(encoding="utf-8"))
+            if source_metadata_path.exists()
+            else {}
+        )
+        subset = str(source_summary.get("subset", ""))
+        model_name = str(source_metadata.get("model_name", ""))
+        task_count = int(summary.get("task_count", 0) or 0)
+        manifest = dict(source_summary.get("manifest") or source_summary.get("medqa_manifest") or {})
+        manifest_fingerprint = json.dumps(
+            {
+                "dataset_id": manifest.get("dataset_id", ""),
+                "record_count": manifest.get("record_count", ""),
+                "validation_count": manifest.get("validation_count", ""),
+                "test_count": manifest.get("test_count", ""),
+                "full_count": manifest.get("full_count", ""),
+                "metric": manifest.get("metric", ""),
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+
+        subset_values.add(subset)
+        model_values.add(model_name)
+        task_counts.add(task_count)
+        manifest_fingerprints.add(manifest_fingerprint)
+        if not manifest_payload:
+            manifest_payload = manifest
+
+        per_repeat.append(
+            {
+                "run_dir": str(run_dir),
+                "source_run_dirs": [str(path) for path in source_run_dirs],
+                "subset": subset,
+                "model_name": model_name,
+                "task_count": task_count,
+                metric_name: float(summary.get(metric_name, 0.0) or 0.0),
+                "average_usd": float(summary.get("average_usd", 0.0) or 0.0),
+                "average_input_tokens": float(summary.get("average_input_tokens", 0.0) or 0.0),
+                "average_output_tokens": float(summary.get("average_output_tokens", 0.0) or 0.0),
+                "average_latency_s": float(summary.get("average_latency_s", 0.0) or 0.0),
+            }
+        )
+        source_repeat_dirs.append(str(run_dir))
+
+    if len(subset_values) != 1:
+        raise BenchmarkSetupError(f"Inconsistent subsets across {benchmark} repeats: {sorted(subset_values)}")
+    if len(model_values) != 1:
+        raise BenchmarkSetupError(f"Inconsistent model names across {benchmark} repeats: {sorted(model_values)}")
+    if len(task_counts) != 1:
+        raise BenchmarkSetupError(f"Inconsistent task counts across {benchmark} repeats: {sorted(task_counts)}")
+    if len(manifest_fingerprints) != 1:
+        raise BenchmarkSetupError(f"Inconsistent manifests across {benchmark} repeats")
+
+    summary = {
+        "benchmark": benchmark,
+        "subset": next(iter(subset_values)),
+        "reporting_protocol": "aflow_3run_average",
+        "repeat_count": len(per_repeat),
+        "task_count": next(iter(task_counts)),
+        metric_name: _mean(row[metric_name] for row in per_repeat),
+        f"{metric_name}_std": _stddev(row[metric_name] for row in per_repeat),
+        "average_usd": _mean(row["average_usd"] for row in per_repeat),
+        "average_usd_std": _stddev(row["average_usd"] for row in per_repeat),
+        "average_input_tokens": _mean(row["average_input_tokens"] for row in per_repeat),
+        "average_input_tokens_std": _stddev(row["average_input_tokens"] for row in per_repeat),
+        "average_output_tokens": _mean(row["average_output_tokens"] for row in per_repeat),
+        "average_output_tokens_std": _stddev(row["average_output_tokens"] for row in per_repeat),
+        "average_latency_s": _mean(row["average_latency_s"] for row in per_repeat),
+        "average_latency_s_std": _stddev(row["average_latency_s"] for row in per_repeat),
+        "model_name": next(iter(model_values)),
+        "manifest": manifest_payload,
+        "source_repeat_run_dirs": source_repeat_dirs,
+        "per_repeat": per_repeat,
+        "run_dir": str(recorder.root),
+    }
+    if benchmark == "medqa":
+        summary["accuracy"] = summary[metric_name]
+        summary["pass_at_1"] = summary[metric_name]
+
+    recorder.write_json("summaries/summary.json", summary)
+    recorder.write_text("summaries/analysis.md", render_repeat_benchmark_analysis(summary, metric_name))
     return summary
 
 
@@ -931,7 +1102,6 @@ def build_math_task_blueprint(base_blueprint: WorkflowBlueprint, sample: Mapping
             "benchmark": "math",
             "math_type": sample.get("type", ""),
             "difficulty_level": sample.get("level", ""),
-            "gold_answer": sample.get("gold_answer", ""),
         }
     )
     updated_task = base_blueprint.task.model_copy(
@@ -953,6 +1123,7 @@ def build_humaneval_task_blueprint(base_blueprint: WorkflowBlueprint, sample: Ma
             "benchmark": "humaneval",
             "entry_point": sample.get("entry_point", ""),
             "task_prompt": sample.get("prompt", ""),
+            "public_test_count": len(sample.get("public_tests", []) or []),
         }
     )
     updated_task = base_blueprint.task.model_copy(
@@ -965,6 +1136,248 @@ def build_humaneval_task_blueprint(base_blueprint: WorkflowBlueprint, sample: Ma
     updated_meta = dict(base_blueprint.meta)
     updated_meta.update({"sample_id": sample["id"], "entry_point": sample.get("entry_point", "")})
     return base_blueprint.model_copy(update={"task": updated_task, "meta": updated_meta}, deep=True)
+
+
+def _build_math_task_handlers(
+    config: Mapping[str, Any],
+    blueprint: WorkflowBlueprint,
+    sample: Mapping[str, Any],
+) -> dict[str, Any]:
+    del sample
+    benchmark_settings = dict(config.get("benchmark", {}))
+    workflow_variant = str(benchmark_settings.get("workflow_variant", "")).strip().lower()
+    node_ids = set(blueprint.node_map())
+    if workflow_variant not in {"aflow_v2", "programmer_selector"} and "program_exec" not in node_ids:
+        return {}
+    handlers: dict[str, Any] = {}
+    if "program_exec" in node_ids:
+        handlers["program_exec"] = _math_program_exec_handler
+    return handlers
+
+
+def _build_humaneval_task_handlers(
+    config: Mapping[str, Any],
+    blueprint: WorkflowBlueprint,
+    sample: Mapping[str, Any],
+) -> dict[str, Any]:
+    benchmark_settings = dict(config.get("benchmark", {}))
+    workflow_variant = str(benchmark_settings.get("workflow_variant", "")).strip().lower()
+    node_ids = set(blueprint.node_map())
+    if workflow_variant not in {"aflow_v2", "public_test_loop"} and not (
+        {"public_test_runner", "retest_runner"} & node_ids
+    ):
+        return {}
+    handlers: dict[str, Any] = {}
+    for node_id in ("public_test_runner", "retest_runner"):
+        if node_id in node_ids:
+            handlers[node_id] = (
+                lambda node, inputs, context, _sample=sample: _humaneval_public_test_handler(
+                    node,
+                    inputs,
+                    context,
+                    sample=_sample,
+                )
+            )
+    return handlers
+
+
+def _sandbox_python_executable(node: NodeSpec, context: Any) -> str:
+    sandbox = node.sandbox
+    if sandbox is None:
+        return sys.executable
+    materialized = context.sandbox_runner.ensure_materialized(sandbox)
+    if materialized.python_bin:
+        return str(materialized.python_bin)
+    return sys.executable
+
+
+def _strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _extract_program_text(payload: Any) -> str:
+    candidates: list[str] = []
+    if isinstance(payload, Mapping):
+        for key in ("program", "python_program", "code", "completion", "final_code", "text"):
+            value = payload.get(key)
+            if value is None:
+                continue
+            candidates.append(str(value))
+    elif payload is not None:
+        candidates.append(str(payload))
+    for candidate in candidates:
+        cleaned = _strip_code_fences(candidate)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _extract_candidate_completion(inputs: Mapping[str, Any]) -> str:
+    direct_value = inputs.get("candidate_code")
+    if direct_value is not None:
+        cleaned = _strip_code_fences(str(direct_value))
+        if cleaned:
+            return cleaned
+    for key in ("reviser", "coder", "reviewer"):
+        value = inputs.get(key)
+        if isinstance(value, Mapping):
+            for field in ("completion", "corrected_completion", "code", "final_code", "answer", "text"):
+                candidate = value.get(field)
+                if candidate is None:
+                    continue
+                cleaned = _strip_code_fences(str(candidate))
+                if cleaned:
+                    return cleaned
+    return ""
+
+
+def _execute_math_program(
+    *,
+    program: str,
+    python_executable: str,
+    timeout_s: int = 20,
+) -> dict[str, Any]:
+    harness = (
+        "import contextlib\n"
+        "import io\n"
+        "import json\n\n"
+        f"PROGRAM = {program!r}\n"
+        "payload = {'passed': False, 'executed_answer': '', 'execution_error': '', 'stdout': ''}\n"
+        "namespace = {}\n"
+        "stdout_buffer = io.StringIO()\n"
+        "try:\n"
+        "    with contextlib.redirect_stdout(stdout_buffer):\n"
+        "        exec(PROGRAM, namespace, namespace)\n"
+        "    answer = namespace.get('FINAL_ANSWER')\n"
+        "    if answer is None:\n"
+        "        answer = namespace.get('final_answer')\n"
+        "    if answer is None:\n"
+        "        answer = namespace.get('answer')\n"
+        "    stdout_text = stdout_buffer.getvalue().strip()\n"
+        "    payload['stdout'] = stdout_text[-2000:]\n"
+        "    if answer is None and stdout_text:\n"
+        "        answer = stdout_text.splitlines()[-1].strip()\n"
+        "    if answer is None or not str(answer).strip():\n"
+        "        payload['execution_error'] = 'missing_final_answer'\n"
+        "    else:\n"
+        "        payload['passed'] = True\n"
+        "        payload['executed_answer'] = str(answer).strip()\n"
+        "except Exception as exc:\n"
+        "    payload['stdout'] = stdout_buffer.getvalue()[-2000:]\n"
+        "    payload['execution_error'] = f'{exc.__class__.__name__}: {exc}'\n"
+        "print(json.dumps(payload, ensure_ascii=True))\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="dynaforge_math_program_") as tmp_dir:
+        script_path = Path(tmp_dir) / "exec.py"
+        script_path.write_text(harness, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [python_executable, str(script_path)],
+                text=True,
+                capture_output=True,
+                timeout=timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "passed": False,
+                "executed_answer": "",
+                "execution_error": "execution timed out",
+                "stdout": "",
+            }
+
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if stdout:
+        try:
+            return json.loads(stdout.splitlines()[-1])
+        except json.JSONDecodeError:
+            pass
+    return {
+        "passed": False,
+        "executed_answer": "",
+        "execution_error": stderr or stdout or f"returncode={completed.returncode}",
+        "stdout": stdout[-2000:],
+    }
+
+
+def _math_program_exec_handler(node: NodeSpec, inputs: Mapping[str, Any], context: Any) -> NodeExecutionResult:
+    program = _extract_program_text(inputs)
+    candidate_answer = str(inputs.get("candidate_answer", "") or "").strip()
+    if not program and isinstance(inputs.get("programmer"), Mapping):
+        program = _extract_program_text(inputs["programmer"])
+        if not candidate_answer:
+            candidate_answer = str(inputs["programmer"].get("final_answer", "") or "").strip()
+    if not program:
+        return NodeExecutionResult(
+            outputs={
+                "passed": False,
+                "executed_answer": "",
+                "candidate_answer": candidate_answer,
+                "execution_error": "missing_program",
+            },
+            trace={"math_program_exec": True, "missing_program": True},
+            cost=ExecutionCost(tool_calls=1),
+            confidence=0.1,
+        )
+
+    python_executable = _sandbox_python_executable(node, context)
+    execution = _execute_math_program(program=program, python_executable=python_executable)
+    outputs = {
+        "passed": bool(execution.get("passed", False)),
+        "executed_answer": str(execution.get("executed_answer", "") or "").strip(),
+        "candidate_answer": candidate_answer,
+        "execution_error": str(execution.get("execution_error", "") or "").strip(),
+        "stdout": str(execution.get("stdout", "") or "").strip(),
+        "program": program,
+    }
+    return NodeExecutionResult(
+        outputs=outputs,
+        trace={
+            "math_program_exec": True,
+            "sandbox_python": python_executable,
+            "program_chars": len(program),
+        },
+        cost=ExecutionCost(tool_calls=1),
+        confidence=0.92 if outputs["passed"] else 0.25,
+    )
+
+
+def _humaneval_public_test_handler(
+    node: NodeSpec,
+    inputs: Mapping[str, Any],
+    context: Any,
+    *,
+    sample: Mapping[str, Any],
+) -> NodeExecutionResult:
+    completion = _extract_candidate_completion(inputs)
+    python_executable = _sandbox_python_executable(node, context)
+    result = run_humaneval_public_tests(
+        {"completion": completion},
+        sample,
+        python_executable=python_executable,
+    )
+    outputs = {
+        "passed": bool(result.get("public_passed", False)),
+        "result": str(result.get("public_result", "") or "").strip(),
+        "public_test_count": int(result.get("public_test_count", 0) or 0),
+        "prediction_code": str(result.get("prediction_code", "") or ""),
+    }
+    return NodeExecutionResult(
+        outputs=outputs,
+        trace={
+            "humaneval_public_test_runner": True,
+            "sandbox_python": python_executable,
+            "entry_point": str(sample.get("entry_point", "") or ""),
+        },
+        cost=ExecutionCost(tool_calls=1),
+        confidence=0.95 if outputs["passed"] else 0.2,
+    )
 
 
 def extract_answer_payload(
@@ -1567,6 +1980,8 @@ def _build_math_task_result(
 ) -> dict[str, Any]:
     answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
     grading = grade_math_prediction(answer_payload, sample)
+    selector_outputs = report.node_results.get("selector", NodeExecutionResult()).outputs
+    program_exec_outputs = report.node_results.get("program_exec", NodeExecutionResult()).outputs
     return {
         "order": order,
         "sample_index": sample_index,
@@ -1579,6 +1994,21 @@ def _build_math_task_result(
         },
         "prediction_node": answer_node,
         **grading,
+        "selector_needs_review": bool(selector_outputs.get("needs_review", False))
+        if isinstance(selector_outputs, Mapping)
+        else False,
+        "selector_notes": str(selector_outputs.get("arbitration_notes", "") or "")
+        if isinstance(selector_outputs, Mapping)
+        else "",
+        "program_execution_passed": bool(program_exec_outputs.get("passed", False))
+        if isinstance(program_exec_outputs, Mapping)
+        else False,
+        "program_executed_answer": str(program_exec_outputs.get("executed_answer", "") or "")
+        if isinstance(program_exec_outputs, Mapping)
+        else "",
+        "program_execution_error": str(program_exec_outputs.get("execution_error", "") or "")
+        if isinstance(program_exec_outputs, Mapping)
+        else "",
         "workflow_signature": _workflow_signature(report),
         "activated_gates": report.activated_gates,
         "active_subgraphs": report.active_subgraphs,
@@ -1604,6 +2034,8 @@ def _build_humaneval_task_result(
 ) -> dict[str, Any]:
     answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
     grading = grade_humaneval_prediction(answer_payload, sample)
+    public_test_outputs = report.node_results.get("public_test_runner", NodeExecutionResult()).outputs
+    retest_outputs = report.node_results.get("retest_runner", NodeExecutionResult()).outputs
     return {
         "order": order,
         "sample_index": sample_index,
@@ -1612,6 +2044,18 @@ def _build_humaneval_task_result(
         "metadata": {"entry_point": sample.get("entry_point", "")},
         "prediction_node": answer_node,
         **grading,
+        "public_test_passed": bool(public_test_outputs.get("passed", False))
+        if isinstance(public_test_outputs, Mapping)
+        else False,
+        "public_test_result": str(public_test_outputs.get("result", "") or "")
+        if isinstance(public_test_outputs, Mapping)
+        else "",
+        "retest_passed": bool(retest_outputs.get("passed", False))
+        if isinstance(retest_outputs, Mapping)
+        else False,
+        "retest_result": str(retest_outputs.get("result", "") or "")
+        if isinstance(retest_outputs, Mapping)
+        else "",
         "workflow_signature": _workflow_signature(report),
         "activated_gates": report.activated_gates,
         "active_subgraphs": report.active_subgraphs,
@@ -5632,6 +6076,47 @@ def _trace_role_and_node_counts(result: Mapping[str, Any]) -> tuple[Counter[str]
         if role:
             role_counter[role] += 1
     return role_counter, node_counter
+
+
+def render_repeat_benchmark_analysis(summary: Mapping[str, Any], metric_name: str) -> str:
+    lines = [
+        f"# {summary['benchmark']} repeat aggregate",
+        "",
+        f"- Reporting protocol: {summary.get('reporting_protocol', 'unknown')}",
+        f"- Repeat count: {summary.get('repeat_count', 0)}",
+        f"- Subset: {summary.get('subset', '')}",
+        f"- Model: {summary.get('model_name', '')}",
+        f"- Task count: {summary.get('task_count', 0)}",
+        f"- {metric_name}: {float(summary.get(metric_name, 0.0)):.4f} +/- {float(summary.get(f'{metric_name}_std', 0.0)):.4f}",
+        f"- Average USD: {float(summary.get('average_usd', 0.0)):.6f} +/- {float(summary.get('average_usd_std', 0.0)):.6f}",
+        f"- Average input tokens: {float(summary.get('average_input_tokens', 0.0)):.2f} +/- {float(summary.get('average_input_tokens_std', 0.0)):.2f}",
+        f"- Average output tokens: {float(summary.get('average_output_tokens', 0.0)):.2f} +/- {float(summary.get('average_output_tokens_std', 0.0)):.2f}",
+        f"- Average latency: {float(summary.get('average_latency_s', 0.0)):.2f}s +/- {float(summary.get('average_latency_s_std', 0.0)):.2f}s",
+        "",
+        "## Per repeat",
+    ]
+    for item in summary.get("per_repeat", []):
+        lines.append(
+            f"- `{item.get('run_dir', '')}`: "
+            f"{metric_name}={float(item.get(metric_name, 0.0)):.4f} "
+            f"average_usd={float(item.get('average_usd', 0.0)):.6f} "
+            f"subset={item.get('subset', '')}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _mean(values: Sequence[float] | Any) -> float:
+    data = [float(value) for value in values]
+    if not data:
+        return 0.0
+    return float(statistics.fmean(data))
+
+
+def _stddev(values: Sequence[float] | Any) -> float:
+    data = [float(value) for value in values]
+    if len(data) <= 1:
+        return 0.0
+    return float(statistics.pstdev(data))
 
 
 def _safe_ratio(numerator: float, denominator: int) -> float:

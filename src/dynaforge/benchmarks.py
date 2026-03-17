@@ -371,12 +371,40 @@ def prepare_humaneval_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
             archive_path = _prepare_aflow_public_benchmark_archive(settings)
             validation_source_records = _read_aflow_jsonl_records(archive_path, "humaneval_validate.jsonl")
             test_source_records = _read_aflow_jsonl_records(archive_path, "humaneval_test.jsonl")
+            public_test_records = _read_aflow_jsonl_records(archive_path, "humaneval_public_test.jsonl")
+            public_tests_by_task_id = {
+                str(item.get("problem_id") or item.get("task_id") or "").strip(): _normalize_humaneval_public_tests(
+                    item.get("test", [])
+                )
+                for item in public_test_records
+                if str(item.get("problem_id") or item.get("task_id") or "").strip()
+            }
             validation_records = [
-                {**normalize_humaneval_record(item, record_index=index), "source_split": "validation"}
+                {
+                    **normalize_humaneval_record(
+                        item,
+                        record_index=index,
+                        public_tests=public_tests_by_task_id.get(
+                            str(item.get("task_id", f"HumanEval/{index}")).strip(),
+                            [],
+                        ),
+                    ),
+                    "source_split": "validation",
+                }
                 for index, item in enumerate(validation_source_records)
             ]
             test_records = [
-                {**normalize_humaneval_record(item, record_index=index), "source_split": "test"}
+                {
+                    **normalize_humaneval_record(
+                        item,
+                        record_index=index,
+                        public_tests=public_tests_by_task_id.get(
+                            str(item.get("task_id", f"HumanEval/{index}")).strip(),
+                            [],
+                        ),
+                    ),
+                    "source_split": "test",
+                }
                 for index, item in enumerate(test_source_records)
             ]
             records = [*validation_records, *test_records]
@@ -416,6 +444,9 @@ def prepare_humaneval_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
             "test_indices_path": str(test_indices_path),
             "metric": "pass@1",
             "paper_reference_subset": "AFlow HumanEval public set",
+            "public_test_records_available": sum(
+                1 for record in records if record.get("public_tests")
+            ),
         }
         if data_source == "aflow_package":
             manifest["aflow_archive_path"] = str(archive_path)
@@ -431,7 +462,33 @@ def prepare_humaneval_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
         return manifest
 
 
-def normalize_humaneval_record(record: Mapping[str, Any], *, record_index: int) -> dict[str, Any]:
+def _normalize_humaneval_public_tests(raw_tests: Any) -> list[str]:
+    if raw_tests is None:
+        return []
+    if isinstance(raw_tests, str):
+        candidate = raw_tests.strip()
+        return [candidate] if candidate else []
+    if isinstance(raw_tests, Sequence):
+        normalized = [str(item).strip() for item in raw_tests if str(item).strip()]
+        return normalized
+    return [str(raw_tests).strip()] if str(raw_tests).strip() else []
+
+
+def _extract_humaneval_assertions_from_test(test: str) -> list[str]:
+    assertions: list[str] = []
+    for line in test.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("assert "):
+            assertions.append(stripped)
+    return assertions
+
+
+def normalize_humaneval_record(
+    record: Mapping[str, Any],
+    *,
+    record_index: int,
+    public_tests: Sequence[str] | None = None,
+) -> dict[str, Any]:
     task_id = str(record.get("task_id", f"HumanEval/{record_index}")).strip()
     prompt = str(record.get("prompt", "")).rstrip()
     entry_point = str(record.get("entry_point", "")).strip()
@@ -452,6 +509,7 @@ def normalize_humaneval_record(record: Mapping[str, Any], *, record_index: int) 
         "entry_point": entry_point,
         "test": str(record.get("test", "")),
         "canonical_solution": str(record.get("canonical_solution", "")),
+        "public_tests": list(public_tests or _normalize_humaneval_public_tests(record.get("public_tests"))),
         "question": prompt,
         "model_prompt": "\n".join(prompt_lines),
     }
@@ -503,6 +561,48 @@ def grade_humaneval_prediction(
         "passed": status == "passed",
         "result": detail,
         "correct": status == "passed",
+    }
+
+
+def run_humaneval_public_tests(
+    raw_prediction: Any,
+    sample: Mapping[str, Any],
+    *,
+    python_executable: str | None = None,
+    timeout_s: int = 15,
+) -> dict[str, Any]:
+    completion = extract_humaneval_completion(raw_prediction)
+    if not completion:
+        return {
+            "prediction_code": "",
+            "public_passed": False,
+            "public_result": "empty_completion",
+            "public_test_count": len(_normalize_humaneval_public_tests(sample.get("public_tests"))),
+        }
+
+    public_tests = _normalize_humaneval_public_tests(sample.get("public_tests"))
+    if not public_tests:
+        public_tests = _extract_humaneval_assertions_from_test(str(sample.get("test", "")))
+    if not public_tests:
+        return {
+            "prediction_code": completion,
+            "public_passed": True,
+            "public_result": "no_public_tests",
+            "public_test_count": 0,
+        }
+
+    status, detail = _execute_humaneval_assertions(
+        completion=completion,
+        assertions=public_tests,
+        entry_point=str(sample.get("entry_point", "")),
+        python_executable=python_executable or sys.executable,
+        timeout_s=timeout_s,
+    )
+    return {
+        "prediction_code": completion,
+        "public_passed": status == "passed",
+        "public_result": detail,
+        "public_test_count": len(public_tests),
     }
 
 
@@ -2182,6 +2282,45 @@ def _execute_humaneval_check(
             )
         except subprocess.TimeoutExpired:
             return "timeout", "execution timed out"
+    if completed.returncode == 0:
+        return "passed", "passed"
+    detail = completed.stderr.strip() or completed.stdout.strip() or f"returncode={completed.returncode}"
+    return "failed", detail
+
+
+def _execute_humaneval_assertions(
+    *,
+    completion: str,
+    assertions: Sequence[str],
+    entry_point: str,
+    python_executable: str,
+    timeout_s: int,
+) -> tuple[str, str]:
+    support_code = _humaneval_support_prelude(entry_point)
+    assertion_lines = [line.strip() for line in assertions if str(line).strip()]
+    harness = (
+        "import hashlib\n"
+        "import math\n"
+        "import re\n"
+        "from typing import Any, Dict, List, Optional, Tuple\n\n"
+        f"{support_code}"
+        f"{completion.strip()}\n\n"
+        f"candidate = {entry_point}\n"
+        f"{chr(10).join(assertion_lines)}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="dynaforge_humaneval_public_") as tmp_dir:
+        script_path = Path(tmp_dir) / "check.py"
+        script_path.write_text(harness, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [python_executable, str(script_path)],
+                text=True,
+                capture_output=True,
+                timeout=timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "timeout", "public test execution timed out"
     if completed.returncode == 0:
         return "passed", "passed"
     detail = completed.stderr.strip() or completed.stdout.strip() or f"returncode={completed.returncode}"
