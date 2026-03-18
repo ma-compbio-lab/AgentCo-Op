@@ -242,8 +242,8 @@ class NodeSpec(BaseModel):
     def validate_kind(self) -> "NodeSpec":
         if self.kind in (NodeKind.agent, NodeKind.evaluator, NodeKind.router) and not self.model:
             raise ValueError(f"{self.kind.value} nodes require a model")
-        if self.kind == NodeKind.tool and not self.tools:
-            raise ValueError("tool nodes require at least one ToolRef")
+        if self.kind == NodeKind.tool and not self.tools and not bool(self.meta.get("direct_sandbox_handler", False)):
+            raise ValueError("tool nodes require at least one ToolRef unless direct_sandbox_handler is enabled")
         if self.skills and self.kind not in (NodeKind.agent, NodeKind.evaluator, NodeKind.router):
             raise ValueError("skills are only supported on agent/evaluator/router nodes")
         return self
@@ -393,6 +393,7 @@ class PatchOpType(str, Enum):
     remove_node = "RemoveNode"
     insert_edge = "InsertEdge"
     remove_edge = "RemoveEdge"
+    add_subgraph = "AddSubgraph"
     add_gate = "AddGate"
     prune_subgraph = "PruneSubgraph"
     tighten_contract = "TightenContract"

@@ -8,9 +8,12 @@ from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 
 from dynaforge.ir import WorkflowBlueprint
+from dynaforge.ir.schema import ModelSpec
 from dynaforge.runtime.executor import BlueprintExecutor
 from dynaforge.runtime.reports import ExecutionReport
 from dynaforge.runtime.skills import SkillRegistry
+from dynaforge.workflows.compiler import compile_workflow_from_config, extract_compiler_config
+from dynaforge.workflows.expansion import RuntimeGraphExpansionPolicy
 
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "conf"
 
@@ -58,6 +61,10 @@ def get_benchmark_settings(config: DictConfig | Mapping[str, Any]) -> dict[str, 
 
 def build_blueprint_from_config(config: DictConfig | Mapping[str, Any]) -> WorkflowBlueprint:
     resolved = resolve_hydra_config(config)
+    compiler_cfg = extract_compiler_config(resolved)
+    if compiler_cfg is not None and compiler_cfg.enabled:
+        blueprint, _ = compile_workflow_from_config(resolved)
+        return blueprint
     blueprint_payload = resolved.get("blueprint")
     if blueprint_payload is None:
         experiment_cfg = resolved.get("experiment")
@@ -83,6 +90,15 @@ def build_executor_from_config(
         "artifact_root": executor_cfg.get("artifact_root", ".dynaforge_artifacts"),
         "allow_offline_fallback": executor_cfg.get("allow_offline_fallback", True),
     }
+    compiler_cfg = extract_compiler_config(resolved)
+    if compiler_cfg is not None and compiler_cfg.enabled and compiler_cfg.runtime_expansion.enabled:
+        model_spec = ModelSpec.model_validate(resolved.get("model", {}))
+        review_model_spec = ModelSpec.model_validate(resolved.get("review_model", resolved.get("model", {})))
+        kwargs["runtime_expansion_policy"] = RuntimeGraphExpansionPolicy(
+            compiler_cfg.runtime_expansion,
+            model=model_spec,
+            review_model=review_model_spec,
+        )
     skill_search_paths = executor_cfg.get("skill_search_paths")
     skill_project_root = executor_cfg.get("skill_project_root")
     if skill_search_paths is not None or skill_project_root is not None:

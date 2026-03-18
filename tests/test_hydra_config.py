@@ -81,38 +81,33 @@ def test_experiment_group_can_override_executor_settings() -> None:
     assert config.executor.max_repair_iterations == 2
 
 
-def test_medqa_config_uses_advisory_planner_mapping() -> None:
+def test_medqa_config_uses_compiled_direct_answer_pattern() -> None:
     config = load_hydra_config(overrides=["experiment=medqa", "model=openai_gpt4o_mini"])
     blueprint = build_blueprint_from_config(config)
 
-    medqa_edge = blueprint.base_edges[0]
     medqa_gate = blueprint.gates[0]
 
     assert config.benchmark.split == "test"
     assert config.benchmark.full_count == "all"
-    assert config.benchmark.paper_alignment.base_model == "gpt-4o-mini"
-    assert medqa_edge.mapping == {
-        "planner_question_type": "question_type",
-        "planner_key_clues": "key_clues",
-        "planner_most_discriminating_clue": "most_discriminating_clue",
-        "planner_rationale_outline": "rationale_outline",
-    }
+    assert config.benchmark.paper_alignment.base_model == "gpt-5-nano"
+    assert list(blueprint.node_map().keys()) == ["solver", "reviewer", "reviser"]
+    assert blueprint.meta["workflow_pattern"] == "direct_answer"
+    assert blueprint.meta["compile_trace"]["selected_pattern"] == "direct_answer"
     assert medqa_gate.trigger.all_of[0].field == "node.node_id"
-    assert medqa_gate.trigger.all_of[0].value == "responder"
-    assert medqa_gate.trigger.all_of[1].any_of[0].field == "node.inputs.planner_question_type"
-    assert medqa_gate.trigger.all_of[1].any_of[0].value == "mechanism"
-    assert medqa_gate.trigger.all_of[1].any_of[1].value == "next_step_diagnosis"
-    assert medqa_gate.trigger.all_of[1].any_of[2].value == 0.86
+    assert medqa_gate.trigger.all_of[0].value == "solver"
+    assert medqa_gate.trigger.all_of[1].any_of[0].field == "node.outputs.requires_review"
+    assert medqa_gate.trigger.all_of[1].any_of[1].value == 0.55
 
 
-def test_medqa_planner_gate_config_preserves_legacy_gate() -> None:
+def test_medqa_planner_gate_config_remains_loadable() -> None:
     config = load_hydra_config(overrides=["experiment=medqa_planner_gate", "model=openai_gpt5_mini"])
     blueprint = build_blueprint_from_config(config)
 
     medqa_gate = blueprint.gates[0]
 
-    assert medqa_gate.trigger.any_of[0].field == "report.confidence"
-    assert medqa_gate.trigger.any_of[0].value == 0.86
+    assert blueprint.meta["workflow_pattern"] == "direct_answer"
+    assert medqa_gate.trigger.all_of[0].field == "node.node_id"
+    assert medqa_gate.trigger.all_of[0].value == "solver"
 
 
 def test_medqa_gpt5_review_config_uses_stronger_review_model() -> None:
@@ -184,6 +179,51 @@ def test_humaneval_v2_config_exposes_public_test_loop() -> None:
     assert "retest_runner" in blueprint.node_map()
     assert blueprint.node_map()["public_test_runner"].meta["direct_sandbox_handler"] is True
     assert blueprint.gates[0].trigger.all_of[0].value == "public_test_runner"
+
+
+def test_generic_repo_transfer_smoke_config_uses_compiled_generic_runner() -> None:
+    config = load_hydra_config(overrides=["experiment=generic_repo_transfer_smoke"])
+    blueprint = build_blueprint_from_config(config)
+
+    assert config.benchmark.kind == "case_study"
+    assert config.benchmark.runner_mode == "compiled_generic"
+    assert config.benchmark.case_id == "generic_repo_transfer_smoke"
+    assert config.model.name == "gpt-5"
+    assert blueprint.meta["workflow_pattern"] == "repo_transfer_validate"
+    assert blueprint.meta["compile_trace"]["selected_pattern"] == "repo_transfer_validate"
+    assert blueprint.node_map()["repo_runner"].meta["direct_sandbox_handler"] is True
+    assert blueprint.node_map()["repo_runner"].meta["job_module"] == "dynaforge.case_studies.generic_repo_echo_job"
+
+
+def test_closed_loop_spatial_panel_design_case_compiles_generic_closed_loop_pattern() -> None:
+    config = load_hydra_config(overrides=["experiment=closed_loop_spatial_panel_design_case"])
+    blueprint = build_blueprint_from_config(config)
+
+    assert config.model.name == "gpt-5"
+    assert blueprint.meta["workflow_pattern"] == "closed_loop_design_validate"
+    assert blueprint.meta["compile_trace"]["selected_pattern"] == "closed_loop_design_validate"
+    assert "repair_controller" in blueprint.node_map()
+    assert blueprint.subgraphs[0].entry_nodes == ["repair_controller"]
+
+
+def test_cell2location_repo_transfer_case_preserves_gpt5_thinking_default() -> None:
+    config = load_hydra_config(overrides=["experiment=cell2location_repo_transfer_case"])
+    blueprint = build_blueprint_from_config(config)
+
+    assert config.model.name == "gpt-5"
+    assert blueprint.meta["workflow_pattern"] == "repo_transfer_validate"
+    assert blueprint.node_map()["repo_runner"].sandbox.image == "python:3.13"
+
+
+def test_spatial_crispr_specialist_collaboration_case_compiles_generic_specialist_pattern() -> None:
+    config = load_hydra_config(overrides=["experiment=spatial_crispr_specialist_collaboration_case"])
+    blueprint = build_blueprint_from_config(config)
+
+    assert config.model.name == "gpt-5"
+    assert blueprint.meta["workflow_pattern"] == "specialist_assembly"
+    assert blueprint.node_map()["specialist_a"].meta["job_module"] == "dynaforge.case_studies.spatialagent_context_job"
+    assert blueprint.node_map()["specialist_b"].meta["job_module"] == "dynaforge.case_studies.biodiscovery_perturbation_job"
+    assert blueprint.node_map()["specialist_b"].sandbox.image.startswith("conda-env:")
 
 
 def test_scanpy_case_study_config_exposes_local_venv_sandbox() -> None:

@@ -1,0 +1,149 @@
+# @package _global_
+
+defaults:
+  - override /model: openai_gpt5_thinking
+
+benchmark:
+  kind: case_study
+  runner_mode: compiled_generic
+  case_id: closed_loop_spatial_panel_design
+  title: Closed-loop Spatial Panel Design and Validation
+  case_root: benchmarks/case_studies/closed_loop_spatial_panel_design
+  repo_root: external/case_studies/closed_loop_spatial_panel_design/repos
+  methods_excerpt: experiment3-1.md
+  target_figure_description: |
+    Design a targeted spatial gene panel from the mouse-brain single-cell reference and validate it on a held-out
+    Visium mouse-brain slide. If probe-feasibility or panel-utility checks fail, replace weak genes with backups and re-run validation.
+  task_notes: |
+    This packaged variant uses the official cell2location mouse-brain public assets and a computational probe-feasibility proxy.
+    The primary closed-loop signal is held-out spatial recovery against manual cortical-layer annotations.
+  candidate_repos:
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+    - name: tangram
+      url: https://github.com/broadinstitute/Tangram.git
+    - name: cell2location
+      path: external/case_studies/cell2location_transfer/repos/cell2location
+  input_assets:
+    public_data_bundle: cell2location_mouse_brain
+    holdout_slide: ST8059050
+    constraints:
+      panel_size: 96
+      backup_gene_count: 20
+      min_validation_score: 0.22
+      max_failed_genes: 10
+  expected_outputs:
+    - panel_v1.csv
+    - backup_genes.csv
+    - panel_design_summary.json
+    - panel_validation_summary.json
+    - panel_spatial_clusters.png
+    - panel_manual_layer_agreement.png
+  output_contract:
+    must_include:
+      - panel_path
+      - backup_panel_path
+      - panel_validation_path
+      - panel_cluster_figure_path
+      - agreement_figure_path
+
+workflow_design:
+  enabled: true
+  mode: pattern_then_synthesize
+  preferred_pattern: closed_loop_design_validate
+  task_profile:
+    domain: panel_design
+    answer_mode: artifact_bundle
+    complexity: high
+    requires_tool_execution: true
+    requires_web_research: true
+    requires_closed_loop: true
+    requires_artifact_validation: true
+    preferred_review_style: gate
+    expected_artifacts:
+      - panel_v1.csv
+      - panel_validation_summary.json
+      - panel_spatial_clusters.png
+  runtime_expansion:
+    enabled: true
+    max_expansions: 3
+  pattern_overrides:
+    closed_loop_design_validate:
+      planner_system_prompt: |
+        You are planning a closed-loop spatial panel design task.
+        Return strict JSON with:
+        - output.design_config: panel_size, backup_gene_count, excluded_genes, min_cells_per_label
+        - output.validation_plan: holdout_slide, min_validation_score, max_failed_genes, resolution, seed
+        - output.summary
+        Use the task hints and prefer a conservative first-pass panel with explicit backup genes.
+      repair_system_prompt: |
+        You are repairing a closed-loop spatial panel design.
+        Read the original design_result and validation_result. Return strict JSON with:
+        - output.design_config.panel_size
+        - output.design_config.backup_gene_count
+        - output.design_config.excluded_genes
+        - output.design_config.min_cells_per_label
+        - output.summary
+        When genes fail validation, add them to excluded_genes and promote replacement_candidates.
+      tool_nodes:
+        design_runner:
+          role: PanelDesigner
+          description: Build a candidate spatial gene panel and backup list from the reference atlas.
+          sandbox:
+            sandbox_id: closed-loop-spatial-panel-design
+            backend: local_venv
+            image: python:3.11
+            workdir: .
+            safety:
+              allow_network: true
+              cpu_quota: 2.0
+              mem_limit_mb: 12288
+              timeout_s: 2400
+            bootstrap_cmds:
+              - [python, -m, pip, install, scanpy, anndata, pandas, numpy, scipy, scikit-learn, matplotlib, seaborn, pillow, leidenalg, igraph]
+          io:
+            output_schema:
+              type: object
+              required: [selected_repo, panel_path, backup_panel_path, panel_genes, backup_genes, summary]
+          meta:
+            direct_sandbox_handler: true
+            job_module: dynaforge.case_studies.closed_loop_spatial_panel_design_job
+        validation_runner:
+          role: PanelValidator
+          description: Validate the panel on a held-out spatial slide and request re-planning when needed.
+          sandbox:
+            sandbox_id: closed-loop-spatial-panel-design
+            backend: local_venv
+            image: python:3.11
+            workdir: .
+            safety:
+              allow_network: true
+              cpu_quota: 2.0
+              mem_limit_mb: 12288
+              timeout_s: 2400
+            bootstrap_cmds:
+              - [python, -m, pip, install, scanpy, anndata, pandas, numpy, scipy, scikit-learn, matplotlib, seaborn, pillow, leidenalg, igraph]
+          io:
+            output_schema:
+              type: object
+              required: [panel_validation_path, needs_replan, failed_genes, replacement_candidates, validation_score, summary]
+          meta:
+            direct_sandbox_handler: true
+            job_module: dynaforge.case_studies.closed_loop_spatial_panel_validation_job
+
+blueprint:
+  task:
+    task_id: closed_loop_spatial_panel_design
+    title: Closed-loop Spatial Panel Design and Validation
+    description: Design, validate, and if needed revise a targeted spatial gene panel on held-out mouse-brain spatial data.
+  budget:
+    max_total_usd: 18.0
+    max_total_tokens: 60000
+    max_wall_time_s: 5400
+    max_tool_calls: 6
+    max_container_starts: 4
+
+executor:
+  artifact_root: .dynaforge_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

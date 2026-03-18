@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from dynaforge.case_studies.legacy_registry import legacy_case_family
 from dynaforge.config import get_benchmark_settings
 
 try:  # pragma: no cover - platform-dependent
@@ -41,7 +42,6 @@ def prepare_medqa_assets(config: Mapping[str, Any]) -> dict[str, Any]:
     if settings.get("kind") != "medqa":
         raise BenchmarkSetupError("Benchmark config kind must be 'medqa'")
 
-    datasets_module = _import_datasets_module()
     dataset_id = str(settings.get("dataset_id", "bigbio/med_qa"))
     trust_remote_code = bool(settings.get("trust_remote_code", True))
     preview_path = Path(str(settings.get("preview_path", "benchmarks/medqa/medqa_preview.json")))
@@ -52,6 +52,12 @@ def prepare_medqa_assets(config: Mapping[str, Any]) -> dict[str, Any]:
 
     preview_path.parent.mkdir(parents=True, exist_ok=True)
     info_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cached_info = _load_cached_json(info_path)
+    if cached_info and preview_path.exists() and str(cached_info.get("dataset_id", "")) == dataset_id:
+        return cached_info
+
+    datasets_module = _import_datasets_module()
 
     config_names = list(
         datasets_module.get_dataset_config_names(
@@ -144,16 +150,18 @@ def prepare_math_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
             },
         )
         if cached_manifest is not None:
-            upstream_manifest = _prepare_math_upstream_assets(
+            upstream_manifest = _prepare_optional_upstream_manifest(
+                _prepare_math_upstream_assets,
                 settings,
                 dataset_id=dataset_id,
                 split_seed=split_seed,
             )
             cached_manifest = dict(cached_manifest)
-            cached_manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
-            cached_manifest["upstream_train_count"] = int(upstream_manifest.get("train_count", 0))
-            cached_manifest["upstream_test_count"] = int(upstream_manifest.get("test_count", 0))
-            cached_manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+            if upstream_manifest is not None:
+                cached_manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+                cached_manifest["upstream_train_count"] = int(upstream_manifest.get("train_count", 0))
+                cached_manifest["upstream_test_count"] = int(upstream_manifest.get("test_count", 0))
+                cached_manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
             _write_json(metadata_path, cached_manifest)
             return cached_manifest
 
@@ -238,15 +246,17 @@ def prepare_math_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
         }
         if data_source == "aflow_package":
             manifest["aflow_archive_path"] = str(archive_path)
-        upstream_manifest = _prepare_math_upstream_assets(
+        upstream_manifest = _prepare_optional_upstream_manifest(
+            _prepare_math_upstream_assets,
             settings,
             dataset_id=dataset_id,
             split_seed=split_seed,
         )
-        manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
-        manifest["upstream_train_count"] = int(upstream_manifest.get("train_count", 0))
-        manifest["upstream_test_count"] = int(upstream_manifest.get("test_count", 0))
-        manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+        if upstream_manifest is not None:
+            manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+            manifest["upstream_train_count"] = int(upstream_manifest.get("train_count", 0))
+            manifest["upstream_test_count"] = int(upstream_manifest.get("test_count", 0))
+            manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
         _write_json(metadata_path, manifest)
         return manifest
 
@@ -259,7 +269,7 @@ def normalize_math_record(
 ) -> dict[str, Any]:
     problem = str(record.get("problem", "")).strip()
     solution = str(record.get("solution", "")).strip()
-    answer = _extract_boxed_text(solution) or solution.splitlines()[-1].strip()
+    answer = _extract_boxed_text(solution) or _extract_math_answer_from_solution(solution)
     level = str(record.get("level", "")).strip()
     math_type = str(record.get("type", config_name)).strip()
     prompt_lines = [
@@ -355,15 +365,17 @@ def prepare_humaneval_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
             },
         )
         if cached_manifest is not None:
-            upstream_manifest = _prepare_humaneval_upstream_assets(
+            upstream_manifest = _prepare_optional_upstream_manifest(
+                _prepare_humaneval_upstream_assets,
                 settings,
                 dataset_id=dataset_id,
                 split_seed=split_seed,
             )
             cached_manifest = dict(cached_manifest)
-            cached_manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
-            cached_manifest["upstream_train_available"] = bool(upstream_manifest.get("train_available", False))
-            cached_manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+            if upstream_manifest is not None:
+                cached_manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+                cached_manifest["upstream_train_available"] = bool(upstream_manifest.get("train_available", False))
+                cached_manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
             _write_json(metadata_path, cached_manifest)
             return cached_manifest
 
@@ -450,14 +462,16 @@ def prepare_humaneval_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
         }
         if data_source == "aflow_package":
             manifest["aflow_archive_path"] = str(archive_path)
-        upstream_manifest = _prepare_humaneval_upstream_assets(
+        upstream_manifest = _prepare_optional_upstream_manifest(
+            _prepare_humaneval_upstream_assets,
             settings,
             dataset_id=dataset_id,
             split_seed=split_seed,
         )
-        manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
-        manifest["upstream_train_available"] = bool(upstream_manifest.get("train_available", False))
-        manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
+        if upstream_manifest is not None:
+            manifest["upstream_full_manifest_path"] = str(Path(upstream_manifest["manifest_path"]).resolve())
+            manifest["upstream_train_available"] = bool(upstream_manifest.get("train_available", False))
+            manifest["upstream_train_sample_count"] = int(upstream_manifest.get("train_sample_count", 0))
         _write_json(metadata_path, manifest)
         return manifest
 
@@ -611,7 +625,6 @@ def prepare_medqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
     if settings.get("kind") != "medqa":
         raise BenchmarkSetupError("Benchmark config kind must be 'medqa'")
 
-    datasets_module = _import_datasets_module()
     dataset_id = str(settings.get("dataset_id", "bigbio/med_qa"))
     trust_remote_code = bool(settings.get("trust_remote_code", True))
     requested_config = settings.get("config_name")
@@ -624,6 +637,21 @@ def prepare_medqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
     smoke_count = _coerce_desired_count(settings.get("smoke_count", 5))
     full_count = _coerce_desired_count(settings.get("full_count", 50))
     seed = int(settings.get("seed", 0))
+    split_candidates = _ordered_unique([str(requested_split) if requested_split else None, "test", "validation", "train"])
+
+    cached_manifest_hint = _load_cached_json(metadata_path)
+    if cached_manifest_hint and str(cached_manifest_hint.get("dataset_id", "")) == dataset_id:
+        cached_manifest = _load_cached_medqa_manifest(
+            metadata_path=metadata_path,
+            dataset_id=dataset_id,
+            chosen_config=str(cached_manifest_hint.get("chosen_config", "")),
+            split_candidates=split_candidates,
+            seed=seed,
+        )
+        if cached_manifest is not None:
+            return cached_manifest
+
+    datasets_module = _import_datasets_module()
 
     config_names = list(
         datasets_module.get_dataset_config_names(
@@ -635,7 +663,6 @@ def prepare_medqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
         raise BenchmarkSetupError(f"No dataset configs found for {dataset_id}")
 
     chosen_config = str(requested_config) if requested_config in config_names else _choose_medqa_config(config_names)
-    split_candidates = _ordered_unique([str(requested_split) if requested_split else None, "test", "validation", "train"])
 
     processed_dir.mkdir(parents=True, exist_ok=True)
     with _file_lock(processed_dir / ".prepare.lock"):
@@ -939,6 +966,13 @@ def _prepare_medqa_all_splits_assets(
         }
         _write_json(metadata_path, manifest)
         return manifest
+
+
+def _prepare_optional_upstream_manifest(loader: Any, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+    try:
+        return loader(*args, **kwargs)
+    except Exception:
+        return None
 
 
 def _prepare_math_upstream_assets(
@@ -1845,29 +1879,141 @@ def prepare_visium_multi_agent_case_study(config: Mapping[str, Any]) -> dict[str
 
 def prepare_case_study_assets(config: Mapping[str, Any]) -> dict[str, Any]:
     settings = get_benchmark_settings(config)
+    runner_mode = str(settings.get("runner_mode", "")).strip().lower()
+    if runner_mode in {"compiled_generic", "generic_compiled"}:
+        return prepare_generic_case_study_assets(config)
     case_id = str(settings.get("case_id", ""))
-    if case_id == "scanpy_pbmc3k_umap":
+    family = legacy_case_family(case_id)
+    if family == "scanpy_pbmc3k":
         return prepare_scanpy_pbmc3k_case_study(config)
-    if case_id in {
-        "scanpy_paul15_trajectory",
-        "scanpy_paul15_paper_figure",
-        "scanpy_paul15_specialized_collaboration",
-        "scanpy_moignard15_method_transfer",
-        "scanpy_moignard15_specialized_collaboration",
-        "scanpy_krumsiek11_method_transfer",
-        "scanpy_krumsiek11_specialized_collaboration",
-    }:
+    if family == "scanpy_trajectory":
         return prepare_scanpy_paul15_case_study(config)
-    if case_id in {
-        "visium_multi_agent_collaboration",
-        "visium_multi_agent_monolith",
-        "seqfish_multi_agent_collaboration",
-        "seqfish_multi_agent_monolith",
-    }:
+    if family == "visium_multi_agent":
         return prepare_visium_multi_agent_case_study(config)
-    if case_id in {"squidpy_visium_hne_spatial", "squidpy_visium_hne_interactions", "squidpy_seqfish_method_transfer"}:
+    if family == "squidpy":
         return prepare_squidpy_visium_case_study(config)
     raise BenchmarkSetupError(f"Unsupported case-study id: {case_id}")
+
+
+def prepare_generic_case_study_assets(config: Mapping[str, Any]) -> dict[str, Any]:
+    settings = get_benchmark_settings(config)
+    if settings.get("kind") != "case_study":
+        raise BenchmarkSetupError("Generic case-study setup requires benchmark.kind=case_study")
+
+    case_id = str(settings.get("case_id", "generic_case_study")).strip() or "generic_case_study"
+    runner_mode = str(settings.get("runner_mode", "compiled_generic")).strip().lower() or "compiled_generic"
+    case_root = Path(str(settings.get("case_root", f"benchmarks/case_studies/{case_id}"))).resolve()
+    repos_root = Path(str(settings.get("repo_root", f"external/case_studies/{case_id}/repos"))).resolve()
+    materials_dir = case_root / "materials"
+    generated_dir = case_root / "generated"
+    data_dir = case_root / "data"
+    reference_dir = case_root / "reference"
+    for path in (case_root, repos_root, materials_dir, generated_dir, data_dir, reference_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    methods_excerpt = _resolve_case_text(
+        settings.get("methods_excerpt"),
+        fallback_path=materials_dir / "methods_excerpt.txt",
+        default="",
+    )
+    target_figure_description = _resolve_case_text(
+        settings.get("target_figure_description"),
+        fallback_path=materials_dir / "target_figure_description.txt",
+        default="",
+    )
+    task_notes = _resolve_case_text(
+        settings.get("task_notes"),
+        fallback_path=materials_dir / "task_notes.txt",
+        default="",
+    )
+
+    candidate_repos = settings.get("candidate_repos", [])
+    if not isinstance(candidate_repos, Sequence) or isinstance(candidate_repos, (str, bytes)):
+        raise BenchmarkSetupError("benchmark.candidate_repos must be a sequence of repo descriptors")
+    repo_records = _prepare_candidate_repo_records(candidate_repos, repos_root)
+    candidate_repo_path = case_root / "candidate_repos.json"
+    _write_json(candidate_repo_path, repo_records)
+
+    input_assets = dict(settings.get("input_assets", {})) if isinstance(settings.get("input_assets", {}), Mapping) else {}
+    public_bundle = str(input_assets.get("public_data_bundle", "")).strip()
+    if public_bundle:
+        prepared_assets = _prepare_public_case_data_bundle(
+            public_bundle,
+            data_dir=data_dir,
+            reference_dir=reference_dir,
+        )
+        bundle_key = f"{public_bundle}_assets"
+        input_assets[bundle_key] = prepared_assets
+        input_assets.setdefault("prepared_public_bundle", public_bundle)
+    expected_outputs = settings.get("expected_outputs", [])
+    output_contract = dict(settings.get("output_contract", {})) if isinstance(settings.get("output_contract", {}), Mapping) else {}
+    hidden_assets = dict(settings.get("hidden_assets", {})) if isinstance(settings.get("hidden_assets", {}), Mapping) else {}
+    task_spec = {
+        "title": str(settings.get("title", case_id.replace("_", " ").title())),
+        "methods_excerpt": methods_excerpt,
+        "target_figure_description": target_figure_description,
+        "task_notes": task_notes,
+        "input_assets": input_assets,
+        "expected_outputs": list(expected_outputs) if isinstance(expected_outputs, Sequence) and not isinstance(expected_outputs, (str, bytes)) else [],
+        "output_contract": output_contract,
+    }
+    task_spec_path = case_root / "task_spec.json"
+    _write_json(task_spec_path, task_spec)
+    hidden_manifest_path = case_root / "hidden_manifest.json"
+    _write_json(hidden_manifest_path, hidden_assets)
+
+    data_manifest = {
+        "case_id": case_id,
+        "input_assets": input_assets,
+        "generated_dir": str(generated_dir),
+        "data_dir": str(data_dir),
+        "reference_dir": str(reference_dir),
+    }
+    data_manifest_path = case_root / "data_manifest.json"
+    _write_json(data_manifest_path, data_manifest)
+
+    return {
+        "case_id": case_id,
+        "case_root": str(case_root),
+        "repo_root": str(repos_root),
+        "generated_dir": str(generated_dir),
+        "data_dir": str(data_dir),
+        "reference_dir": str(reference_dir),
+        "methods_excerpt": methods_excerpt,
+        "target_figure_description": target_figure_description,
+        "task_notes": task_notes,
+        "candidate_repos_path": str(candidate_repo_path),
+        "candidate_repos": repo_records,
+        "task_spec_path": str(task_spec_path),
+        "data_manifest_path": str(data_manifest_path),
+        "hidden_manifest_path": str(hidden_manifest_path),
+        "hidden_assets": hidden_assets,
+        "input_assets": input_assets,
+        "expected_outputs": task_spec["expected_outputs"],
+        "output_contract": output_contract,
+        "runner_mode": runner_mode,
+    }
+
+
+def _prepare_public_case_data_bundle(
+    bundle_name: str,
+    *,
+    data_dir: Path,
+    reference_dir: Path,
+) -> dict[str, Any]:
+    from dynaforge.case_studies.public_data import (
+        ensure_cell2location_mouse_brain_assets,
+        ensure_tenx_breast_visium_assets,
+    )
+
+    normalized = bundle_name.strip().lower()
+    if normalized == "cell2location_mouse_brain":
+        bundle_root = reference_dir / normalized
+        return ensure_cell2location_mouse_brain_assets(bundle_root)
+    if normalized == "tenx_visium_breast_cancer":
+        bundle_root = data_dir / normalized
+        return ensure_tenx_breast_visium_assets(bundle_root)
+    raise BenchmarkSetupError(f"Unsupported public_data_bundle: {bundle_name}")
 
 
 def _choose_medqa_config(config_names: Sequence[str]) -> str:
@@ -1875,6 +2021,58 @@ def _choose_medqa_config(config_names: Sequence[str]) -> str:
         if "bigbio_qa" in name:
             return name
     return str(config_names[0])
+
+
+def _resolve_case_text(value: Any, *, fallback_path: Path, default: str = "") -> str:
+    if isinstance(value, str) and value.strip():
+        candidate = Path(value)
+        if candidate.exists():
+            text = candidate.read_text(encoding="utf-8").strip()
+        else:
+            text = value.strip()
+        fallback_path.parent.mkdir(parents=True, exist_ok=True)
+        fallback_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+        return text
+    if fallback_path.exists():
+        return fallback_path.read_text(encoding="utf-8").strip()
+    fallback_path.parent.mkdir(parents=True, exist_ok=True)
+    fallback_path.write_text(default + ("\n" if default else ""), encoding="utf-8")
+    return default
+
+
+def _prepare_candidate_repo_records(candidate_repos: Sequence[Any], repos_root: Path) -> list[dict[str, Any]]:
+    repo_records: list[dict[str, Any]] = []
+    repos_root.mkdir(parents=True, exist_ok=True)
+    for index, raw_repo in enumerate(candidate_repos):
+        if not isinstance(raw_repo, Mapping):
+            raise BenchmarkSetupError(f"Candidate repo entry at position {index} must be a mapping")
+        repo = dict(raw_repo)
+        repo_name = str(repo.get("name", "")).strip() or f"repo_{index}"
+        repo_url = str(repo.get("url", "")).strip()
+        repo_path_value = str(repo.get("path", "")).strip()
+        if not repo_url and not repo_path_value:
+            raise BenchmarkSetupError(f"Candidate repo '{repo_name}' requires either url or path")
+        if repo_path_value:
+            repo_path = Path(repo_path_value).expanduser().resolve()
+            action = "existing"
+        else:
+            repo_path = repos_root / repo_name
+            action = "existing"
+            if not repo_path.exists():
+                _run_command(["git", "clone", "--depth", "1", repo_url, str(repo_path)])
+                action = "cloned"
+        record = {
+            "name": repo_name,
+            "url": repo_url,
+            "path": str(repo_path),
+            "action": action,
+        }
+        for key, value in repo.items():
+            if key in record:
+                continue
+            record[str(key)] = value
+        repo_records.append(record)
+    return repo_records
 
 
 def _ordered_unique(values: Sequence[str | None]) -> list[str | None]:
@@ -1889,6 +2087,7 @@ def _ordered_unique(values: Sequence[str | None]) -> list[str | None]:
 
 
 def _import_datasets_module() -> Any:
+    _ensure_huggingface_cache_is_writable()
     try:
         import datasets
     except ImportError as exc:  # pragma: no cover - depends on runtime env
@@ -1896,6 +2095,26 @@ def _import_datasets_module() -> Any:
             "Benchmark preparation requires the 'datasets' package. Install with `pip install -e '.[benchmarks]'`."
         ) from exc
     return datasets
+
+
+def _ensure_huggingface_cache_is_writable() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")).expanduser()
+    target = hf_home if _path_is_writable(hf_home) else project_root / ".hf_cache"
+    target.mkdir(parents=True, exist_ok=True)
+    os.environ["HF_HOME"] = str(target)
+    os.environ.setdefault("HF_DATASETS_CACHE", str(target / "datasets"))
+    os.environ.setdefault("HF_MODULES_CACHE", str(target / "modules"))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(target / "hub"))
+
+
+def _path_is_writable(path: Path) -> bool:
+    probe = path if path.exists() else path.parent
+    try:
+        probe.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return os.access(probe, os.W_OK)
 
 
 def _run_command(
@@ -2034,6 +2253,18 @@ def _load_generic_cached_manifest(
     return manifest
 
 
+def _load_cached_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    return dict(payload)
+
+
 def _load_cached_split_manifest(
     metadata_path: Path,
     *,
@@ -2169,18 +2400,76 @@ def _coerce_desired_count(value: Any) -> int | None:
 def _extract_boxed_text(value: str) -> str:
     if not value:
         return ""
-    matches = re.findall(r"\\boxed\{((?:[^{}]|(?:\{[^{}]*\}))*)\}", value, flags=re.DOTALL)
+    matches: list[str] = []
+    needle = r"\boxed{"
+    start = 0
+    while True:
+        idx = value.find(needle, start)
+        if idx < 0:
+            break
+        cursor = idx + len(needle)
+        depth = 1
+        content_start = cursor
+        while cursor < len(value):
+            char = value[cursor]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    matches.append(value[content_start:cursor].strip())
+                    break
+            cursor += 1
+        start = idx + len(needle)
     if matches:
-        return matches[-1].strip()
+        return matches[-1]
     return ""
+
+
+def _extract_math_answer_from_solution(solution: str) -> str:
+    stripped = solution.strip()
+    if not stripped:
+        return ""
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    candidates = list(reversed(lines[-4:])) if lines else [stripped]
+    for candidate in candidates:
+        boxed = _extract_boxed_text(candidate)
+        if boxed:
+            return boxed
+        normalized = candidate.strip().rstrip(".")
+        if not normalized:
+            continue
+        if "answer is" in normalized.lower():
+            tail = normalized.split("answer is", 1)[1].strip(" :")
+            if tail:
+                return tail.rstrip(".")
+        if "=" in normalized and any(token in normalized for token in ("\\", "sqrt", "frac", "/", "%", "^")):
+            return normalized.split("=")[-1].strip().rstrip(".")
+        if normalized.count(" ") <= 4:
+            return normalized
+    return lines[-1].rstrip(".") if lines else stripped.rstrip(".")
 
 
 def _normalize_math_expression(value: str) -> str:
     stripped = value.strip()
+    boxed = _extract_boxed_text(stripped)
+    if boxed:
+        stripped = boxed
     stripped = stripped.replace("\\left", "").replace("\\right", "")
-    stripped = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", stripped)
+    stripped = stripped.replace("\\!", "")
+    stripped = _replace_frac_commands(stripped)
+    stripped = _replace_sqrt_commands(stripped)
+    stripped = re.sub(r"\\text\{[^{}]*\}", "", stripped)
+    stripped = stripped.replace("\\%", "%")
+    stripped = stripped.replace("\\pi", "pi").replace("π", "pi")
+    stripped = stripped.replace("\\cdot", "*").replace("\\times", "*")
+    stripped = stripped.replace("^", "**")
     stripped = stripped.strip("$")
     stripped = stripped.rstrip(".")
+    stripped = stripped.replace("{", "(").replace("}", ")")
+    stripped = re.sub(r"(?<=\d)(?=pi|sqrt|\()", "*", stripped)
+    stripped = re.sub(r"(?<=\))(?=\d|pi|sqrt|\()", "*", stripped)
+    stripped = re.sub(r"(?<=pi)(?=\d|\()", "*", stripped)
     stripped = re.sub(r"\s+", "", stripped)
     return stripped
 
@@ -2192,18 +2481,27 @@ def _math_equal(prediction: Any, reference: Any) -> bool:
         return False
     if predicted == expected:
         return True
+    if _normalize_text(predicted) == _normalize_text(expected):
+        return True
 
-    prediction_number = _parse_numeric_math_value(predicted)
-    reference_number = _parse_numeric_math_value(expected)
-    if prediction_number is not None and reference_number is not None:
-        return abs(prediction_number - reference_number) <= 1e-3
+    prediction_numbers = _parse_numeric_math_values(predicted)
+    reference_numbers = _parse_numeric_math_values(expected)
+    for prediction_number in prediction_numbers:
+        for reference_number in reference_numbers:
+            if abs(prediction_number - reference_number) <= 1e-3:
+                return True
 
     try:
         from sympy import N, simplify
-        from sympy.parsing.sympy_parser import parse_expr
+        from sympy.parsing.sympy_parser import (
+            implicit_multiplication_application,
+            parse_expr,
+            standard_transformations,
+        )
 
-        parsed_prediction = parse_expr(predicted)
-        parsed_reference = parse_expr(expected)
+        transformations = standard_transformations + (implicit_multiplication_application,)
+        parsed_prediction = parse_expr(predicted, transformations=transformations)
+        parsed_reference = parse_expr(expected, transformations=transformations)
         if simplify(parsed_prediction - parsed_reference) == 0:
             return True
         return abs(float(N(parsed_prediction)) - float(N(parsed_reference))) <= 1e-3
@@ -2211,18 +2509,67 @@ def _math_equal(prediction: Any, reference: Any) -> bool:
         return False
 
 
-def _parse_numeric_math_value(value: str) -> float | None:
+def _parse_numeric_math_values(value: str) -> list[float]:
     cleaned = value.replace(",", "")
+    cleaned = cleaned.replace("\\$", "").replace("$", "")
+    cleaned = re.sub(r"(degrees?|squareunits?|units?)$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip()
     if cleaned.endswith("%"):
         cleaned = cleaned[:-1]
         try:
-            return float(cleaned) / 100.0
+            raw = float(cleaned)
+            return [raw, raw / 100.0]
         except ValueError:
-            return None
+            return []
     try:
-        return float(cleaned)
+        return [float(cleaned)]
     except ValueError:
-        return None
+        return []
+
+
+def _replace_sqrt_commands(value: str) -> str:
+    needle = r"\sqrt{"
+    while needle in value:
+        idx = value.find(needle)
+        replacement, end = _extract_braced_segment(value, idx + len(needle) - 1)
+        if replacement is None or end is None:
+            break
+        value = value[:idx] + f"sqrt({replacement})" + value[end + 1 :]
+    return value
+
+
+def _replace_frac_commands(value: str) -> str:
+    needle = r"\frac{"
+    while needle in value:
+        idx = value.find(needle)
+        numerator, num_end = _extract_braced_segment(value, idx + len(needle) - 1)
+        if numerator is None or num_end is None:
+            break
+        if num_end + 1 >= len(value) or value[num_end + 1] != "{":
+            break
+        denominator, den_end = _extract_braced_segment(value, num_end + 1)
+        if denominator is None or den_end is None:
+            break
+        value = value[:idx] + f"(({numerator})/({denominator}))" + value[den_end + 1 :]
+    return value
+
+
+def _extract_braced_segment(value: str, brace_index: int) -> tuple[str | None, int | None]:
+    if brace_index >= len(value) or value[brace_index] != "{":
+        return None, None
+    depth = 1
+    cursor = brace_index + 1
+    start = cursor
+    while cursor < len(value):
+        char = value[cursor]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return value[start:cursor], cursor
+        cursor += 1
+    return None, None
 
 
 def _extract_code_block(value: str) -> str:

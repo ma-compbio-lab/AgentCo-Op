@@ -5,4 +5,4 @@ max_output_tokens: 2048
 usd_per_1k_input: 0.00125
 usd_per_1k_output: 0.01
 meta:
-  reasoning_effort: high
+  reasoning_effort: minimal

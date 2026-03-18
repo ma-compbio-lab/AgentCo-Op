@@ -127,6 +127,7 @@ class ExecutionReport(BaseModel):
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
     summary: str = ""
     node_results: Dict[str, NodeExecutionResult] = Field(default_factory=dict)
+    events: List[JsonDict] = Field(default_factory=list)
     meta: JsonDict = Field(default_factory=dict)
 
 

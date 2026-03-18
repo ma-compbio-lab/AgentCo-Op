@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from dynaforge.benchmarks import (
+    _ensure_huggingface_cache_is_writable,
     grade_humaneval_prediction,
     grade_math_prediction,
     grade_medqa_prediction,
@@ -18,6 +20,7 @@ from dynaforge.benchmarks import (
     prepare_medqa_dataset,
     run_humaneval_public_tests,
 )
+from dynaforge.case_studies.legacy_registry import legacy_case_default_run_name, legacy_case_family
 
 
 class _FakeDatasetsModule:
@@ -196,6 +199,66 @@ def test_prepare_medqa_assets_writes_preview_and_metadata(monkeypatch, tmp_path)
     assert info_path.exists()
 
 
+def test_ensure_huggingface_cache_falls_back_to_project_cache(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.delenv("HF_DATASETS_CACHE", raising=False)
+    monkeypatch.delenv("HF_MODULES_CACHE", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_HUB_CACHE", raising=False)
+    monkeypatch.setattr("dynaforge.benchmarks.Path.home", lambda: tmp_path / "readonly-home")
+    monkeypatch.setattr("dynaforge.benchmarks._path_is_writable", lambda path: False)
+
+    _ensure_huggingface_cache_is_writable()
+
+    assert os.environ["HF_HOME"].endswith(".hf_cache")
+    assert os.environ["HF_DATASETS_CACHE"].endswith(".hf_cache/datasets")
+
+
+def test_prepare_medqa_dataset_uses_cached_manifest_without_hf_lookup(monkeypatch, tmp_path) -> None:
+    processed_dir = tmp_path / "processed_test"
+    processed_dir.mkdir(parents=True)
+    records_path = processed_dir / "records.jsonl"
+    smoke_indices_path = processed_dir / "smoke_indices.json"
+    full_indices_path = processed_dir / "full_indices.json"
+    metadata_path = processed_dir / "dataset_manifest.json"
+    records_path.write_text(json.dumps({"id": "x"}) + "\n", encoding="utf-8")
+    smoke_indices_path.write_text(json.dumps([0]), encoding="utf-8")
+    full_indices_path.write_text(json.dumps([0]), encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "dataset_id": "bigbio/med_qa",
+                "chosen_config": "med_qa_en_bigbio_qa",
+                "chosen_split": "test",
+                "record_count": 1,
+                "smoke_count": 1,
+                "full_count": 1,
+                "seed": 7,
+                "records_path": str(records_path),
+                "smoke_indices_path": str(smoke_indices_path),
+                "full_indices_path": str(full_indices_path),
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("dynaforge.benchmarks._import_datasets_module", lambda: (_ for _ in ()).throw(AssertionError("should not import datasets")))
+
+    manifest = prepare_medqa_dataset(
+        {
+            "benchmark": {
+                "kind": "medqa",
+                "dataset_id": "bigbio/med_qa",
+                "config_name": "med_qa_en_bigbio_qa",
+                "split": "test",
+                "processed_dir": str(processed_dir),
+                "seed": 7,
+            }
+        }
+    )
+
+    assert manifest["record_count"] == 1
+
+
 def test_prepare_math_dataset_writes_processed_records(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("dynaforge.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
 
@@ -250,10 +313,43 @@ def test_prepare_humaneval_dataset_writes_processed_records(monkeypatch, tmp_pat
     assert Path(manifest["upstream_full_manifest_path"]).exists()
 
 
+def test_grade_math_prediction_accepts_symbolic_and_formatted_equivalents() -> None:
+    sample = {"gold_answer": "-34 + 12x"}
+    assert grade_math_prediction({"final_answer": "12*x - 34"}, sample)["correct"]
+
+    sample = {"gold_answer": "12,\\!000,\\!085"}
+    assert grade_math_prediction({"final_answer": "12000085"}, sample)["correct"]
+
+    sample = {"gold_answer": "162\\text{ minutes}"}
+    assert grade_math_prediction({"final_answer": "162"}, sample)["correct"]
+
+    sample = {"gold_answer": "14\\sqrt{15}"}
+    assert grade_math_prediction({"final_answer": "14*sqrt(15)"}, sample)["correct"]
+
+    sample = {"gold_answer": "30\\%"}
+    assert grade_math_prediction({"final_answer": "30"}, sample)["correct"]
+
+
+def test_legacy_case_registry_preserves_old_case_mapping() -> None:
+    assert legacy_case_family("scanpy_paul15_trajectory") == "scanpy_trajectory"
+    assert legacy_case_family("visium_multi_agent_collaboration") == "visium_multi_agent"
+    assert legacy_case_family("squidpy_seqfish_method_transfer") == "squidpy"
+    assert legacy_case_default_run_name("scanpy_paul15_paper_figure") == "scanpy_paul15_paper_figure_case"
+
+
 def test_prepare_math_dataset_supports_aflow_package(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "dynaforge.benchmarks._prepare_aflow_public_benchmark_archive",
         lambda settings: tmp_path / "aflow.tar.gz",
+    )
+    monkeypatch.setattr(
+        "dynaforge.benchmarks._prepare_math_upstream_assets",
+        lambda settings, **kwargs: {
+            "manifest_path": str(tmp_path / "math_upstream_manifest.json"),
+            "train_count": 0,
+            "test_count": 0,
+            "train_sample_count": 0,
+        },
     )
     monkeypatch.setattr(
         "dynaforge.benchmarks._read_aflow_jsonl_records",
@@ -286,6 +382,15 @@ def test_prepare_humaneval_dataset_supports_aflow_package(monkeypatch, tmp_path)
     monkeypatch.setattr(
         "dynaforge.benchmarks._prepare_aflow_public_benchmark_archive",
         lambda settings: tmp_path / "aflow.tar.gz",
+    )
+    monkeypatch.setattr(
+        "dynaforge.benchmarks._prepare_humaneval_upstream_assets",
+        lambda settings, **kwargs: {
+            "manifest_path": str(tmp_path / "humaneval_upstream_manifest.json"),
+            "train_count": 0,
+            "test_count": 0,
+            "train_sample_count": 0,
+        },
     )
     records_by_member = {
         "humaneval_validate.jsonl": [

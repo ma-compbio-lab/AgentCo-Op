@@ -250,6 +250,11 @@ def compute_impacted_nodes(blueprint: WorkflowBlueprint, patch_plan: PatchPlan) 
         if op.target and op.target in node_map:
             queue.append(op.target)
             impacted.add(op.target)
+        if op.op == PatchOpType.add_subgraph and "subgraph" in op.params:
+            subgraph = SubgraphSpec.model_validate(op.params["subgraph"])
+            for node in subgraph.nodes:
+                impacted.add(node.node_id)
+                queue.append(node.node_id)
         if op.op == PatchOpType.insert_node and "new_node" in op.params:
             new_node_id = op.params["new_node"]["node_id"]
             impacted.add(new_node_id)
@@ -339,6 +344,12 @@ def _apply_patch_op(blueprint: WorkflowBlueprint, op: PatchOp) -> None:
                 }
             )
         )
+        return
+
+    if op.op == PatchOpType.add_subgraph:
+        subgraph = SubgraphSpec.model_validate(op.params["subgraph"])
+        blueprint.subgraphs = [item for item in blueprint.subgraphs if item.subgraph_id != subgraph.subgraph_id]
+        blueprint.subgraphs.append(subgraph)
         return
 
     if op.op == PatchOpType.remove_edge:

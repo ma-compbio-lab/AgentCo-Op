@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -265,14 +266,7 @@ class LocalVenvSandboxRunner:
 
         root_dir = self.sandbox_root / sandbox.sandbox_id
         root_dir.mkdir(parents=True, exist_ok=True)
-        venv_dir = root_dir / "venv"
-        if not venv_dir.exists():
-            try:
-                venv.EnvBuilder(with_pip=True).create(str(venv_dir))
-            except Exception as exc:
-                raise SandboxError(f"Failed to create virtualenv for sandbox {sandbox.sandbox_id}: {exc}") from exc
-
-        python_bin = self._python_bin(venv_dir)
+        python_bin = self._materialize_python_runtime(root_dir, sandbox)
         repo_dir: Optional[Path] = None
         manifest_path = root_dir / "materialization_manifest.json"
         expected_manifest = self._materialization_manifest(sandbox)
@@ -293,12 +287,16 @@ class LocalVenvSandboxRunner:
             self._materialized[sandbox.sandbox_id] = materialized
             return materialized
 
-        self._run_local(
+        upgrade_result = self._run_local(
             [str(python_bin), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
             cwd=root_dir,
             env=sandbox.env,
-            check=True,
+            check=False,
         )
+        if upgrade_result.returncode != 0:
+            # This upgrade step is opportunistic. The freshly created venv already has a usable pip.
+            # Continuing avoids treating transient index/DNS failures as sandbox-materialization failures.
+            pass
 
         if sandbox.repo2run is not None and repo_dir is not None:
             self._install_repo(root_dir, repo_dir, sandbox, python_bin)
@@ -352,6 +350,7 @@ class LocalVenvSandboxRunner:
         return {
             "image": sandbox.image,
             "backend": sandbox.backend.value,
+            "python_runtime": LocalVenvSandboxRunner._python_runtime_identity(sandbox),
             "repo2run": repo_spec,
             "bootstrap_cmds": [list(cmd) for cmd in sandbox.bootstrap_cmds],
         }
@@ -364,7 +363,19 @@ class LocalVenvSandboxRunner:
             current = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return False
-        return current == expected
+        if current == expected:
+            return True
+
+        # Backward compatibility for manifests written before explicit
+        # python-runtime tracking was introduced.
+        if "python_runtime" in expected and "python_runtime" not in current:
+            current_runtime = f"{sys.version_info.major}.{sys.version_info.minor}"
+            if expected.get("python_runtime") == current_runtime:
+                upgraded_current = dict(current)
+                upgraded_current["python_runtime"] = current_runtime
+                if upgraded_current == expected:
+                    return True
+        return False
 
     @staticmethod
     def _is_pip_like_command(cmd: Sequence[str]) -> bool:
@@ -447,19 +458,44 @@ class LocalVenvSandboxRunner:
         env = self._sandbox_env(sandbox, root_dir, python_bin, repo_dir)
         env.update(sandbox.repo2run.env)
         if build_cmd and build_cmd[0] != "repo2run":
+            rewritten_cmd = self._rewrite_python_cmd(build_cmd, python_bin)
+            try:
+                self._run_local(
+                    rewritten_cmd,
+                    cwd=repo_dir,
+                    env=env,
+                    check=True,
+                )
+            except SandboxError as exc:
+                if not self._should_retry_without_build_isolation(rewritten_cmd, exc):
+                    raise
+                self._run_local(
+                    self._inject_no_build_isolation(rewritten_cmd),
+                    cwd=repo_dir,
+                    env=env,
+                    check=True,
+                )
+            return
+        if (repo_dir / "setup.py").exists() and not (repo_dir / "pyproject.toml").exists():
+            fallback_cmd = [str(python_bin), "setup.py", "develop"]
+        else:
+            fallback_cmd = [str(python_bin), "-m", "pip", "install", "-e", str(repo_dir)]
+        try:
             self._run_local(
-                self._rewrite_python_cmd(build_cmd, python_bin),
+                fallback_cmd,
                 cwd=repo_dir,
                 env=env,
                 check=True,
             )
-            return
-        self._run_local(
-            [str(python_bin), "-m", "pip", "install", "-e", str(repo_dir)],
-            cwd=repo_dir,
-            env=env,
-            check=True,
-        )
+        except SandboxError as exc:
+            if not self._should_retry_without_build_isolation(fallback_cmd, exc):
+                raise
+            self._run_local(
+                self._inject_no_build_isolation(fallback_cmd),
+                cwd=repo_dir,
+                env=env,
+                check=True,
+            )
 
     def _sandbox_env(
         self,
@@ -471,11 +507,23 @@ class LocalVenvSandboxRunner:
         env = dict(os.environ)
         env.update(sandbox.env)
         bin_dir = str(python_bin.parent)
-        env["VIRTUAL_ENV"] = str(python_bin.parent.parent)
+        prefix_dir = python_bin.parent.parent
+        env["VIRTUAL_ENV"] = str(prefix_dir)
+        if (prefix_dir / "conda-meta").exists():
+            env["CONDA_PREFIX"] = str(prefix_dir)
         env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
         env["DYNaforge_SANDBOX_ROOT"] = str(root_dir)
         if repo_dir is not None:
             env["DYNaforge_SANDBOX_REPO"] = str(repo_dir)
+        cache_root = root_dir / ".cache"
+        cache_root.mkdir(parents=True, exist_ok=True)
+        (cache_root / "matplotlib").mkdir(parents=True, exist_ok=True)
+        (cache_root / "pip").mkdir(parents=True, exist_ok=True)
+        (cache_root / "conda-pkgs").mkdir(parents=True, exist_ok=True)
+        env.setdefault("XDG_CACHE_HOME", str(cache_root))
+        env.setdefault("MPLCONFIGDIR", str(cache_root / "matplotlib"))
+        env.setdefault("PIP_CACHE_DIR", str(cache_root / "pip"))
+        env.setdefault("CONDA_PKGS_DIRS", str(cache_root / "conda-pkgs"))
         existing_pythonpath = env.get("PYTHONPATH", "")
         pythonpath_entries = [str(self.project_root)]
         src_dir = self.project_root / "src"
@@ -503,11 +551,124 @@ class LocalVenvSandboxRunner:
             return venv_dir / "Scripts" / "python.exe"
         return venv_dir / "bin" / "python"
 
+    def _materialize_python_runtime(self, root_dir: Path, sandbox: SandboxSpec) -> Path:
+        explicit_runtime = self._explicit_python_runtime(sandbox)
+        if explicit_runtime is not None:
+            return explicit_runtime
+        desired_version = self._desired_python_version(sandbox)
+        current_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        if desired_version and desired_version != current_version:
+            conda_cmd = shutil.which("conda")
+            if conda_cmd is None:
+                raise SandboxError(
+                    f"Sandbox {sandbox.sandbox_id} requires Python {desired_version}, but no matching interpreter "
+                    "or conda installation is available"
+                )
+            conda_env_dir = root_dir / f"conda-py{desired_version.replace('.', '')}"
+            python_bin = self._python_bin(conda_env_dir)
+            if not python_bin.exists():
+                conda_cache_dir = root_dir / ".cache" / "conda-pkgs"
+                conda_cache_dir.mkdir(parents=True, exist_ok=True)
+                self._run_local(
+                    [
+                        conda_cmd,
+                        "create",
+                        "--solver",
+                        "classic",
+                        "-y",
+                        "-p",
+                        str(conda_env_dir),
+                        f"python={desired_version}",
+                        "pip",
+                    ],
+                    cwd=root_dir,
+                    env={
+                        **os.environ,
+                        "CONDA_NO_PLUGINS": "true",
+                        "CONDA_PKGS_DIRS": str(conda_cache_dir),
+                    },
+                    check=True,
+                )
+            return python_bin
+
+        venv_dir = root_dir / "venv"
+        if not venv_dir.exists():
+            try:
+                venv.EnvBuilder(with_pip=True).create(str(venv_dir))
+            except Exception as exc:
+                raise SandboxError(f"Failed to create virtualenv for sandbox {sandbox.sandbox_id}: {exc}") from exc
+        return self._python_bin(venv_dir)
+
+    @staticmethod
+    def _desired_python_version(sandbox: SandboxSpec) -> Optional[str]:
+        return LocalVenvSandboxRunner._python_runtime_spec(sandbox)
+
+    @staticmethod
+    def _python_runtime_identity(sandbox: SandboxSpec) -> Optional[str]:
+        explicit = LocalVenvSandboxRunner._explicit_python_runtime_descriptor(sandbox)
+        if explicit is not None:
+            return explicit
+        return LocalVenvSandboxRunner._python_runtime_spec(sandbox)
+
+    @staticmethod
+    def _python_runtime_spec(sandbox: SandboxSpec) -> Optional[str]:
+        match = re.match(r"^python:(\d+\.\d+)", str(sandbox.image).strip())
+        if match:
+            return match.group(1)
+        return None
+
+    @staticmethod
+    def _explicit_python_runtime_descriptor(sandbox: SandboxSpec) -> Optional[str]:
+        image = str(sandbox.image).strip()
+        if image.startswith("python-env:") or image.startswith("conda-env:") or image.startswith("python-bin:"):
+            return image
+        return None
+
+    @staticmethod
+    def _explicit_python_runtime(sandbox: SandboxSpec) -> Optional[Path]:
+        image = str(sandbox.image).strip()
+        for prefix in ("python-env:", "conda-env:"):
+            if image.startswith(prefix):
+                env_dir = Path(image[len(prefix) :]).expanduser().resolve()
+                python_bin = LocalVenvSandboxRunner._python_bin(env_dir)
+                if not python_bin.exists():
+                    raise SandboxError(f"Configured sandbox runtime does not exist: {python_bin}")
+                return python_bin
+        if image.startswith("python-bin:"):
+            python_bin = Path(image[len("python-bin:") :]).expanduser().resolve()
+            if not python_bin.exists():
+                raise SandboxError(f"Configured sandbox python binary does not exist: {python_bin}")
+            return python_bin
+        return None
+
     @staticmethod
     def _rewrite_python_cmd(cmd: Sequence[str], python_bin: Path) -> List[str]:
         command = list(cmd)
         if command and command[0] in {"python", "python3", sys.executable}:
             command[0] = str(python_bin)
+        return command
+
+    @staticmethod
+    def _should_retry_without_build_isolation(cmd: Sequence[str], error: SandboxError) -> bool:
+        if not LocalVenvSandboxRunner._is_pip_like_command(cmd):
+            return False
+        lowered_cmd = [str(part).lower() for part in cmd]
+        if "install" not in lowered_cmd:
+            return False
+        if "--no-build-isolation" in lowered_cmd:
+            return False
+        message = str(error).lower()
+        return "build dependencies" in message or "setuptools" in message or "wheel" in message
+
+    @staticmethod
+    def _inject_no_build_isolation(cmd: Sequence[str]) -> List[str]:
+        command = list(cmd)
+        lowered = [str(part).lower() for part in command]
+        try:
+            install_index = lowered.index("install")
+        except ValueError:
+            return command
+        command.insert(install_index + 1, "--no-build-isolation")
         return command
 
     @staticmethod

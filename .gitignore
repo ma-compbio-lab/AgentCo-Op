@@ -216,3 +216,10 @@ benchmarks/
 output/
 .dynaforge_sandboxes/
 tmp/
+runs-current-benchmark/
+runs-benchmark-refresh/
+runs-real-exp3/
+archive/
+.hf_cache/
+runs-current-benchmark-aggregated/
+data/

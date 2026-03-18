@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
 
     stage0 = subparsers.add_parser("stage0")
     stage0.add_argument("--base-dir", default="runs")
-    stage0.add_argument("--medqa-model", default="openai_gpt4o_mini")
+    stage0.add_argument("--medqa-model", default="openai_gpt5_nano")
     stage0.add_argument("--benchmark-model", default="openai_gpt4o_mini")
     stage0.add_argument("--medqa-smoke-limit", type=int, default=1)
     stage0.add_argument("overrides", nargs="*")
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Reuse an existing MedQA run directory and skip already-completed task results.",
     )
     medqa.add_argument("--base-dir", default="runs")
-    medqa.add_argument("--model", default="openai_gpt4o_mini")
+    medqa.add_argument("--model", default="openai_gpt5_nano")
     medqa.add_argument("overrides", nargs="*")
 
     medqa_aggregate = subparsers.add_parser("medqa-aggregate")
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     case_study = subparsers.add_parser("case-study")
     case_study.add_argument("--experiment", default="scanpy_pbmc3k_case")
     case_study.add_argument("--base-dir", default="runs")
-    case_study.add_argument("--model", default="openai_gpt5_mini")
+    case_study.add_argument("--model", default="")
     case_study.add_argument("overrides", nargs="*")
 
     args = parser.parse_args(argv)
@@ -201,7 +201,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if summary.get("task_count", 0) > 0 else 1
 
     if args.command == "case-study":
-        cfg = load_hydra_config(overrides=[f"experiment={args.experiment}", f"model={args.model}", *args.overrides])
+        overrides = [f"experiment={args.experiment}", *args.overrides]
+        if args.model:
+            overrides.append(f"model={args.model}")
+        cfg = load_hydra_config(overrides=overrides)
         summary = run_case_study_experiment(cfg, base_dir=args.base_dir)
         print(json.dumps(summary, ensure_ascii=True, indent=2))
         return 0 if summary.get("success") else 1

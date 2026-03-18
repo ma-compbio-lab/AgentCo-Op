@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set
 
-from dynaforge.ir.schema import FailureType, NodeKind, NodeSpec, TraceAssertion, WorkflowBlueprint
+from dynaforge.ir.schema import FailureType, NodeKind, NodeSpec, PatchPlan, TraceAssertion, WorkflowBlueprint
 from dynaforge.integrations.mcp_client import MCPClientManager
 from dynaforge.integrations.sandbox import CompositeSandboxRunner, SandboxError, SandboxRunner
 from dynaforge.integrations.tool_registry import ToolRegistry
@@ -22,6 +22,7 @@ from dynaforge.runtime.llm import LLMRouter
 from dynaforge.runtime.patching import DeterministicPatchPolicy, apply_patch_plan, compute_impacted_nodes
 from dynaforge.runtime.skills import SkillRegistry
 from dynaforge.runtime.tool_scout import ToolScout
+from dynaforge.runtime.direct_sandbox import execute_direct_sandbox_node
 from dynaforge.runtime.reports import (
     BudgetLedger,
     ContractViolation,
@@ -33,6 +34,7 @@ from dynaforge.runtime.reports import (
     SoftJudgeResult,
 )
 from dynaforge.runtime.validation import validate_json_payload
+from dynaforge.workflows.expansion import RuntimeGraphExpansionPolicy
 
 JsonDict = Dict[str, Any]
 
@@ -79,6 +81,7 @@ class BlueprintExecutor:
         skill_registry: Optional[SkillRegistry] = None,
         sandbox_runner: Optional[SandboxRunner] = None,
         allow_offline_fallback: bool = True,
+        runtime_expansion_policy: Optional[RuntimeGraphExpansionPolicy] = None,
     ):
         self.artifact_store = ArtifactStore(artifact_root)
         self.patch_policy = patch_policy or DeterministicPatchPolicy()
@@ -90,6 +93,7 @@ class BlueprintExecutor:
         self.tool_scout = tool_scout or ToolScout()
         self.skill_registry = skill_registry or SkillRegistry()
         self.sandbox_runner = sandbox_runner or CompositeSandboxRunner()
+        self.runtime_expansion_policy = runtime_expansion_policy
         self._memoized_results: Dict[str, NodeExecutionResult] = {}
 
     def execute_blueprint(
@@ -116,9 +120,13 @@ class BlueprintExecutor:
         contract_violations: list[ContractViolation] = []
         hard_checks: list[HardCheckResult] = []
         soft_judges: list[SoftJudgeResult] = []
+        events: list[JsonDict] = []
 
         node_map = blueprint.node_map()
         executed: Set[str] = set()
+        compile_trace = blueprint.meta.get("compile_trace")
+        if isinstance(compile_trace, Mapping):
+            events.append({"type": "compile_trace", "payload": dict(compile_trace)})
 
         for node_id, result in (resume_state or {}).items():
             if node_id not in node_map or node_id in force_nodes:
@@ -204,6 +212,18 @@ class BlueprintExecutor:
                         error=result.error,
                     )
                 )
+                events.append(
+                    {
+                        "type": "node_executed",
+                        "node_id": node.node_id,
+                        "role": node.role,
+                        "status": trace_status,
+                        "failure_type": result.failure_type.value,
+                        "confidence": result.confidence,
+                        "cost": result.cost.model_dump(),
+                        "output_keys": sorted(result.outputs.keys()),
+                    }
+                )
 
                 output_violations = []
                 if result.failure_type == FailureType.none:
@@ -235,7 +255,29 @@ class BlueprintExecutor:
                     disabled_edges=disabled_edges,
                     activated_gates=activated_gates,
                     gate_activation_counts=gate_activation_counts,
+                    events=events,
                 )
+
+                expansion_plan = self._maybe_expand_graph(
+                    blueprint=blueprint,
+                    node=node,
+                    inputs=inputs,
+                    result=result,
+                    events=events,
+                )
+                if expansion_plan is not None:
+                    impacted = compute_impacted_nodes(blueprint, expansion_plan)
+                    blueprint = apply_patch_plan(blueprint, expansion_plan)
+                    node_map = blueprint.node_map()
+                    active_subgraphs.update(blueprint.default_active_subgraphs())
+                    events.append(
+                        {
+                            "type": "runtime_graph_expansion",
+                            "node_id": node.node_id,
+                            "patch_plan": expansion_plan.model_dump(),
+                            "impacted_nodes": sorted(impacted),
+                        }
+                    )
 
             if failure_type != FailureType.none:
                 break
@@ -275,6 +317,7 @@ class BlueprintExecutor:
             confidence=self._aggregate_confidence(traces),
             summary=summary,
             node_results=node_results,
+            events=events,
             meta={"executed_nodes": sorted(executed)},
         )
         report.blame_candidates = self.blame_assigner.assign(blueprint, report)
@@ -454,6 +497,15 @@ class BlueprintExecutor:
             return self.llm_router.run_node(node, inputs, context)
 
         if node.kind == NodeKind.tool:
+            if bool(node.meta.get("direct_sandbox_handler", False)):
+                try:
+                    return execute_direct_sandbox_node(node, inputs, context)
+                except Exception as exc:
+                    return NodeExecutionResult(
+                        failure_type=FailureType.tool_runtime_error,
+                        error=f"Direct sandbox tool failed: {exc}",
+                        trace={"live_direct_sandbox": True, "node_id": node.node_id},
+                    )
             if not node.tools:
                 return NodeExecutionResult(
                     failure_type=FailureType.tool_runtime_error,
@@ -701,6 +753,7 @@ class BlueprintExecutor:
         disabled_edges: Set[str],
         activated_gates: list[str],
         gate_activation_counts: Dict[str, int],
+        events: list[JsonDict],
     ) -> None:
         for gate in blueprint.gates:
             if gate_activation_counts[gate.gate_id] >= gate.max_activations:
@@ -711,6 +764,34 @@ class BlueprintExecutor:
                 disabled_edges.update(gate.disable_edges)
                 if gate.gate_id not in activated_gates:
                     activated_gates.append(gate.gate_id)
+                events.append(
+                    {
+                        "type": "gate_activation",
+                        "gate_id": gate.gate_id,
+                        "enabled_subgraphs": list(gate.enable_subgraphs),
+                        "disabled_edges": list(gate.disable_edges),
+                    }
+                )
+
+    def _maybe_expand_graph(
+        self,
+        *,
+        blueprint: WorkflowBlueprint,
+        node: NodeSpec,
+        inputs: JsonDict,
+        result: NodeExecutionResult,
+        events: list[JsonDict],
+    ) -> Optional[PatchPlan]:
+        if self.runtime_expansion_policy is None:
+            return None
+        current_expansions = sum(1 for event in events if event.get("type") == "runtime_graph_expansion")
+        return self.runtime_expansion_policy.propose(
+            blueprint=blueprint,
+            node=node,
+            inputs=inputs,
+            result=result,
+            expansion_count=current_expansions,
+        )
 
     @staticmethod
     def _aggregate_confidence(traces: Sequence[NodeTrace]) -> Optional[float]:

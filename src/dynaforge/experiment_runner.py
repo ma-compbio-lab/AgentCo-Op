@@ -30,6 +30,7 @@ from dynaforge.benchmarks import (
     prepare_medqa_dataset,
     run_humaneval_public_tests,
 )
+from dynaforge.case_studies.legacy_registry import LEGACY_SQUIDPY_CASE_IDS, legacy_case_default_run_name
 from dynaforge.config import build_blueprint_from_config, build_executor_from_config, resolve_hydra_config
 from dynaforge.ir import (
     BudgetSpec,
@@ -495,27 +496,40 @@ def run_case_study_experiment(
     benchmark_settings = dict(resolved.get("benchmark", {}))
     if benchmark_settings.get("kind") != "case_study":
         raise BenchmarkSetupError("Case-study runner requires benchmark.kind=case_study")
+    runner_mode = str(benchmark_settings.get("runner_mode", "")).strip().lower()
     case_id = str(benchmark_settings.get("case_id", "")).strip()
-    if not case_id:
+    if not case_id and runner_mode not in {"compiled_generic", "generic_compiled"}:
         raise BenchmarkSetupError("Case-study runner requires benchmark.case_id")
 
-    default_run_name = {
-        "scanpy_pbmc3k_umap": "scanpy_pbmc3k_case",
-        "scanpy_paul15_trajectory": "scanpy_paul15_case",
-        "scanpy_paul15_paper_figure": "scanpy_paul15_paper_figure_case",
-        "scanpy_paul15_specialized_collaboration": "scanpy_paul15_specialized_collaboration_case",
-        "scanpy_moignard15_method_transfer": "scanpy_moignard15_transfer_case",
-        "scanpy_moignard15_specialized_collaboration": "scanpy_moignard15_specialized_collaboration_case",
-        "scanpy_krumsiek11_method_transfer": "scanpy_krumsiek11_transfer_case",
-        "scanpy_krumsiek11_specialized_collaboration": "scanpy_krumsiek11_specialized_collaboration_case",
-        "visium_multi_agent_collaboration": "visium_multi_agent_collaboration_case",
-        "visium_multi_agent_monolith": "visium_multi_agent_monolith_case",
-        "seqfish_multi_agent_collaboration": "seqfish_multi_agent_collaboration_case",
-        "seqfish_multi_agent_monolith": "seqfish_multi_agent_monolith_case",
-        "squidpy_visium_hne_spatial": "squidpy_visium_case",
-        "squidpy_visium_hne_interactions": "squidpy_visium_interactions_case",
-        "squidpy_seqfish_method_transfer": "squidpy_seqfish_transfer_case",
-    }.get(case_id, "case_study")
+    if runner_mode in {"compiled_generic", "generic_compiled"}:
+        return _run_generic_case_study_experiment(
+            resolved,
+            benchmark_settings=benchmark_settings,
+            base_dir=base_dir,
+            run_name=run_name,
+            case_id=case_id or "generic_case_study",
+        )
+
+    return _run_legacy_case_study_experiment(
+        config,
+        resolved=resolved,
+        benchmark_settings=benchmark_settings,
+        base_dir=base_dir,
+        run_name=run_name,
+        case_id=case_id,
+    )
+
+
+def _run_legacy_case_study_experiment(
+    config: DictConfig | Mapping[str, Any],
+    *,
+    resolved: Mapping[str, Any],
+    benchmark_settings: Mapping[str, Any],
+    base_dir: str | Path,
+    run_name: Optional[str],
+    case_id: str,
+) -> dict[str, Any]:
+    default_run_name = legacy_case_default_run_name(case_id)
 
     recorder = RunRecorder(run_name or default_run_name, base_dir=base_dir)
     recorder.write_text("config/resolved_config.yaml", _config_to_yaml(config))
@@ -669,7 +683,7 @@ def run_case_study_experiment(
         summarize = _summarize_visium_multi_agent_monolith_case_study
         render_analysis = render_visium_multi_agent_monolith_analysis
         render_narrative = render_visium_multi_agent_monolith_narrative
-    elif case_id in {"squidpy_visium_hne_spatial", "squidpy_visium_hne_interactions", "squidpy_seqfish_method_transfer"}:
+    elif case_id in LEGACY_SQUIDPY_CASE_IDS:
         sandbox = _build_squidpy_case_sandbox(benchmark_settings, case_assets)
         reference_assets = _ensure_squidpy_case_reference_assets(
             case_assets=case_assets,
@@ -710,6 +724,49 @@ def run_case_study_experiment(
     recorder.write_json("summaries/summary.json", summary)
     recorder.write_text("summaries/analysis.md", render_analysis(summary))
     recorder.write_text("summaries/case_narrative.md", render_narrative(summary))
+    return summary
+
+
+def _run_generic_case_study_experiment(
+    resolved: Mapping[str, Any],
+    *,
+    benchmark_settings: Mapping[str, Any],
+    base_dir: str | Path,
+    run_name: Optional[str],
+    case_id: str,
+) -> dict[str, Any]:
+    default_run_name = run_name or str(benchmark_settings.get("run_name", "")).strip() or case_id or "case_study"
+    recorder = RunRecorder(default_run_name, base_dir=base_dir)
+    recorder.write_text("config/resolved_config.yaml", _config_to_yaml(resolved))
+    run_metadata = collect_run_metadata(resolved)
+    recorder.write_json("summaries/run_metadata.json", run_metadata)
+
+    case_assets = prepare_case_study_assets(resolved)
+    executor = build_executor_from_config(resolved, artifact_root=recorder.artifacts_dir)
+    blueprint = _build_generic_case_study_blueprint(
+        resolved,
+        benchmark_settings=benchmark_settings,
+        case_assets=case_assets,
+        recorder=recorder,
+    )
+    recorder.write_json("eval/compiled_blueprint.json", blueprint.model_dump(mode="json"))
+
+    generic_handlers: dict[str, Any] = {}
+    if str(blueprint.meta.get("workflow_pattern", "")).strip() == "specialist_assembly":
+        generic_handlers["specialist_router"] = _generic_specialist_router_handler
+        generic_handlers["specialist_repair"] = _generic_specialist_router_handler
+
+    _, report = _run_blueprint(resolved, blueprint, executor, handlers=generic_handlers or None)
+    summary = _summarize_generic_case_study(
+        report,
+        blueprint=blueprint,
+        case_assets=case_assets,
+    )
+    summary["run_dir"] = str(recorder.root)
+    recorder.write_json("eval/execution_report.json", report.model_dump(mode="json"))
+    recorder.write_json("summaries/summary.json", summary)
+    recorder.write_text("summaries/analysis.md", render_generic_case_study_analysis(summary))
+    recorder.write_text("summaries/case_narrative.md", render_generic_case_study_narrative(summary))
     return summary
 
 
@@ -2138,7 +2195,7 @@ def _summarize_generic_task_results(
         total_activated_nodes += int(result.get("activated_node_count", 0) or 0)
         total_activated_subgraphs += int(result.get("activated_subgraph_count", 0) or 0)
 
-    metric_value = _safe_ratio(sum(1 for result in task_results if result.get("correct")), len(task_results))
+    metric_value = _safe_ratio(sum(1 for result in task_results if _is_generic_result_correct(benchmark, result)), len(task_results))
     return {
         "benchmark": benchmark,
         "subset": subset,
@@ -2181,7 +2238,8 @@ def render_generic_benchmark_analysis(summary: Mapping[str, Any], task_results: 
         "",
         "## Sample Failures",
     ]
-    failures = [item for item in task_results if not item.get("correct")]
+    benchmark = str(summary.get("benchmark", ""))
+    failures = [item for item in task_results if not _is_generic_result_correct(benchmark, item)]
     if not failures:
         lines.append("- None")
     else:
@@ -2191,6 +2249,20 @@ def render_generic_benchmark_analysis(summary: Mapping[str, Any], task_results: 
                 f"prediction_node={item.get('prediction_node', '')} workflow={item.get('workflow_signature', '')}"
             )
     return "\n".join(lines) + "\n"
+
+
+def _is_generic_result_correct(benchmark: str, result: Mapping[str, Any]) -> bool:
+    if benchmark == "math":
+        prediction_answer = result.get("prediction_answer")
+        gold_answer = result.get("gold_answer")
+        if prediction_answer is not None or gold_answer is not None:
+            return bool(
+                grade_math_prediction(
+                    {"final_answer": prediction_answer},
+                    {"gold_answer": gold_answer},
+                ).get("correct")
+            )
+    return bool(result.get("correct"))
 
 
 def _classify_medqa_exception(error: Exception) -> str:
@@ -5970,6 +6042,327 @@ def _run_blueprint(
             max_iterations=int(executor_cfg.get("max_repair_iterations", 3)),
         )
     return blueprint, executor.execute_blueprint(blueprint, handlers=handlers)
+
+
+def _build_generic_case_study_blueprint(
+    config: Mapping[str, Any],
+    *,
+    benchmark_settings: Mapping[str, Any],
+    case_assets: Mapping[str, Any],
+    recorder: RunRecorder,
+) -> WorkflowBlueprint:
+    blueprint = build_blueprint_from_config(config)
+    output_dir = recorder.artifacts_dir / "case_output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    merged_hints = dict(blueprint.task.hints)
+    merged_hints.update(
+        {
+            "case_id": case_assets.get("case_id", ""),
+            "case_title": str(benchmark_settings.get("title", blueprint.task.title)),
+            "methods_excerpt": case_assets.get("methods_excerpt", ""),
+            "target_figure_description": case_assets.get("target_figure_description", ""),
+            "task_notes": case_assets.get("task_notes", ""),
+            "candidate_repos": list(case_assets.get("candidate_repos", [])),
+            "case_root": case_assets.get("case_root", ""),
+            "repo_root": case_assets.get("repo_root", ""),
+            "generated_dir": case_assets.get("generated_dir", ""),
+            "data_dir": case_assets.get("data_dir", ""),
+            "reference_dir": case_assets.get("reference_dir", ""),
+            "input_assets": dict(case_assets.get("input_assets", {})),
+            "expected_outputs": list(case_assets.get("expected_outputs", [])),
+            "output_contract": dict(case_assets.get("output_contract", {})),
+            "output_dir": str(output_dir),
+            "run_dir": str(recorder.root),
+        }
+    )
+    task = blueprint.task.model_copy(
+        update={
+            "task_id": str(blueprint.task.task_id or case_assets.get("case_id", "case_study")),
+            "title": str(benchmark_settings.get("title", blueprint.task.title or case_assets.get("case_id", "Case Study"))),
+            "description": str(
+                benchmark_settings.get("target_figure_description")
+                or blueprint.task.description
+                or case_assets.get("target_figure_description", "")
+                or case_assets.get("methods_excerpt", "")
+            ),
+            "hints": merged_hints,
+        }
+    )
+    meta = dict(blueprint.meta)
+    meta.update(
+        {
+            "case_id": case_assets.get("case_id", ""),
+            "case_runner_mode": "compiled_generic",
+            "case_asset_manifest": {
+                "candidate_repo_count": len(case_assets.get("candidate_repos", [])),
+                "expected_output_count": len(case_assets.get("expected_outputs", [])),
+            },
+        }
+    )
+    return blueprint.model_copy(update={"task": task, "meta": meta})
+
+
+def _summarize_generic_case_study(
+    report: ExecutionReport,
+    *,
+    blueprint: WorkflowBlueprint,
+    case_assets: Mapping[str, Any],
+) -> dict[str, Any]:
+    compile_trace = next(
+        (dict(event.get("payload", {})) for event in report.events if event.get("type") == "compile_trace"),
+        dict(blueprint.meta.get("compile_trace", {})),
+    )
+    selected_repos, selected_specialists = _extract_report_selections(report)
+    runtime_events = [dict(event) for event in report.events]
+    trace_details = []
+    for trace in report.traces:
+        trace_details.append(
+            {
+                "node_id": trace.node_id,
+                "role": trace.role,
+                "status": trace.status,
+                "confidence": trace.confidence,
+                "failure_type": trace.failure_type.value if trace.failure_type else "none",
+                "error": trace.error,
+                "inputs": trace.inputs,
+                "outputs": trace.outputs,
+                "trace": trace.trace,
+                "artifacts": [_artifact_path_from_uri(getattr(item, "uri", "")) for item in trace.artifacts],
+            }
+        )
+    return {
+        "benchmark": "case_study",
+        "case_id": case_assets.get("case_id", ""),
+        "title": blueprint.task.title,
+        "success": report.success,
+        "failure_type": report.failure_type.value,
+        "summary": report.summary,
+        "workflow_signature": _workflow_signature(report),
+        "workflow_pattern": str(blueprint.meta.get("workflow_pattern", "")),
+        "compile_trace": compile_trace,
+        "graph_design": _blueprint_structure_summary(blueprint),
+        "input_assets": dict(case_assets.get("input_assets", {})),
+        "hidden_assets": dict(case_assets.get("hidden_assets", {})),
+        "expected_outputs": list(case_assets.get("expected_outputs", [])),
+        "output_contract": dict(case_assets.get("output_contract", {})),
+        "methods_excerpt": str(case_assets.get("methods_excerpt", "")),
+        "target_figure_description": str(case_assets.get("target_figure_description", "")),
+        "candidate_repos": list(case_assets.get("candidate_repos", [])),
+        "selected_repos": selected_repos,
+        "selected_specialists": selected_specialists,
+        "runtime_events": runtime_events,
+        "trace_details": trace_details,
+        "artifact_paths": _report_artifact_paths(report),
+        "activated_gates": list(report.activated_gates),
+        "active_subgraphs": list(report.active_subgraphs),
+        "hard_checks": [item.model_dump(mode="json") for item in report.hard_checks],
+        "soft_judges": [item.model_dump(mode="json") for item in report.soft_judges],
+        "contract_violations": [item.model_dump(mode="json") for item in report.contract_violations],
+        "cost": report.cost.model_dump(),
+        "confidence": report.confidence,
+    }
+
+
+def _blueprint_structure_summary(blueprint: WorkflowBlueprint) -> dict[str, Any]:
+    return {
+        "task_id": blueprint.task.task_id,
+        "base_nodes": [
+            {
+                "node_id": node.node_id,
+                "role": node.role,
+                "kind": node.kind.value,
+                "has_tool_discovery": bool(node.tool_discovery and node.tool_discovery.mode.value != "disabled"),
+                "direct_sandbox": bool(node.meta.get("direct_sandbox_handler", False)),
+            }
+            for node in blueprint.base_nodes
+        ],
+        "base_edges": [edge.model_dump(mode="json") for edge in blueprint.base_edges],
+        "subgraphs": [
+            {
+                "subgraph_id": subgraph.subgraph_id,
+                "purpose": subgraph.purpose,
+                "default_enabled": subgraph.default_enabled,
+                "nodes": [node.node_id for node in subgraph.nodes],
+            }
+            for subgraph in blueprint.subgraphs
+        ],
+        "gates": [gate.model_dump(mode="json") for gate in blueprint.gates],
+    }
+
+
+def _generic_specialist_router_handler(node: NodeSpec, inputs: Mapping[str, Any], context: Any) -> NodeExecutionResult:
+    task = inputs.get("task", {}) if isinstance(inputs.get("task", {}), Mapping) else {}
+    hints = task.get("hints", {}) if isinstance(task.get("hints", {}), Mapping) else {}
+    candidate_repos = hints.get("candidate_repos", []) if isinstance(hints.get("candidate_repos", []), list) else []
+    repo_names = [str(repo.get("name", "")).strip() for repo in candidate_repos if isinstance(repo, Mapping)]
+
+    selected: list[str] = []
+    preferred_order = ("SpatialAgent", "BioDiscoveryAgent")
+    for preferred in preferred_order:
+        for name in repo_names:
+            if name.lower() == preferred.lower() and preferred not in selected:
+                selected.append(name)
+    for name in repo_names:
+        if name and name not in selected:
+            selected.append(name)
+    if not selected:
+        selected = ["specialist_a", "specialist_b"]
+
+    handoff_contract = {
+        "specialist_a_delivers": [
+            "spatial_context_report_path",
+            "routed_objective_path",
+            "routed_objective",
+            "objective_scores",
+        ],
+        "specialist_b_receives": [
+            "routed_objective",
+            "spatial_context_report_path",
+        ],
+        "integrator_requires": [
+            "spatial_context_report_path",
+            "ranked_gene_batch_path",
+            "hitrate_eval_path",
+        ],
+        "review_focus": [
+            "objective-grounding",
+            "specialist-handoff-consistency",
+            "artifact-completeness",
+        ],
+    }
+    outputs = {
+        "selected_specialists": selected,
+        "handoff_contract": handoff_contract,
+        "summary": f"Selected specialists {selected} with a fixed spatial-to-perturbation handoff contract.",
+        "requires_review": True,
+    }
+    return NodeExecutionResult(
+        outputs=outputs,
+        trace={
+            "deterministic_router": True,
+            "selected_specialists": selected,
+            "candidate_repo_names": repo_names,
+            "handoff_contract": handoff_contract,
+        },
+        confidence=0.9,
+    )
+
+
+def _extract_report_selections(report: ExecutionReport) -> tuple[dict[str, str], dict[str, list[str]]]:
+    selected_repos: dict[str, str] = {}
+    selected_specialists: dict[str, list[str]] = {}
+    for trace in report.traces:
+        outputs = trace.outputs if isinstance(trace.outputs, Mapping) else {}
+        if isinstance(outputs.get("selected_repo"), str) and str(outputs.get("selected_repo", "")).strip():
+            selected_repos[trace.node_id] = str(outputs["selected_repo"]).strip()
+        if isinstance(trace.trace, Mapping) and isinstance(trace.trace.get("selected_repo"), str):
+            repo_name = str(trace.trace.get("selected_repo", "")).strip()
+            if repo_name:
+                selected_repos.setdefault(trace.node_id, repo_name)
+        specialists = outputs.get("selected_specialists")
+        if isinstance(specialists, list):
+            selected_specialists[trace.node_id] = [str(item) for item in specialists]
+        elif isinstance(trace.trace, Mapping) and isinstance(trace.trace.get("selected_specialists"), list):
+            selected_specialists[trace.node_id] = [str(item) for item in trace.trace.get("selected_specialists", [])]
+    return selected_repos, selected_specialists
+
+
+def _report_artifact_paths(report: ExecutionReport) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for trace in report.traces:
+        for artifact in trace.artifacts:
+            path = _artifact_path_from_uri(getattr(artifact, "uri", ""))
+            if path and path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return paths
+
+
+def _artifact_path_from_uri(uri: str) -> str:
+    if not uri:
+        return ""
+    if uri.startswith("file://"):
+        return uri.removeprefix("file://")
+    return uri
+
+
+def render_generic_case_study_analysis(summary: Mapping[str, Any]) -> str:
+    lines = [
+        f"# {summary.get('title', 'case study')}",
+        "",
+        "## Task",
+        f"- Case ID: `{summary.get('case_id', '')}`",
+        f"- Success: `{summary.get('success', False)}`",
+        f"- Failure type: `{summary.get('failure_type', 'none')}`",
+        f"- Workflow signature: `{summary.get('workflow_signature', '')}`",
+        f"- Workflow pattern: `{summary.get('workflow_pattern', '')}`",
+        "",
+        "## Inputs",
+        f"- Input assets: `{json.dumps(summary.get('input_assets', {}), ensure_ascii=True)}`",
+        f"- Hidden assets: `{json.dumps(summary.get('hidden_assets', {}), ensure_ascii=True)}`",
+        f"- Expected outputs: `{json.dumps(summary.get('expected_outputs', []), ensure_ascii=True)}`",
+        "",
+        "## Workflow Design",
+        f"- Graph design: `{json.dumps(summary.get('graph_design', {}), ensure_ascii=True)}`",
+        f"- Compile trace: `{json.dumps(summary.get('compile_trace', {}), ensure_ascii=True)}`",
+        "",
+        "## Search / Selection",
+        f"- Candidate repos: `{json.dumps(summary.get('candidate_repos', []), ensure_ascii=True)}`",
+        f"- Selected repos: `{json.dumps(summary.get('selected_repos', {}), ensure_ascii=True)}`",
+        f"- Selected specialists: `{json.dumps(summary.get('selected_specialists', {}), ensure_ascii=True)}`",
+        "",
+        "## Runtime",
+        f"- Activated gates: `{json.dumps(summary.get('activated_gates', []), ensure_ascii=True)}`",
+        f"- Active subgraphs: `{json.dumps(summary.get('active_subgraphs', []), ensure_ascii=True)}`",
+        f"- Cost: `{json.dumps(summary.get('cost', {}), ensure_ascii=True)}`",
+        "",
+        "## Node Trace",
+    ]
+    trace_details = summary.get("trace_details", [])
+    if not isinstance(trace_details, Sequence) or not trace_details:
+        lines.append("- None")
+    else:
+        for trace in trace_details:
+            if not isinstance(trace, Mapping):
+                continue
+            lines.append(
+                f"- `{trace.get('node_id', '')}` ({trace.get('role', '')}): "
+                f"status={trace.get('status', '')} confidence={trace.get('confidence', 0.0)} "
+                f"failure={trace.get('failure_type', 'none')}"
+            )
+            lines.append(f"  outputs: `{json.dumps(trace.get('outputs', {}), ensure_ascii=True)}`")
+            lines.append(f"  trace: `{json.dumps(trace.get('trace', {}), ensure_ascii=True)}`")
+        lines.append("")
+    lines.extend(
+        [
+            "## Artifacts",
+            f"- Artifact paths: `{json.dumps(summary.get('artifact_paths', []), ensure_ascii=True)}`",
+            "",
+            "## Evaluation",
+            f"- Hard checks: `{json.dumps(summary.get('hard_checks', []), ensure_ascii=True)}`",
+            f"- Soft judges: `{json.dumps(summary.get('soft_judges', []), ensure_ascii=True)}`",
+            f"- Contract violations: `{json.dumps(summary.get('contract_violations', []), ensure_ascii=True)}`",
+            "",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def render_generic_case_study_narrative(summary: Mapping[str, Any]) -> str:
+    lines = [
+        f"# {summary.get('title', 'Case Study')}",
+        "",
+        f"The compiled workflow selected pattern `{summary.get('workflow_pattern', '')}` and executed "
+        f"`{summary.get('workflow_signature', '')}`.",
+        "",
+        f"Selected repos: `{json.dumps(summary.get('selected_repos', {}), ensure_ascii=True)}`",
+        f"Selected specialists: `{json.dumps(summary.get('selected_specialists', {}), ensure_ascii=True)}`",
+        "",
+        f"Outcome: success=`{summary.get('success', False)}`, failure_type=`{summary.get('failure_type', 'none')}`.",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _executor_settings(config: Mapping[str, Any]) -> dict[str, Any]:

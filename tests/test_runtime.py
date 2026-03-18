@@ -150,6 +150,29 @@ def test_executor_records_wall_time(monkeypatch) -> None:
     assert report.traces[0].cost.wall_time_s == 0.25
 
 
+def test_executor_records_node_execution_events() -> None:
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="runtime-events", title="Runtime", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="planner",
+                kind=NodeKind.agent,
+                role="Planner",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                io={"output_schema": {"type": "object", "required": ["result"]}},
+            )
+        ],
+        base_edges=[],
+    )
+
+    report = make_stub_executor().execute_blueprint(blueprint)
+
+    node_events = [event for event in report.events if event.get("type") == "node_executed"]
+    assert len(node_events) == 1
+    assert node_events[0]["node_id"] == "planner"
+    assert node_events[0]["status"] == "success"
+
+
 def test_deterministic_patch_policy_prefers_sandbox_change_for_env_failures() -> None:
     blueprint = WorkflowBlueprint(
         task=TaskSpec(task_id="runtime-2", title="Runtime", description="Desc"),

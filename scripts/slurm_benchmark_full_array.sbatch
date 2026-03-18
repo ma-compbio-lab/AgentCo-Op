@@ -29,7 +29,7 @@ BENCHMARK_RESUME_LATEST="${BENCHMARK_RESUME_LATEST:-0}"
 
 case "${BENCHMARK_COMMAND}" in
   medqa)
-    BENCHMARK_MODEL="${BENCHMARK_MODEL:-openai_gpt4o_mini}"
+    BENCHMARK_MODEL="${BENCHMARK_MODEL:-openai_gpt5_nano}"
     BENCHMARK_SUBSET="${BENCHMARK_SUBSET:-full}"
     ;;
   math|humaneval)

@@ -39,19 +39,7 @@ class OpenAICompatibleLLMClient:
     ) -> Dict[str, Any]:
         chat_url = self._chat_url(model)
         api_key = self._api_key(model)
-        payload: Dict[str, Any] = {
-            "model": model.name,
-            "messages": messages,
-        }
-        if self._supports_temperature(model):
-            payload["temperature"] = model.temperature
-        if model.max_output_tokens is not None:
-            payload[self._max_tokens_field(model)] = model.max_output_tokens
-        reasoning_effort = model.meta.get("reasoning_effort")
-        if isinstance(reasoning_effort, str) and reasoning_effort:
-            payload["reasoning_effort"] = reasoning_effort
-        if response_format is not None:
-            payload["response_format"] = response_format
+        payload = self._build_payload(model, messages, response_format=response_format)
 
         headers = {
             "Content-Type": "application/json",
@@ -65,6 +53,42 @@ class OpenAICompatibleLLMClient:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        parsed = self._perform_request(chat_url, headers, payload, model=model)
+        retried_reasoning = False
+        if self._should_retry_with_minimal_reasoning(model, parsed, payload):
+            retry_payload = self._build_payload(
+                model,
+                messages,
+                response_format=response_format,
+                reasoning_effort_override="minimal",
+            )
+            parsed = self._perform_request(chat_url, headers, retry_payload, model=model)
+            retried_reasoning = True
+
+        content = self._extract_message_content(parsed)
+        response = {
+            "content": content,
+            "usage": parsed.get("usage", {}),
+            "raw": parsed,
+        }
+        if retried_reasoning:
+            response["raw"] = {
+                **parsed,
+                "dynaforge_reasoning_retry": {
+                    "from": payload.get("reasoning_effort"),
+                    "to": "minimal",
+                },
+            }
+        return response
+
+    def _perform_request(
+        self,
+        chat_url: str,
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any],
+        *,
+        model: ModelSpec,
+    ) -> Dict[str, Any]:
         last_error: Optional[Exception] = None
         max_retries = self._max_retries(model)
         for attempt in range(max_retries + 1):
@@ -103,7 +127,10 @@ class OpenAICompatibleLLMClient:
             parsed = json.loads(raw_body)
         except json.JSONDecodeError as exc:
             raise LLMClientError("LLM backend returned non-JSON response") from exc
+        return parsed
 
+    @staticmethod
+    def _extract_message_content(parsed: Mapping[str, Any]) -> str:
         try:
             message = parsed["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -123,12 +150,62 @@ class OpenAICompatibleLLMClient:
                 else:
                     text_parts.append(str(item))
             content = "\n".join(part for part in text_parts if part)
+        return str(content or "")
 
-        return {
-            "content": content,
-            "usage": parsed.get("usage", {}),
-            "raw": parsed,
+    @staticmethod
+    def _build_payload(
+        model: ModelSpec,
+        messages: List[Dict[str, str]],
+        *,
+        response_format: Optional[Dict[str, Any]] = None,
+        reasoning_effort_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": model.name,
+            "messages": messages,
         }
+        if OpenAICompatibleLLMClient._supports_temperature(model):
+            payload["temperature"] = model.temperature
+        if model.max_output_tokens is not None:
+            payload[OpenAICompatibleLLMClient._max_tokens_field(model)] = model.max_output_tokens
+        reasoning_effort = reasoning_effort_override
+        if reasoning_effort is None:
+            configured_reasoning = model.meta.get("reasoning_effort")
+            if isinstance(configured_reasoning, str) and configured_reasoning:
+                reasoning_effort = configured_reasoning
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+        if response_format is not None:
+            payload["response_format"] = response_format
+        return payload
+
+    @staticmethod
+    def _should_retry_with_minimal_reasoning(
+        model: ModelSpec,
+        parsed: Mapping[str, Any],
+        payload: Mapping[str, Any],
+    ) -> bool:
+        if not model.name.strip().lower().startswith("gpt-5"):
+            return False
+        current_effort = str(payload.get("reasoning_effort", "")).strip().lower()
+        if current_effort in {"", "minimal"}:
+            return False
+        try:
+            choice = parsed["choices"][0]
+            finish_reason = str(choice.get("finish_reason", "")).strip().lower()
+        except (KeyError, IndexError, TypeError):
+            return False
+        if finish_reason != "length":
+            return False
+        content = OpenAICompatibleLLMClient._extract_message_content(parsed)
+        if content.strip():
+            return False
+        usage = parsed.get("usage", {})
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        reasoning_tokens = int(
+            ((usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)) or 0
+        )
+        return completion_tokens > 0 and reasoning_tokens >= completion_tokens
 
     @staticmethod
     def _max_tokens_field(model: ModelSpec) -> str:
@@ -549,8 +626,21 @@ class LLMRouter:
 
     @staticmethod
     def _normalize_output(payload: Mapping[str, Any]) -> Dict[str, Any]:
+        def normalize_aliases(mapping: Mapping[str, Any]) -> Dict[str, Any]:
+            if any(isinstance(key, str) and key.startswith("output.") for key in mapping):
+                return {
+                    key.split(".", 1)[1] if isinstance(key, str) and key.startswith("output.") else key: value
+                    for key, value in mapping.items()
+                }
+            if any(isinstance(key, str) and key.startswith("output_") for key in mapping):
+                return {
+                    key.split("output_", 1)[1] if isinstance(key, str) and key.startswith("output_") else key: value
+                    for key, value in mapping.items()
+                }
+            return dict(mapping)
+
         if "output" in payload and isinstance(payload["output"], dict):
-            return dict(payload["output"])
+            return normalize_aliases(payload["output"])
         meta_keys = {"confidence", "summary", "action", "tool", "arguments"}
         dotted_output = {
             key.split(".", 1)[1]: value
@@ -564,6 +654,18 @@ class LLMRouter:
                 if key not in meta_keys and not (isinstance(key, str) and key.startswith("output."))
             }
             return {**dotted_output, **passthrough}
+        underscored_output = {
+            key.split("output_", 1)[1]: value
+            for key, value in payload.items()
+            if isinstance(key, str) and key.startswith("output_") and len(key) > len("output_")
+        }
+        if underscored_output:
+            passthrough = {
+                key: value
+                for key, value in payload.items()
+                if key not in meta_keys and not (isinstance(key, str) and key.startswith("output_"))
+            }
+            return {**underscored_output, **passthrough}
         if "result" in payload and isinstance(payload["result"], dict):
             return {"result": dict(payload["result"])}
         direct_output = {key: value for key, value in payload.items() if key not in meta_keys}

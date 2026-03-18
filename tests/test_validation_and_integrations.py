@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import types
 import urllib.parse
+import venv
+from pathlib import Path
 
 from dynaforge.ir import (
     BudgetSpec,
@@ -20,7 +25,7 @@ from dynaforge.ir import (
     WorkflowBlueprint,
 )
 from dynaforge.integrations.web_search import BUILTIN_WEB_SEARCH_SERVER, DuckDuckGoWebSearchClient
-from dynaforge.integrations.sandbox import DockerSandboxRunner, LocalVenvSandboxRunner
+from dynaforge.integrations.sandbox import DockerSandboxRunner, LocalVenvSandboxRunner, SandboxError
 from dynaforge.integrations.tool_registry import ToolCandidate
 from dynaforge.runtime.executor import BlueprintExecutor
 from dynaforge.runtime.llm import LLMRouter
@@ -588,17 +593,9 @@ def test_local_venv_sandbox_runner_materializes_repo_and_executes(tmp_path) -> N
     package_dir = repo_dir / "demo_pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
-    (repo_dir / "pyproject.toml").write_text(
-        """
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "demo-pkg"
-version = "0.0.1"
-""".strip()
-        + "\n",
+    (repo_dir / "setup.py").write_text(
+        "from setuptools import setup, find_packages\n"
+        "setup(name='demo-pkg', version='0.0.1', packages=find_packages())\n",
         encoding="utf-8",
     )
     script_path = tmp_path / "echo_env.py"
@@ -611,9 +608,9 @@ version = "0.0.1"
     runner = LocalVenvSandboxRunner(sandbox_root=tmp_path / "sandboxes", project_root=tmp_path)
     sandbox = SandboxSpec(
         sandbox_id="local-demo",
-        image="python:3.11",
+        image=f"python:{sys.version_info.major}.{sys.version_info.minor}",
         backend=SandboxBackend.local_venv,
-        repo2run=Repo2RunSpec(source=str(repo_dir)),
+        repo2run=Repo2RunSpec(source=str(repo_dir), build_cmd=["python", "-c", "print('noop build')"]),
     )
 
     materialized = runner.ensure_materialized(sandbox)
@@ -637,13 +634,48 @@ version = "0.0.1"
     assert server_ref.env["DYNaforge_SANDBOX_REPO"].endswith("repo")
 
 
+def test_local_venv_sandbox_runner_tolerates_upgrade_bootstrap_failure(tmp_path, monkeypatch) -> None:
+    repo_dir = tmp_path / "demo_repo"
+    package_dir = repo_dir / "demo_pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("VALUE = 3\n", encoding="utf-8")
+    (repo_dir / "setup.py").write_text(
+        "from setuptools import setup, find_packages\n"
+        "setup(name='demo-pkg-upgrade-fail', version='0.0.1', packages=find_packages())\n",
+        encoding="utf-8",
+    )
+
+    runner = LocalVenvSandboxRunner(sandbox_root=tmp_path / "sandboxes", project_root=tmp_path)
+    sandbox = SandboxSpec(
+        sandbox_id="local-demo-upgrade-fail",
+        image=f"python:{sys.version_info.major}.{sys.version_info.minor}",
+        backend=SandboxBackend.local_venv,
+        repo2run=Repo2RunSpec(source=str(repo_dir), build_cmd=["python", "-c", "print('noop build')"]),
+    )
+
+    original_run_local = LocalVenvSandboxRunner._run_local
+
+    def fake_run_local(self, cmd, *, cwd, check, env=None, timeout=None):
+        command = list(cmd)
+        if "--upgrade" in command and command[:4][-3:] == ["-m", "pip", "install"]:
+            return subprocess.CompletedProcess(command, 1, "", "offline bootstrap failure")
+        return original_run_local(self, command, cwd=cwd, check=check, env=env, timeout=timeout)
+
+    monkeypatch.setattr(LocalVenvSandboxRunner, "_run_local", fake_run_local)
+
+    materialized = runner.ensure_materialized(sandbox)
+
+    assert materialized.backend == SandboxBackend.local_venv
+    assert Path(materialized.python_bin).exists()
+
+
 def test_local_venv_sandbox_manifest_handles_missing_smoke_test_cmd(tmp_path) -> None:
     repo_dir = tmp_path / "demo_repo"
     repo_dir.mkdir(parents=True)
 
     sandbox = SandboxSpec(
         sandbox_id="local-demo-no-smoke",
-        image="python:3.11",
+        image=f"python:{sys.version_info.major}.{sys.version_info.minor}",
         backend=SandboxBackend.local_venv,
         repo2run=Repo2RunSpec(source=str(repo_dir), smoke_test_cmd=None),
     )
@@ -655,8 +687,78 @@ def test_local_venv_sandbox_manifest_handles_missing_smoke_test_cmd(tmp_path) ->
     assert manifest["repo2run"]["smoke_test_cmd"] == []
 
 
+def test_local_venv_sandbox_manifest_compat_allows_legacy_missing_python_runtime(tmp_path) -> None:
+    repo_dir = tmp_path / "demo_repo"
+    repo_dir.mkdir(parents=True)
+    sandbox = SandboxSpec(
+        sandbox_id="legacy-manifest",
+        image=f"python:{sys.version_info.major}.{sys.version_info.minor}",
+        backend=SandboxBackend.local_venv,
+        repo2run=Repo2RunSpec(source=str(repo_dir)),
+    )
+
+    expected = LocalVenvSandboxRunner._materialization_manifest(sandbox)
+    legacy_manifest = dict(expected)
+    legacy_manifest.pop("python_runtime", None)
+    manifest_path = tmp_path / "materialization_manifest.json"
+    manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
+
+    assert LocalVenvSandboxRunner._materialization_matches(manifest_path, expected) is True
+
+
 def test_local_venv_sandbox_identifies_pip_like_commands() -> None:
     assert LocalVenvSandboxRunner._is_pip_like_command(["pip", "install", "mcp"]) is True
     assert LocalVenvSandboxRunner._is_pip_like_command(["/tmp/venv/bin/pip", "install", "mcp"]) is True
     assert LocalVenvSandboxRunner._is_pip_like_command(["python", "-m", "pip", "install", "mcp"]) is True
     assert LocalVenvSandboxRunner._is_pip_like_command(["python", "-m", "dynaforge.case_studies.scanpy_paul15_job"]) is False
+
+
+def test_local_venv_sandbox_supports_explicit_python_env_runtime(tmp_path) -> None:
+    external_env = tmp_path / "external-env"
+    venv.EnvBuilder(with_pip=True).create(str(external_env))
+
+    runner = LocalVenvSandboxRunner(sandbox_root=tmp_path / "sandboxes", project_root=tmp_path)
+    sandbox = SandboxSpec(
+        sandbox_id="explicit-runtime",
+        image=f"python-env:{external_env}",
+        backend=SandboxBackend.local_venv,
+    )
+
+    materialized = runner.ensure_materialized(sandbox)
+
+    assert Path(materialized.python_bin) == LocalVenvSandboxRunner._python_bin(external_env)
+    manifest = LocalVenvSandboxRunner._materialization_manifest(sandbox)
+    assert manifest["python_runtime"] == f"python-env:{external_env.resolve()}"
+
+
+def test_local_venv_sandbox_retries_editable_pip_install_without_build_isolation(tmp_path, monkeypatch) -> None:
+    repo_dir = tmp_path / "demo_repo"
+    repo_dir.mkdir(parents=True)
+    sandbox = SandboxSpec(
+        sandbox_id="editable-retry",
+        image="python:3.13",
+        backend=SandboxBackend.local_venv,
+        repo2run=Repo2RunSpec(
+            source=str(repo_dir),
+            build_cmd=["python", "-m", "pip", "install", "-e", "."],
+        ),
+    )
+    runner = LocalVenvSandboxRunner(sandbox_root=tmp_path / "sandboxes", project_root=tmp_path)
+    python_bin = tmp_path / "venv" / "bin" / "python"
+    python_bin.parent.mkdir(parents=True, exist_ok=True)
+    python_bin.write_text("", encoding="utf-8")
+
+    calls: list[list[str]] = []
+
+    def fake_run_local(self, cmd, *, cwd, check, env=None, timeout=None):
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise SandboxError("Failed to build package while installing build dependencies: setuptools")
+        return subprocess.CompletedProcess(list(cmd), 0, "", "")
+
+    monkeypatch.setattr(LocalVenvSandboxRunner, "_run_local", fake_run_local)
+
+    runner._install_repo(tmp_path, repo_dir, sandbox, python_bin)
+
+    assert calls[0] == [str(python_bin), "-m", "pip", "install", "-e", "."]
+    assert "--no-build-isolation" in calls[1]

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 from dynaforge.experiment_cli import main as experiment_main
 from dynaforge.experiment_runner import (
     RunRecorder,
     _apply_shard,
+    _build_generic_case_study_blueprint,
+    _generic_specialist_router_handler,
     _build_humaneval_task_handlers,
     _build_math_task_handlers,
     _build_visium_multi_agent_collaboration_blueprint,
@@ -16,6 +20,7 @@ from dynaforge.experiment_runner import (
     _medqa_evaluation_failure_type,
     _resolve_medqa_indices,
     _scanpy_planner_handler,
+    _summarize_generic_case_study,
     _summarize_scanpy_paul15_case_study,
     _summarize_scanpy_case_study,
     _summarize_squidpy_case_study,
@@ -28,6 +33,8 @@ from dynaforge.experiment_runner import (
     build_medqa_deep_analysis,
     run_medqa_experiment,
 )
+from dynaforge.benchmarks import prepare_case_study_assets
+from dynaforge.config import build_executor_from_config, load_hydra_config, resolve_hydra_config
 from dynaforge.ir.schema import FailureType, NodeSpec, SandboxSpec
 from dynaforge.runtime.reports import ExecutionCost, ExecutionReport, NodeExecutionResult, NodeTrace
 
@@ -102,7 +109,7 @@ def test_experiment_cli_parses_task_ids(monkeypatch) -> None:
     assert captured["limit"] == 2
 
 
-def test_experiment_cli_defaults_medqa_to_gpt4o_mini(monkeypatch) -> None:
+def test_experiment_cli_defaults_medqa_to_gpt5_nano(monkeypatch) -> None:
     captured_overrides: list[str] = []
 
     def fake_load(overrides):
@@ -115,7 +122,134 @@ def test_experiment_cli_defaults_medqa_to_gpt4o_mini(monkeypatch) -> None:
     exit_code = experiment_main(["medqa"])
 
     assert exit_code == 0
-    assert "model=openai_gpt4o_mini" in captured_overrides
+    assert "model=openai_gpt5_nano" in captured_overrides
+
+
+def test_generic_case_study_blueprint_injects_assets(tmp_path) -> None:
+    config = load_hydra_config(overrides=["experiment=generic_repo_transfer_smoke"])
+    resolved = resolve_hydra_config(config)
+    case_assets = prepare_case_study_assets(resolved)
+    recorder = RunRecorder("generic-case-study", root_dir=tmp_path / "run")
+    blueprint = _build_generic_case_study_blueprint(
+        resolved,
+        benchmark_settings=resolved["benchmark"],
+        case_assets=case_assets,
+        recorder=recorder,
+    )
+
+    assert blueprint.meta["case_runner_mode"] == "compiled_generic"
+    assert blueprint.task.hints["case_id"] == "generic_repo_transfer_smoke"
+    assert blueprint.task.hints["candidate_repos"][0]["name"] == "local_project"
+    assert blueprint.task.hints["output_dir"].startswith(str(recorder.root))
+
+
+def test_generic_case_study_executes_direct_sandbox_tool(tmp_path) -> None:
+    class FakeSandboxRunner:
+        def is_materialized(self, sandbox_id: str) -> bool:
+            return True
+
+        def ensure_materialized(self, sandbox):
+            return SimpleNamespace(sandbox_id=sandbox.sandbox_id)
+
+        def materialize_server_ref(self, server_ref):
+            return server_ref
+
+        def cleanup_all(self) -> None:
+            return None
+
+        def run_in_sandbox(self, sandbox, cmd, *, timeout_s=None, env=None):
+            input_json = Path(cmd[cmd.index("--input-json") + 1])
+            output_json = Path(cmd[cmd.index("--output-json") + 1])
+            payload = json.loads(input_json.read_text(encoding="utf-8"))
+            inputs = payload["inputs"]
+            selected_repo = inputs["task"]["hints"]["candidate_repos"][0]["name"]
+            report_path = Path(inputs["task"]["hints"]["output_dir"]) / "fake_report.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps({"selected_repo": selected_repo}, ensure_ascii=True), encoding="utf-8")
+            output_json.write_text(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "outputs": {
+                            "selected_repo": selected_repo,
+                            "summary": "ok",
+                            "report_path": str(report_path),
+                        },
+                        "summary": {"report_path": str(report_path)},
+                        "artifacts": [{"path": str(report_path), "mime": "application/json"}],
+                        "confidence": 0.9,
+                        "trace": {"fake_direct_sandbox": True},
+                    },
+                    ensure_ascii=True,
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    config = load_hydra_config(overrides=["experiment=generic_repo_transfer_smoke"])
+    resolved = resolve_hydra_config(config)
+    case_assets = prepare_case_study_assets(resolved)
+    recorder = RunRecorder("generic-case-study", root_dir=tmp_path / "run")
+    blueprint = _build_generic_case_study_blueprint(
+        resolved,
+        benchmark_settings=resolved["benchmark"],
+        case_assets=case_assets,
+        recorder=recorder,
+    )
+    executor = build_executor_from_config(
+        resolved,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_runner=FakeSandboxRunner(),
+    )
+    handlers = {
+        "repo_scout": lambda node, inputs, context: NodeExecutionResult(
+            outputs={
+                "selected_repo": "local_project",
+                "repo_candidates": [{"name": "local_project"}],
+                "analysis_config": {},
+                "summary": "selected local project",
+            },
+            confidence=0.95,
+        ),
+        "validator": lambda node, inputs, context: NodeExecutionResult(
+            outputs={
+                "overall_verdict": "accept",
+                "artifact_completeness": 1.0,
+                "should_refine": False,
+                "concerns": [],
+            },
+            confidence=0.94,
+        ),
+    }
+
+    report = executor.execute_blueprint(blueprint, handlers=handlers)
+    summary = _summarize_generic_case_study(report, blueprint=blueprint, case_assets=case_assets)
+
+    assert report.success
+    assert "repo_runner" in summary["workflow_signature"]
+    assert summary["selected_repos"]["repo_scout"] == "local_project"
+    assert summary["artifact_paths"]
+
+
+def test_generic_specialist_router_handler_selects_candidate_specialists() -> None:
+    result = _generic_specialist_router_handler(
+        NodeSpec(node_id="specialist_router", kind="router", role="SpecialistRouter", model={"provider": "openai", "name": "gpt-5"}),
+        {
+            "task": {
+                "hints": {
+                    "candidate_repos": [
+                        {"name": "SpatialAgent"},
+                        {"name": "BioDiscoveryAgent"},
+                    ]
+                }
+            }
+        },
+        None,
+    )
+
+    assert result.outputs["selected_specialists"] == ["SpatialAgent", "BioDiscoveryAgent"]
+    assert "specialist_a_delivers" in result.outputs["handoff_contract"]
+    assert result.trace["deterministic_router"] is True
 
 
 def test_experiment_cli_parses_shard_arguments(monkeypatch) -> None:
@@ -251,6 +385,41 @@ def test_aggregate_math_runs_merges_task_results(tmp_path) -> None:
     summary = aggregate_math_runs([run_a, run_b], base_dir=tmp_path / "agg")
 
     assert summary["task_count"] == 2
+    assert summary["solve_rate"] == 1.0
+
+
+def test_aggregate_math_runs_regrades_symbolic_equivalence(tmp_path) -> None:
+    run_dir = tmp_path / "run-a"
+    (run_dir / "eval").mkdir(parents=True)
+    (run_dir / "summaries").mkdir(parents=True)
+    (run_dir / "eval" / "task_results.json").write_text(
+        json.dumps(
+            [
+                {
+                    "task_id": "m1",
+                    "sample_index": 0,
+                    "correct": False,
+                    "workflow_signature": "programmer->solver->program_exec->selector",
+                    "failure_type": "incorrect_answer",
+                    "activated_gates": [],
+                    "cost": {"usd": 0.1},
+                    "activated_node_count": 4,
+                    "activated_subgraph_count": 0,
+                    "prediction_answer": "12*x - 34",
+                    "gold_answer": "-34 + 12x",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "summaries" / "summary.json").write_text(
+        json.dumps({"manifest": {"dataset_id": "math", "metric": "solve_rate"}}),
+        encoding="utf-8",
+    )
+
+    summary = aggregate_math_runs([run_dir], base_dir=tmp_path / "agg")
+
+    assert summary["task_count"] == 1
     assert summary["solve_rate"] == 1.0
 
 
