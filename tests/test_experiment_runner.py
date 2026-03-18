@@ -17,6 +17,7 @@ from dynaforge.experiment_runner import (
     _humaneval_public_test_handler,
     _load_existing_medqa_task_results,
     _math_program_exec_handler,
+    _math_selector_handler,
     _medqa_evaluation_failure_type,
     _resolve_medqa_indices,
     _scanpy_planner_handler,
@@ -636,6 +637,7 @@ def test_build_math_and_humaneval_handlers_detect_v2_nodes() -> None:
     assert "program_exec" in math_handlers
     assert "public_test_runner" in humaneval_handlers
     assert "retest_runner" in humaneval_handlers
+    assert "rewrite_test_runner" in humaneval_handlers
 
 
 def test_scanpy_case_planner_prefers_llm_result_when_valid() -> None:
@@ -1453,3 +1455,22 @@ def test_build_medqa_deep_analysis_uses_question_type_and_review_ids(tmp_path) -
     assert deep_analysis["question_type_breakdown"]["mechanism"]["review_rate"] == 1.0
     assert deep_analysis["review_failure_breakdown"]["mechanism"] == 1
     assert deep_analysis["workflow_structure"]["role_frequency"]["Reviewer"] == 1
+
+
+def test_math_selector_prefers_executed_answer_on_clean_disagreement() -> None:
+    result = _math_selector_handler(
+        None,
+        {
+            "solver_answer": "24",
+            "solver_outline": "outline",
+            "program_execution_passed": True,
+            "program_executed_answer": "64",
+            "program_execution_error": "",
+            "program_is_synthetic": False,
+        },
+        None,
+    )
+
+    assert result.outputs["final_answer"] == "64"
+    assert result.outputs["needs_review"] is True
+    assert "preferring the executed answer" in result.outputs["arbitration_notes"]

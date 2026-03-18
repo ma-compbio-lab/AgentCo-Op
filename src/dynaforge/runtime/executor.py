@@ -175,6 +175,43 @@ class BlueprintExecutor:
 
                 node = node_map[node_id]
                 inputs = self._assemble_inputs(blueprint, node_id, parent_map, active_edges, node_results)
+                if self._should_skip_node(node, inputs):
+                    result = NodeExecutionResult(
+                        outputs={"skipped": True},
+                        trace={"skipped_by_condition": str(node.meta.get("execution_condition", "") or "")},
+                        confidence=1.0,
+                    )
+                    ledger.consume(result.cost)
+                    node_results[node_id] = result
+                    executed.add(node_id)
+                    traces.append(
+                        NodeTrace(
+                            node_id=node.node_id,
+                            role=node.role,
+                            status="skipped",
+                            inputs=inputs,
+                            outputs=result.outputs,
+                            artifacts=result.artifacts,
+                            trace=result.trace,
+                            cost=result.cost,
+                            confidence=result.confidence,
+                            failure_type=result.failure_type,
+                            error=result.error,
+                        )
+                    )
+                    events.append(
+                        {
+                            "type": "node_executed",
+                            "node_id": node.node_id,
+                            "role": node.role,
+                            "status": "skipped",
+                            "failure_type": result.failure_type.value,
+                            "confidence": result.confidence,
+                            "cost": result.cost.model_dump(),
+                            "output_keys": sorted(result.outputs.keys()),
+                        }
+                    )
+                    continue
                 input_violations = self._validate_input_contract(node, inputs)
                 if input_violations:
                     contract_violations.extend(input_violations)
@@ -409,6 +446,23 @@ class BlueprintExecutor:
         return payload
 
     @staticmethod
+    def _should_skip_node(node: NodeSpec, inputs: Mapping[str, Any]) -> bool:
+        expression = str(node.meta.get("execution_condition", "") or "").strip()
+        if not expression:
+            return False
+        return not evaluate_predicate(
+            expression,
+            {
+                "inputs": dict(inputs),
+                "task": dict(inputs.get("task", {})) if isinstance(inputs.get("task"), Mapping) else {},
+                "workflow_meta": dict(inputs.get("workflow_meta", {}))
+                if isinstance(inputs.get("workflow_meta"), Mapping)
+                else {},
+            },
+            default_on_error=False,
+        )
+
+    @staticmethod
     def _initial_task_payload(blueprint: WorkflowBlueprint) -> JsonDict:
         return {
             "task": blueprint.task.model_dump(),
@@ -488,6 +542,8 @@ class BlueprintExecutor:
         if container_starts:
             result.cost = result.cost.add(ExecutionCost(container_starts=container_starts))
 
+        result = self._apply_output_policies(node, inputs, result)
+
         if node.cacheable and result.failure_type == FailureType.none:
             self._memoized_results[cache_key] = result
         return result
@@ -562,6 +618,187 @@ class BlueprintExecutor:
                     )
                 )
         return violations
+
+    def _apply_output_policies(
+        self,
+        node: NodeSpec,
+        inputs: JsonDict,
+        result: NodeExecutionResult,
+    ) -> NodeExecutionResult:
+        if result.failure_type != FailureType.none or not isinstance(result.outputs, Mapping):
+            return result
+
+        outputs = dict(result.outputs)
+        trace_updates: JsonDict = {}
+        changed = False
+
+        backfills = node.meta.get("output_backfills", [])
+        if isinstance(backfills, Sequence) and not isinstance(backfills, (str, bytes)):
+            applied_backfills: list[JsonDict] = []
+            for spec in backfills:
+                if not isinstance(spec, Mapping):
+                    continue
+                target = str(spec.get("target", "") or "").strip()
+                if not target or self._has_nonempty_value(outputs.get(target)):
+                    continue
+                value, source_path = self._build_output_backfill(spec, inputs, outputs)
+                if not self._has_nonempty_value(value):
+                    continue
+                outputs[target] = value
+                applied_backfills.append(
+                    {
+                        "target": target,
+                        "strategy": str(spec.get("strategy", "first_nonempty")),
+                        "source": source_path,
+                    }
+                )
+                changed = True
+            if applied_backfills:
+                trace_updates["output_backfills"] = applied_backfills
+
+        change_guard = node.meta.get("output_change_guard")
+        if isinstance(change_guard, Mapping):
+            guard_trace = self._apply_output_change_guard(change_guard, inputs, outputs)
+            if guard_trace is not None:
+                trace_updates["output_change_guard"] = guard_trace
+                changed = True
+
+        if not changed:
+            return result
+
+        trace = dict(result.trace)
+        trace.update(trace_updates)
+        return result.model_copy(update={"outputs": outputs, "trace": trace})
+
+    def _build_output_backfill(
+        self,
+        spec: Mapping[str, Any],
+        inputs: Mapping[str, Any],
+        outputs: Mapping[str, Any],
+    ) -> tuple[Any, str]:
+        strategy = str(spec.get("strategy", "first_nonempty") or "first_nonempty").strip().lower()
+        source_paths = spec.get("sources")
+        if isinstance(source_paths, Sequence) and not isinstance(source_paths, (str, bytes)):
+            candidates = [str(item) for item in source_paths if str(item).strip()]
+        else:
+            source = str(spec.get("source", "") or "").strip()
+            candidates = [source] if source else []
+
+        for source_path in candidates:
+            value = self._resolve_output_policy_value(source_path, inputs=inputs, outputs=outputs)
+            if not self._has_nonempty_value(value):
+                continue
+            if strategy == "python_assignment_from_field":
+                variable_name = str(spec.get("variable_name", "FINAL_ANSWER") or "FINAL_ANSWER").strip() or "FINAL_ANSWER"
+                sentinel = str(spec.get("sentinel", "DYNaforge synthetic program fallback") or "").strip()
+                header = f"# {sentinel}\n" if sentinel else ""
+                assignment = json.dumps(value, ensure_ascii=False)
+                return f"{header}{variable_name} = {assignment}\n", source_path
+            return value, source_path
+        return None, ""
+
+    def _apply_output_change_guard(
+        self,
+        guard: Mapping[str, Any],
+        inputs: Mapping[str, Any],
+        outputs: Dict[str, Any],
+    ) -> Optional[JsonDict]:
+        output_path = str(guard.get("output_path", "") or "").strip()
+        if not output_path:
+            return None
+        candidate = self._resolve_output_policy_value(output_path, inputs=inputs, outputs=outputs)
+        record_field = str(guard.get("record_field", "output_changed") or "output_changed").strip() or "output_changed"
+        reason_field = str(guard.get("reason_field", "output_change_reason") or "output_change_reason").strip() or "output_change_reason"
+        normalize_mode = str(guard.get("normalize", "text") or "text").strip().lower()
+
+        raw_compare = guard.get("compare_against", [])
+        compare_paths = []
+        if isinstance(raw_compare, Sequence) and not isinstance(raw_compare, (str, bytes)):
+            compare_paths = [str(item) for item in raw_compare if str(item).strip()]
+        elif isinstance(raw_compare, str) and raw_compare.strip():
+            compare_paths = [raw_compare.strip()]
+
+        normalized_candidate = self._normalize_guard_value(candidate, mode=normalize_mode)
+        compared_to: list[str] = []
+        changed = True
+        reason = "candidate differs from all guarded references"
+        for compare_path in compare_paths:
+            reference = self._resolve_output_policy_value(compare_path, inputs=inputs, outputs=outputs)
+            normalized_reference = self._normalize_guard_value(reference, mode=normalize_mode)
+            if normalized_reference is None:
+                continue
+            compared_to.append(compare_path)
+            if normalized_candidate == normalized_reference:
+                changed = False
+                reason = f"output matched guarded reference '{compare_path}'"
+                break
+
+        outputs[record_field] = changed
+        outputs[reason_field] = reason
+        return {
+            "output_path": output_path,
+            "normalize": normalize_mode,
+            "compared_against": compared_to,
+            "changed": changed,
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _resolve_output_policy_value(
+        path: str,
+        *,
+        inputs: Mapping[str, Any],
+        outputs: Mapping[str, Any],
+    ) -> Any:
+        if not path:
+            return None
+        roots = []
+        if path.startswith("inputs."):
+            roots.append(("inputs", path.split("inputs.", 1)[1]))
+        elif path.startswith("outputs."):
+            roots.append(("outputs", path.split("outputs.", 1)[1]))
+        else:
+            roots.extend([("outputs", path), ("inputs", path)])
+
+        for root_name, subpath in roots:
+            current: Any = outputs if root_name == "outputs" else inputs
+            if not subpath:
+                return current
+            for segment in subpath.split("."):
+                if isinstance(current, Mapping):
+                    current = current.get(segment)
+                else:
+                    current = None
+                if current is None:
+                    break
+            if current is not None:
+                return current
+        return None
+
+    @staticmethod
+    def _has_nonempty_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (list, dict, tuple, set)):
+            return bool(value)
+        return True
+
+    @staticmethod
+    def _normalize_guard_value(value: Any, *, mode: str) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value)
+        if mode == "code":
+            stripped = text.strip()
+            if stripped.startswith("```") and stripped.endswith("```"):
+                lines = stripped.splitlines()
+                if len(lines) >= 3:
+                    stripped = "\n".join(lines[1:-1]).strip()
+            normalized_lines = [line.rstrip() for line in stripped.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+            return "\n".join(normalized_lines).strip()
+        return text.strip()
 
     @staticmethod
     def _augment_builtin_servers(blueprint: WorkflowBlueprint) -> WorkflowBlueprint:

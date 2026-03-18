@@ -116,6 +116,7 @@ workflow_design:
         Reject any candidate that contradicts explicit problem constraints.
         If the executed program failed, returned an empty answer, or only produced an approximate decimal for an exact symbolic answer,
         set output.needs_review=true unless the solver answer is directly justified from the statement.
+        If program_is_synthetic=true, treat the execution as a formatting sanity check rather than independent mathematical evidence.
         If the solver proposes an exact symbolic form and the program only gives a decimal approximation, do not treat the decimal as stronger evidence by default.
         Prefer exact symbolic forms when they are consistent with the problem statement and the execution trace only supplies an approximation.
         If the solver answer and executed answer disagree, set output.needs_review=true unless one candidate can be ruled out directly from the statement.

@@ -23,6 +23,7 @@ from dynaforge.benchmarks import (
     grade_humaneval_prediction,
     grade_math_prediction,
     grade_medqa_prediction,
+    _math_equal,
     prepare_case_study_assets,
     prepare_humaneval_dataset,
     prepare_math_dataset,
@@ -1209,6 +1210,8 @@ def _build_math_task_handlers(
     handlers: dict[str, Any] = {}
     if "program_exec" in node_ids:
         handlers["program_exec"] = _math_program_exec_handler
+    if "selector" in node_ids:
+        handlers["selector"] = _math_selector_handler
     return handlers
 
 
@@ -1221,11 +1224,11 @@ def _build_humaneval_task_handlers(
     workflow_variant = str(benchmark_settings.get("workflow_variant", "")).strip().lower()
     node_ids = set(blueprint.node_map())
     if workflow_variant not in {"aflow_v2", "public_test_loop"} and not (
-        {"public_test_runner", "retest_runner"} & node_ids
+        {"public_test_runner", "retest_runner", "rewrite_test_runner"} & node_ids
     ):
         return {}
     handlers: dict[str, Any] = {}
-    for node_id in ("public_test_runner", "retest_runner"):
+    for node_id in ("public_test_runner", "retest_runner", "rewrite_test_runner"):
         if node_id in node_ids:
             handlers[node_id] = (
                 lambda node, inputs, context, _sample=sample: _humaneval_public_test_handler(
@@ -1385,6 +1388,7 @@ def _math_program_exec_handler(node: NodeSpec, inputs: Mapping[str, Any], contex
 
     python_executable = _sandbox_python_executable(node, context)
     execution = _execute_math_program(program=program, python_executable=python_executable)
+    synthetic_program = "DYNaforge synthetic program fallback" in program
     outputs = {
         "passed": bool(execution.get("passed", False)),
         "executed_answer": str(execution.get("executed_answer", "") or "").strip(),
@@ -1392,6 +1396,7 @@ def _math_program_exec_handler(node: NodeSpec, inputs: Mapping[str, Any], contex
         "execution_error": str(execution.get("execution_error", "") or "").strip(),
         "stdout": str(execution.get("stdout", "") or "").strip(),
         "program": program,
+        "synthetic_program": synthetic_program,
     }
     return NodeExecutionResult(
         outputs=outputs,
@@ -1399,10 +1404,99 @@ def _math_program_exec_handler(node: NodeSpec, inputs: Mapping[str, Any], contex
             "math_program_exec": True,
             "sandbox_python": python_executable,
             "program_chars": len(program),
+            "synthetic_program": synthetic_program,
         },
         cost=ExecutionCost(tool_calls=1),
-        confidence=0.92 if outputs["passed"] else 0.25,
+        confidence=0.35 if synthetic_program and outputs["passed"] else (0.92 if outputs["passed"] else 0.25),
     )
+
+
+def _math_selector_handler(node: NodeSpec, inputs: Mapping[str, Any], context: Any) -> NodeExecutionResult:
+    del node, context
+    solver_answer = str(inputs.get("solver_answer", "") or "").strip()
+    solver_outline = str(inputs.get("solver_outline", "") or "").strip()
+    execution_passed = bool(inputs.get("program_execution_passed", False))
+    executed_answer = str(inputs.get("program_executed_answer", "") or "").strip()
+    execution_error = str(inputs.get("program_execution_error", "") or "").strip()
+    synthetic_program = bool(inputs.get("program_is_synthetic", False))
+
+    notes: list[str] = []
+    needs_review = False
+    final_answer = solver_answer or executed_answer
+
+    if execution_passed and executed_answer:
+        if not solver_answer:
+            final_answer = executed_answer
+            notes.append("No direct solver answer was available; using executed answer.")
+        elif _math_equal(executed_answer, solver_answer):
+            if _prefer_symbolic_math_answer(solver_answer, executed_answer):
+                final_answer = solver_answer
+                notes.append("Solver and execution agree numerically; preserving the more exact symbolic form.")
+            else:
+                final_answer = executed_answer
+                notes.append("Solver and execution agree; using executed answer.")
+            if synthetic_program:
+                needs_review = True
+                notes.append("The executed program was synthetic fallback output, so execution is only weak evidence.")
+        else:
+            if synthetic_program:
+                final_answer = solver_answer
+                needs_review = True
+                notes.append("Execution disagrees with the solver, but the program was synthetic fallback output; keeping solver answer pending review.")
+            else:
+                final_answer = executed_answer
+                needs_review = True
+                notes.append("Solver and execution disagree; preferring the executed answer and escalating for review.")
+    else:
+        final_answer = solver_answer or executed_answer
+        if execution_error:
+            notes.append(f"Execution failed: {execution_error}")
+        if not final_answer:
+            notes.append("Neither solver nor execution produced a usable final answer.")
+        needs_review = bool(execution_error) or not bool(final_answer)
+
+    if not final_answer and executed_answer:
+        final_answer = executed_answer
+    if not final_answer:
+        final_answer = solver_answer
+
+    if solver_outline and not solver_answer:
+        notes.append("Solver returned an outline without a final answer.")
+
+    confidence = 0.93 if execution_passed and not synthetic_program and not needs_review else 0.72
+    if not execution_passed:
+        confidence = 0.45 if final_answer else 0.2
+
+    return NodeExecutionResult(
+        outputs={
+            "final_answer": final_answer,
+            "arbitration_notes": " ".join(note for note in notes if note).strip(),
+            "needs_review": needs_review,
+        },
+        trace={
+            "math_selector": True,
+            "execution_passed": execution_passed,
+            "synthetic_program": synthetic_program,
+        },
+        cost=ExecutionCost(),
+        confidence=confidence,
+    )
+
+
+def _prefer_symbolic_math_answer(primary: str, secondary: str) -> bool:
+    if not primary:
+        return False
+    if not secondary:
+        return True
+    primary_text = primary.strip().lower()
+    secondary_text = secondary.strip().lower()
+    primary_symbolic = any(token in primary_text for token in ("pi", "\\pi", "sqrt", "\\sqrt", "/", "^"))
+    secondary_symbolic = any(token in secondary_text for token in ("pi", "\\pi", "sqrt", "\\sqrt", "/", "^"))
+    if primary_symbolic and not secondary_symbolic:
+        return True
+    if "." in secondary_text and "." not in primary_text:
+        return True
+    return False
 
 
 def _humaneval_public_test_handler(
@@ -2066,6 +2160,9 @@ def _build_math_task_result(
         "program_execution_error": str(program_exec_outputs.get("execution_error", "") or "")
         if isinstance(program_exec_outputs, Mapping)
         else "",
+        "program_execution_synthetic": bool(program_exec_outputs.get("synthetic_program", False))
+        if isinstance(program_exec_outputs, Mapping)
+        else False,
         "workflow_signature": _workflow_signature(report),
         "activated_gates": report.activated_gates,
         "active_subgraphs": report.active_subgraphs,
@@ -2093,6 +2190,7 @@ def _build_humaneval_task_result(
     grading = grade_humaneval_prediction(answer_payload, sample)
     public_test_outputs = report.node_results.get("public_test_runner", NodeExecutionResult()).outputs
     retest_outputs = report.node_results.get("retest_runner", NodeExecutionResult()).outputs
+    rewrite_test_outputs = report.node_results.get("rewrite_test_runner", NodeExecutionResult()).outputs
     return {
         "order": order,
         "sample_index": sample_index,
@@ -2112,6 +2210,24 @@ def _build_humaneval_task_result(
         else False,
         "retest_result": str(retest_outputs.get("result", "") or "")
         if isinstance(retest_outputs, Mapping)
+        else "",
+        "rewrite_test_passed": bool(rewrite_test_outputs.get("passed", False))
+        if isinstance(rewrite_test_outputs, Mapping)
+        else False,
+        "rewrite_test_result": str(rewrite_test_outputs.get("result", "") or "")
+        if isinstance(rewrite_test_outputs, Mapping)
+        else "",
+        "repair_changed": bool(answer_payload.get("repair_changed", False))
+        if isinstance(answer_payload, Mapping)
+        else False,
+        "repair_change_reason": str(answer_payload.get("repair_change_reason", "") or "")
+        if isinstance(answer_payload, Mapping)
+        else "",
+        "rewrite_changed": bool(answer_payload.get("rewrite_changed", False))
+        if isinstance(answer_payload, Mapping)
+        else False,
+        "rewrite_change_reason": str(answer_payload.get("rewrite_change_reason", "") or "")
+        if isinstance(answer_payload, Mapping)
         else "",
         "workflow_signature": _workflow_signature(report),
         "activated_gates": report.activated_gates,

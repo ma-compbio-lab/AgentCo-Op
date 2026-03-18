@@ -50,6 +50,11 @@ def test_trigger_evaluation() -> None:
     assert not evaluate_trigger(trigger, {"report": {"confidence": 0.9}})
 
 
+def test_trigger_contains_returns_false_for_scalar_non_container() -> None:
+    trigger = TriggerExpr(any_of=[{"field": "node.outputs.answer", "op": "contains", "value": "."}])
+    assert not evaluate_trigger(trigger, {"node": {"outputs": {"answer": 42}}})
+
+
 def test_executor_runs_minimal_blueprint() -> None:
     blueprint = WorkflowBlueprint(
         task=TaskSpec(task_id="runtime-1", title="Runtime", description="Desc"),
@@ -508,3 +513,165 @@ def test_cache_key_changes_when_node_skills_change() -> None:
     assert report_a.success
     assert report_b.success
     assert call_count["value"] == 2
+
+
+def test_executor_applies_output_backfill_before_contract_validation() -> None:
+    def handler(node, inputs, context):
+        return NodeExecutionResult(outputs={"final_answer": "12\\pi"})
+
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="runtime-backfill", title="Runtime", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="programmer",
+                kind=NodeKind.agent,
+                role="Programmer",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                io={"output_schema": {"type": "object", "required": ["program", "final_answer"]}},
+                meta={
+                    "output_backfills": [
+                        {
+                            "target": "program",
+                            "strategy": "python_assignment_from_field",
+                            "source": "final_answer",
+                            "variable_name": "FINAL_ANSWER",
+                            "sentinel": "DYNaforge synthetic program fallback",
+                        }
+                    ]
+                },
+            )
+        ],
+        base_edges=[],
+    )
+
+    report = BlueprintExecutor().execute_blueprint(blueprint, handlers={"programmer": handler})
+
+    assert report.success
+    outputs = report.node_results["programmer"].outputs
+    assert outputs["final_answer"] == "12\\pi"
+    assert "FINAL_ANSWER" in outputs["program"]
+    assert report.traces[0].trace["output_backfills"][0]["target"] == "program"
+
+
+def test_executor_output_change_guard_marks_noop_repairs_and_skips_conditioned_edge() -> None:
+    def coder_handler(node, inputs, context):
+        return NodeExecutionResult(outputs={"completion": "def f(x):\n    return x - 1\n"})
+
+    def public_test_handler(node, inputs, context):
+        return NodeExecutionResult(outputs={"passed": False, "result": "expected 4, got 2"})
+
+    def reviewer_handler(node, inputs, context):
+        return NodeExecutionResult(outputs={"corrected_completion": "def f(x):\n    return x - 1\n"})
+
+    def reviser_handler(node, inputs, context):
+        return NodeExecutionResult(outputs={"completion": "def f(x):\n    return x - 1\n"})
+
+    seen = {"retest_ran": False}
+
+    def retest_handler(node, inputs, context):
+        seen["retest_ran"] = True
+        return NodeExecutionResult(outputs={"passed": False, "result": "still failing"})
+
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="runtime-change-guard", title="Runtime", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="coder",
+                kind=NodeKind.agent,
+                role="Coder",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+            ),
+            NodeSpec(
+                node_id="public_test_runner",
+                kind=NodeKind.tool,
+                role="PublicTestRunner",
+                meta={"direct_sandbox_handler": True},
+            ),
+        ],
+        base_edges=[EdgeSpec(edge_id="edge_coder_to_test", src="coder", dst="public_test_runner")],
+        subgraphs=[
+            {
+                "subgraph_id": "sg_fix",
+                "purpose": "repair",
+                "nodes": [
+                    NodeSpec(
+                        node_id="reviewer",
+                        kind=NodeKind.agent,
+                        role="Reviewer",
+                        model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                    ),
+                    NodeSpec(
+                        node_id="reviser",
+                        kind=NodeKind.agent,
+                        role="Reviser",
+                        model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                        meta={
+                            "output_change_guard": {
+                                "output_path": "completion",
+                                "compare_against": ["inputs.candidate_code"],
+                                "normalize": "code",
+                                "record_field": "repair_changed",
+                                "reason_field": "repair_change_reason",
+                            }
+                        },
+                    ),
+                    NodeSpec(
+                        node_id="retest_runner",
+                        kind=NodeKind.tool,
+                        role="RetestRunner",
+                        meta={
+                            "direct_sandbox_handler": True,
+                            "execution_condition": "inputs.repair_changed == True",
+                        },
+                    ),
+                ],
+                "edges": [
+                    EdgeSpec(edge_id="edge_coder_to_reviewer", src="coder", dst="reviewer", mapping={"candidate_code": "completion"}),
+                    EdgeSpec(edge_id="edge_test_to_reviewer", src="public_test_runner", dst="reviewer", mapping={"public_test_result": "result"}),
+                    EdgeSpec(edge_id="edge_coder_to_reviser", src="coder", dst="reviser", mapping={"candidate_code": "completion"}),
+                    EdgeSpec(edge_id="edge_test_to_reviser", src="public_test_runner", dst="reviser", mapping={"public_test_result": "result"}),
+                    EdgeSpec(edge_id="edge_reviewer_to_reviser", src="reviewer", dst="reviser"),
+                    EdgeSpec(
+                        edge_id="edge_reviser_to_retest",
+                        src="reviser",
+                        dst="retest_runner",
+                        mapping={
+                            "candidate_code": "completion",
+                            "repair_changed": "repair_changed",
+                            "repair_change_reason": "repair_change_reason",
+                        },
+                    ),
+                ],
+                "entry_nodes": ["reviewer"],
+                "exit_nodes": ["reviser", "retest_runner"],
+            }
+        ],
+        gates=[
+            {
+                "gate_id": "repair",
+                "trigger": {
+                    "all_of": [
+                        {"field": "node.node_id", "op": "==", "value": "public_test_runner"},
+                        {"field": "node.outputs.passed", "op": "==", "value": False},
+                    ]
+                },
+                "enable_subgraphs": ["sg_fix"],
+            }
+        ],
+    )
+
+    handlers = {
+        "coder": coder_handler,
+        "public_test_runner": public_test_handler,
+        "reviewer": reviewer_handler,
+        "reviser": reviser_handler,
+        "retest_runner": retest_handler,
+    }
+
+    report = BlueprintExecutor().execute_blueprint(blueprint, handlers=handlers)
+
+    assert report.success
+    assert seen["retest_ran"] is False
+    reviser_outputs = report.node_results["reviser"].outputs
+    assert reviser_outputs["repair_changed"] is False
+    assert "matched guarded reference" in reviser_outputs["repair_change_reason"]

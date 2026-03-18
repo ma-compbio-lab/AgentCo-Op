@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from dynaforge.ir.schema import AtomicCondition, ConditionOp, TriggerExpr
 
@@ -34,7 +34,15 @@ def evaluate_atomic(condition: AtomicCondition, context: Mapping[str, Any]) -> b
     if op == ConditionOp.gt:
         return actual is not None and actual > expected
     if op == ConditionOp.contains:
-        return actual is not None and expected in actual
+        if actual is None:
+            return False
+        if isinstance(actual, Mapping):
+            return expected in actual
+        if isinstance(actual, (str, bytes, set, frozenset)):
+            return expected in actual
+        if isinstance(actual, Sequence):
+            return expected in actual
+        return False
     if op == ConditionOp.in_:
         return actual in expected if expected is not None else False
     raise ValueError(f"Unsupported condition op: {op}")
@@ -66,4 +74,3 @@ def evaluate_trigger(trigger: TriggerExpr, context: Mapping[str, Any]) -> bool:
     any_ok = any(any_results) if any_results else True
     not_ok = not_result if not_result is not None else True
     return all_ok and any_ok and not_ok
-
