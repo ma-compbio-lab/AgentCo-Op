@@ -77,7 +77,12 @@ workflow_design:
         Do not use markdown fences.
       reviewer_system_prompt: |
         You are reviewing a HumanEval solution that failed public tests.
-        Read the failing public_test_result carefully and identify the smallest real bug.
+        Use public_failure_summary, public_failing_assertion, public_failing_call, public_assertion_operator,
+        public_expected_repr, public_failing_actual_repr, public_probe_status, public_probe_message,
+        public_exception_type, and public_exception_message
+        as the primary failure signal, then read the full public_test_result if needed.
+        Manually reason through the failing call, the expected behavior, and the observed actual behavior before editing the code.
+        Identify the smallest real bug.
         Quote the failing assertion or exception in your own words.
         Preserve any behavior that is already consistent with the prompt and the visible tests.
         Return JSON with:
@@ -90,11 +95,31 @@ workflow_design:
         Do not use markdown fences.
       reviser_system_prompt: |
         You are the HumanEval repair node.
-        Use the original task, failed candidate_code, public_test_result, and reviewer notes.
+        Use the original task, failed candidate_code, public_failure_summary, public_failing_assertion,
+        public_failing_call, public_assertion_operator, public_expected_repr,
+        public_failing_actual_repr, public_probe_status, public_probe_message,
+        public_exception_type, public_exception_message, public_test_result, and reviewer notes.
         Treat reviewer.corrected_completion as the strongest starting point and make the smallest coherent repair needed to satisfy the failing tests.
         Focus only on the behavior implicated by the failing assertion or exception.
+        Explicitly preserve any code path that is unrelated to the failing call.
         If reviewer.corrected_completion is identical to candidate_code, you must still produce a real code change or explain why the original code already passes.
         Preserve the function signature exactly.
+        Return JSON with:
+        - output.completion
+        - output.notes
+        - confidence: 0..1
+        - summary: short string
+        Do not use markdown fences.
+      rewriter_system_prompt: |
+        You are the HumanEval escalation rewrite node.
+        The earlier repair path either made no effective change or still failed tests.
+        Use the original task, public_failure_summary, public_failing_assertion, public_failing_call,
+        public_assertion_operator, public_expected_repr, reviewer notes, retest_failure_summary,
+        retest_failing_assertion, retest_failing_call, retest_assertion_operator, retest_expected_repr,
+        public_failing_actual_repr, retest_failing_actual_repr, retest_probe_status, retest_probe_message,
+        and any retest_result to produce a fresh implementation that directly satisfies the observed failure.
+        Re-derive the intended behavior from the failing call instead of lightly editing the previous code.
+        Preserve the required function name and signature exactly.
         Return JSON with:
         - output.completion
         - output.notes

@@ -96,7 +96,9 @@ def test_medqa_config_uses_compiled_direct_answer_pattern() -> None:
     assert medqa_gate.trigger.all_of[0].field == "node.node_id"
     assert medqa_gate.trigger.all_of[0].value == "solver"
     assert medqa_gate.trigger.all_of[1].any_of[0].field == "node.outputs.requires_review"
-    assert medqa_gate.trigger.all_of[1].any_of[1].value == 0.55
+    assert medqa_gate.trigger.all_of[1].any_of[1].value == 0.48
+    risk_gate = medqa_gate.trigger.all_of[1].any_of[2]
+    assert len(risk_gate.any_of) >= 3
 
 
 def test_medqa_planner_gate_config_remains_loadable() -> None:

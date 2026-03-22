@@ -14,6 +14,7 @@ from dynaforge.benchmarks import (
     normalize_medqa_record,
     parse_medqa_answer,
     parse_math_answer,
+    probe_humaneval_call,
     prepare_humaneval_dataset,
     prepare_math_dataset,
     prepare_medqa_assets,
@@ -257,6 +258,22 @@ def test_prepare_medqa_dataset_uses_cached_manifest_without_hf_lookup(monkeypatc
     )
 
     assert manifest["record_count"] == 1
+
+
+def test_parse_math_answer_extracts_rhs_from_simple_assignment() -> None:
+    assert parse_math_answer({"final_answer": "n = 6"}) == "6"
+    assert parse_math_answer({"final_answer": "x=\\frac{1}{2}"}) == "\\frac{1}{2}"
+
+
+def test_probe_humaneval_call_returns_actual_repr() -> None:
+    result = probe_humaneval_call(
+        completion="def add(a, b):\n    return a + b\n",
+        failing_call="candidate(1, 2)",
+        entry_point="add",
+    )
+
+    assert result["probe_status"] == "ok"
+    assert result["actual_repr"] == "3"
 
 
 def test_prepare_math_dataset_writes_processed_records(monkeypatch, tmp_path) -> None:

@@ -182,6 +182,7 @@ def _build_direct_answer_blueprint(context: PatternBuildContext) -> WorkflowBlue
 def _build_reason_execute_select_blueprint(context: PatternBuildContext) -> WorkflowBlueprint:
     profile = context.design.task_profile
     cfg = context.design.pattern_override(WorkflowPattern.reason_execute_select.value)
+    enable_challenger = bool(cfg.get("enable_challenger_solver", False))
     tool_cfg = dict(cfg.get("tool_nodes", {})).get("program_exec", {})
     program_exec = _build_tool_node_from_cfg(
         node_id="program_exec",
@@ -198,6 +199,28 @@ def _build_reason_execute_select_blueprint(context: PatternBuildContext) -> Work
         system_prompt=cfg.get("solver_system_prompt") or _default_exact_solver_prompt(profile),
         io=IOContract(output_schema={"type": "object", "required": ["final_answer"]}),
     )
+    challenger_solver: NodeSpec | None = None
+    if enable_challenger:
+        challenger_solver = NodeSpec(
+            node_id="solver_challenger",
+            kind=NodeKind.agent,
+            role="ChallengerSolver",
+            description="Produce an independent alternative reasoning-based answer.",
+            model=context.model,
+            system_prompt=cfg.get("challenger_system_prompt") or _default_challenger_exact_solver_prompt(profile),
+            io=IOContract(output_schema={"type": "object", "required": ["final_answer"]}),
+        )
+    programmer_meta: JsonDict = {}
+    if bool(cfg.get("allow_program_backfill", True)):
+        programmer_meta["output_backfills"] = [
+            {
+                "target": "program",
+                "strategy": "python_assignment_from_field",
+                "source": "final_answer",
+                "variable_name": "FINAL_ANSWER",
+                "sentinel": "DYNaforge synthetic program fallback",
+            }
+        ]
     programmer = NodeSpec(
         node_id="programmer",
         kind=NodeKind.agent,
@@ -206,17 +229,7 @@ def _build_reason_execute_select_blueprint(context: PatternBuildContext) -> Work
         model=context.model,
         system_prompt=cfg.get("programmer_system_prompt") or _default_programmer_prompt(profile),
         io=IOContract(output_schema={"type": "object", "required": ["program", "final_answer"]}),
-        meta={
-            "output_backfills": [
-                {
-                    "target": "program",
-                    "strategy": "python_assignment_from_field",
-                    "source": "final_answer",
-                    "variable_name": "FINAL_ANSWER",
-                    "sentinel": "DYNaforge synthetic program fallback",
-                }
-            ]
-        },
+        meta=programmer_meta,
     )
     selector = NodeSpec(
         node_id="selector",
@@ -235,35 +248,52 @@ def _build_reason_execute_select_blueprint(context: PatternBuildContext) -> Work
             "preferred_answer_nodes": ["reviser", "selector", "solver"],
         }
     )
+    base_nodes = [solver]
+    if challenger_solver is not None:
+        base_nodes.append(challenger_solver)
+    base_nodes.extend([programmer, program_exec, selector])
+    base_edges = [
+        EdgeSpec(
+            edge_id="edge_solver_to_selector",
+            src="solver",
+            dst="selector",
+            mapping={"solver_answer": "final_answer", "solver_outline": "solution_outline"},
+        ),
+        EdgeSpec(
+            edge_id="edge_programmer_to_program_exec",
+            src="programmer",
+            dst="program_exec",
+            mapping={"program": "program", "candidate_answer": "final_answer"},
+        ),
+        EdgeSpec(
+            edge_id="edge_program_exec_to_selector",
+            src="program_exec",
+            dst="selector",
+            mapping={
+                "program_execution_passed": "passed",
+                "program_executed_answer": "executed_answer",
+                "program_execution_error": "execution_error",
+                "program_is_synthetic": "synthetic_program",
+            },
+        ),
+    ]
+    if challenger_solver is not None:
+        base_edges.append(
+            EdgeSpec(
+                edge_id="edge_challenger_to_selector",
+                src="solver_challenger",
+                dst="selector",
+                mapping={
+                    "challenger_answer": "final_answer",
+                    "challenger_outline": "solution_outline",
+                },
+            )
+        )
     return WorkflowBlueprint(
         task=context.task,
         budget=context.budget,
-        base_nodes=[solver, programmer, program_exec, selector],
-        base_edges=[
-            EdgeSpec(
-                edge_id="edge_solver_to_selector",
-                src="solver",
-                dst="selector",
-                mapping={"solver_answer": "final_answer", "solver_outline": "solution_outline"},
-            ),
-            EdgeSpec(
-                edge_id="edge_programmer_to_program_exec",
-                src="programmer",
-                dst="program_exec",
-                mapping={"program": "program", "candidate_answer": "final_answer"},
-            ),
-            EdgeSpec(
-                edge_id="edge_program_exec_to_selector",
-                src="program_exec",
-                dst="selector",
-                mapping={
-                    "program_execution_passed": "passed",
-                    "program_executed_answer": "executed_answer",
-                    "program_execution_error": "execution_error",
-                    "program_is_synthetic": "synthetic_program",
-                },
-            ),
-        ],
+        base_nodes=base_nodes,
+        base_edges=base_edges,
         subgraphs=[review_subgraph],
         gates=[
             GateSpec(
@@ -421,7 +451,20 @@ def _build_code_generate_test_repair_blueprint(context: PatternBuildContext) -> 
                         edge_id="edge_public_test_to_reviewer",
                         src="public_test_runner",
                         dst="reviewer",
-                        mapping={"public_test_passed": "passed", "public_test_result": "result"},
+                        mapping={
+                            "public_test_passed": "passed",
+                            "public_test_result": "result",
+                            "public_failure_summary": "failure_summary",
+                            "public_failing_assertion": "failing_assertion",
+                            "public_failing_call": "failing_call",
+                            "public_assertion_operator": "assertion_operator",
+                            "public_expected_repr": "expected_repr",
+                            "public_failing_actual_repr": "failing_actual_repr",
+                            "public_probe_status": "probe_status",
+                            "public_probe_message": "probe_message",
+                            "public_exception_type": "exception_type",
+                            "public_exception_message": "exception_message",
+                        },
                     ),
                     EdgeSpec(
                         edge_id="edge_coder_to_reviser",
@@ -433,7 +476,20 @@ def _build_code_generate_test_repair_blueprint(context: PatternBuildContext) -> 
                         edge_id="edge_public_test_to_reviser",
                         src="public_test_runner",
                         dst="reviser",
-                        mapping={"public_test_passed": "passed", "public_test_result": "result"},
+                        mapping={
+                            "public_test_passed": "passed",
+                            "public_test_result": "result",
+                            "public_failure_summary": "failure_summary",
+                            "public_failing_assertion": "failing_assertion",
+                            "public_failing_call": "failing_call",
+                            "public_assertion_operator": "assertion_operator",
+                            "public_expected_repr": "expected_repr",
+                            "public_failing_actual_repr": "failing_actual_repr",
+                            "public_probe_status": "probe_status",
+                            "public_probe_message": "probe_message",
+                            "public_exception_type": "exception_type",
+                            "public_exception_message": "exception_message",
+                        },
                     ),
                     EdgeSpec(edge_id="edge_reviewer_to_reviser", src="reviewer", dst="reviser"),
                     EdgeSpec(
@@ -466,7 +522,20 @@ def _build_code_generate_test_repair_blueprint(context: PatternBuildContext) -> 
                         edge_id="edge_public_test_to_rewriter",
                         src="public_test_runner",
                         dst="rewriter",
-                        mapping={"public_test_passed": "passed", "public_test_result": "result"},
+                        mapping={
+                            "public_test_passed": "passed",
+                            "public_test_result": "result",
+                            "public_failure_summary": "failure_summary",
+                            "public_failing_assertion": "failing_assertion",
+                            "public_failing_call": "failing_call",
+                            "public_assertion_operator": "assertion_operator",
+                            "public_expected_repr": "expected_repr",
+                            "public_failing_actual_repr": "failing_actual_repr",
+                            "public_probe_status": "probe_status",
+                            "public_probe_message": "probe_message",
+                            "public_exception_type": "exception_type",
+                            "public_exception_message": "exception_message",
+                        },
                     ),
                     EdgeSpec(
                         edge_id="edge_reviewer_to_rewriter",
@@ -488,7 +557,20 @@ def _build_code_generate_test_repair_blueprint(context: PatternBuildContext) -> 
                         edge_id="edge_retest_to_rewriter",
                         src="retest_runner",
                         dst="rewriter",
-                        mapping={"retest_passed": "passed", "retest_result": "result"},
+                        mapping={
+                            "retest_passed": "passed",
+                            "retest_result": "result",
+                            "retest_failure_summary": "failure_summary",
+                            "retest_failing_assertion": "failing_assertion",
+                            "retest_failing_call": "failing_call",
+                            "retest_assertion_operator": "assertion_operator",
+                            "retest_expected_repr": "expected_repr",
+                            "retest_failing_actual_repr": "failing_actual_repr",
+                            "retest_probe_status": "probe_status",
+                            "retest_probe_message": "probe_message",
+                            "retest_exception_type": "exception_type",
+                            "retest_exception_message": "exception_message",
+                        },
                     ),
                     EdgeSpec(
                         edge_id="edge_rewriter_to_rewrite_test",
@@ -1039,6 +1121,18 @@ def _default_exact_solver_prompt(profile: TaskProfile) -> str:
     )
 
 
+def _default_challenger_exact_solver_prompt(profile: TaskProfile) -> str:
+    del profile
+    return (
+        "You are an independent challenger solver for an exact-answer problem. "
+        "Do not anchor on another candidate answer. Solve the task from scratch using a different angle when possible, "
+        "such as a direct algebraic derivation, counting argument, sanity-check with small cases, or a geometric constraint check. "
+        "Prefer exact symbolic or rational forms over decimal approximations unless the problem explicitly asks for a decimal. "
+        "If the answer form still looks ambiguous or fragile, set output.requires_review=true and say why. "
+        "Return JSON with output.final_answer, output.solution_outline, output.requires_review, output.uncertainty_reason, confidence, and summary."
+    )
+
+
 def _default_programmer_prompt(profile: TaskProfile) -> str:
     del profile
     return (
@@ -1075,7 +1169,8 @@ def _default_coder_prompt() -> str:
 def _default_code_reviewer_prompt() -> str:
     return (
         "You are a code reviewer for failed public tests. "
-        "Use the failing public_test_result plus the original candidate_code to diagnose the smallest real bug. "
+        "Use public_failure_summary, public_failing_assertion, public_exception_type, public_exception_message, "
+        "the failing public_test_result, and the original candidate_code to diagnose the smallest real bug. "
         "Preserve any behavior that is already consistent with the prompt and the visible tests. "
         "When a failure is caused by indexing, imports, recursion, or syntax, say that explicitly in output.review_notes. "
         "Return JSON with output.review_notes, output.corrected_completion, confidence, and summary. "
@@ -1085,7 +1180,8 @@ def _default_code_reviewer_prompt() -> str:
 
 def _default_code_reviser_prompt() -> str:
     return (
-        "You are a code reviser. Use the original task, failed candidate_code, public_test_result, and reviewer notes. "
+        "You are a code reviser. Use the original task, failed candidate_code, public_failure_summary, public_failing_assertion, "
+        "public_exception_type, public_exception_message, public_test_result, and reviewer notes. "
         "Treat reviewer.corrected_completion as the strongest starting point and make the smallest coherent repair that fixes the concrete failing behavior without rewriting unrelated logic. "
         "Preserve the required function name and signature exactly. "
         "Return JSON with output.completion, output.notes, confidence, and summary. Do not use markdown fences."
@@ -1096,7 +1192,8 @@ def _default_code_rewriter_prompt() -> str:
     return (
         "You are an escalation rewrite node for a code-generation workflow. "
         "The minimal repair path either made no meaningful change or still failed the visible tests. "
-        "Use the original task, failed candidate_code, public_test_result, reviewer notes, and any retest_result to produce a fresh but still concise implementation. "
+        "Use the original task, failed candidate_code, public_failure_summary, public_failing_assertion, reviewer notes, "
+        "retest_failure_summary, retest_failing_assertion, and any retest_result to produce a fresh but still concise implementation. "
         "Preserve the required function name and signature exactly. "
         "Return JSON with output.completion, output.notes, confidence, and summary. Do not use markdown fences."
     )
@@ -1186,6 +1283,11 @@ def _reason_execute_review_subgraph(context: PatternBuildContext, cfg: Mapping[s
             "execution result, and selector notes. Return JSON with output.corrected_answer, output.review_notes, confidence, and summary."
         ),
         io=IOContract(output_schema={"type": "object", "required": ["corrected_answer"]}),
+        meta={
+            "output_backfills": [
+                {"target": "corrected_answer", "sources": ["outputs.final_answer", "outputs.answer", "outputs.result"]},
+            ]
+        },
     )
     reviser = NodeSpec(
         node_id="reviser",

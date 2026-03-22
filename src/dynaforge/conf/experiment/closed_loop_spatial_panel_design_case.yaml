@@ -35,6 +35,8 @@ benchmark:
   expected_outputs:
     - panel_v1.csv
     - backup_genes.csv
+    - probe_filter_report.csv
+    - final_probes.csv
     - panel_design_summary.json
     - panel_validation_summary.json
     - panel_spatial_clusters.png
@@ -43,6 +45,8 @@ benchmark:
     must_include:
       - panel_path
       - backup_panel_path
+      - probe_feasibility_path
+      - final_probes_path
       - panel_validation_path
       - panel_cluster_figure_path
       - agreement_figure_path
@@ -82,9 +86,10 @@ workflow_design:
         - output.design_config.panel_size
         - output.design_config.backup_gene_count
         - output.design_config.excluded_genes
+        - output.design_config.promote_genes
         - output.design_config.min_cells_per_label
         - output.summary
-        When genes fail validation, add them to excluded_genes and promote replacement_candidates.
+        When genes fail validation, add them to excluded_genes and move the strongest replacement_candidates into promote_genes.
       tool_nodes:
         design_runner:
           role: PanelDesigner
@@ -104,7 +109,7 @@ workflow_design:
           io:
             output_schema:
               type: object
-              required: [selected_repo, panel_path, backup_panel_path, panel_genes, backup_genes, summary]
+              required: [selected_repo, panel_path, backup_panel_path, probe_feasibility_path, final_probes_path, panel_genes, backup_genes, summary]
           meta:
             direct_sandbox_handler: true
             job_module: dynaforge.case_studies.closed_loop_spatial_panel_design_job
@@ -126,7 +131,7 @@ workflow_design:
           io:
             output_schema:
               type: object
-              required: [panel_validation_path, needs_replan, failed_genes, replacement_candidates, validation_score, summary]
+              required: [panel_validation_path, needs_replan, failed_genes, replacement_candidates, validation_score, probe_failure_reasons, spatial_failure_reasons, summary]
           meta:
             direct_sandbox_handler: true
             job_module: dynaforge.case_studies.closed_loop_spatial_panel_validation_job

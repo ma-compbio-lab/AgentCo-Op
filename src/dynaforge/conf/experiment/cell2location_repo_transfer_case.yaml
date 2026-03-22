@@ -31,12 +31,15 @@ benchmark:
       detection_alpha: 20.0
       max_epochs: 60
       num_posterior_samples: 20
+      nmf_components: 4
   expected_outputs:
     - sp.h5ad
     - mapping_summary.json
     - transfer_report.md
     - cell_abundance_panel.png
     - leiden_regions.png
+    - nmf_compartments.png
+    - nmf_compartments_summary.json
     - qc_spatial.png
   output_contract:
     must_include:
@@ -44,6 +47,8 @@ benchmark:
       - mapped_h5ad_path
       - cell_abundance_panel_path
       - leiden_regions_path
+      - nmf_compartments_path
+      - nmf_summary_path
       - qc_spatial_path
 
 workflow_design:
@@ -73,7 +78,7 @@ workflow_design:
         Return strict JSON with:
         - output.selected_repo
         - output.repo_candidates
-        - output.analysis_config with holdout_slide, N_cells_per_location, detection_alpha, max_epochs, num_posterior_samples
+        - output.analysis_config with holdout_slide, N_cells_per_location, detection_alpha, max_epochs, num_posterior_samples, nmf_components
         - output.summary
         Prefer the official method repository when the task explicitly asks for paper/repo transfer.
       refiner_system_prompt: |
@@ -103,7 +108,7 @@ workflow_design:
           io:
             output_schema:
               type: object
-              required: [selected_repo, mapping_summary_path, mapped_h5ad_path, summary]
+              required: [selected_repo, mapping_summary_path, mapped_h5ad_path, nmf_compartments_path, nmf_summary_path, summary]
           meta:
             direct_sandbox_handler: true
             job_module: dynaforge.case_studies.cell2location_transfer_job

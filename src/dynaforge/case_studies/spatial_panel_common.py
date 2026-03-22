@@ -90,6 +90,7 @@ def build_panel_design(
     panel_size: int,
     backup_gene_count: int,
     excluded_genes: Sequence[str] | None = None,
+    preferred_genes: Sequence[str] | None = None,
     min_cells_per_label: int = 25,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     from scipy import sparse
@@ -184,7 +185,28 @@ def build_panel_design(
                 break
 
     panel_df = pd.DataFrame(selected_rows).reset_index(drop=True)
+    preferred = [str(gene).strip() for gene in (preferred_genes or []) if str(gene).strip()]
+    if preferred and not panel_df.empty:
+        preferred_lookup = {gene.upper(): gene for gene in preferred}
+        selected_lookup = {str(gene).upper() for gene in panel_df["gene"].astype(str)}
+        for preferred_gene_upper in preferred_lookup:
+            if preferred_gene_upper in selected_lookup:
+                continue
+            preferred_rows = candidates[candidates["gene"].astype(str).str.upper() == preferred_gene_upper]
+            if preferred_rows.empty:
+                continue
+            replacement_row = preferred_rows.iloc[0]
+            nonpreferred = panel_df[~panel_df["gene"].astype(str).str.upper().isin(preferred_lookup)]
+            if nonpreferred.empty:
+                continue
+            replace_idx = nonpreferred["design_score"].astype(float).idxmin()
+            panel_df.loc[replace_idx] = replacement_row
+            selected_lookup = {str(gene).upper() for gene in panel_df["gene"].astype(str)}
+        panel_df = panel_df.sort_values(["design_score", "specificity_score", "mean_in_label"], ascending=False).reset_index(drop=True)
+
     backup_df = candidates[~candidates["gene"].isin(panel_df["gene"])].head(max(backup_gene_count, 0)).reset_index(drop=True)
+    panel_df = _annotate_probe_feasibility(panel_df)
+    backup_df = _annotate_probe_feasibility(backup_df)
     summary = {
         "panel_size_requested": int(panel_size),
         "panel_size_actual": int(panel_df.shape[0]),
@@ -194,8 +216,46 @@ def build_panel_design(
         "batch_column": batch_col,
         "excluded_gene_count": int(len(excluded)),
         "gene_identifier_source": "symbol_preferred",
+        "probe_pass_count": int(panel_df["probe_feasibility_pass"].sum()) if not panel_df.empty else 0,
+        "probe_fail_count": int((~panel_df["probe_feasibility_pass"]).sum()) if not panel_df.empty else 0,
     }
     return panel_df, backup_df, summary
+
+
+def _annotate_probe_feasibility(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+
+    annotated = df.copy()
+    mean_scale = float(max(annotated["mean_in_label"].max(), 1e-6))
+    global_scale = float(max(annotated["global_mean"].max(), 1e-6))
+    specificity_scale = float(max(abs(float(annotated["specificity_score"].min())), abs(float(annotated["specificity_score"].max())), 1e-6))
+
+    detection_proxy = np.clip(np.log1p(annotated["mean_in_label"].astype(float)) / np.log1p(mean_scale + 1.0), 0.0, 1.0)
+    ubiquity_penalty = np.clip(np.log1p(annotated["global_mean"].astype(float)) / np.log1p(global_scale + 1.0), 0.0, 1.0)
+    specificity_proxy = np.clip((annotated["specificity_score"].astype(float) / specificity_scale + 1.0) / 2.0, 0.0, 1.0)
+    stability_proxy = np.clip(annotated["batch_support"].astype(float), 0.0, 1.0)
+    feasibility_score = 0.45 * stability_proxy + 0.30 * detection_proxy + 0.20 * specificity_proxy - 0.10 * ubiquity_penalty
+    feasibility_score = np.clip(feasibility_score, 0.0, 1.0)
+
+    reasons: list[str] = []
+    feasibility_pass: list[bool] = []
+    for _, row in annotated.iterrows():
+        row_reasons: list[str] = []
+        if float(row.get("batch_support", 0.0)) < 0.35:
+            row_reasons.append("low_batch_support")
+        if float(row.get("mean_in_label", 0.0)) < 0.05:
+            row_reasons.append("low_label_expression")
+        if float(row.get("specificity_score", 0.0)) < 0.12:
+            row_reasons.append("weak_specificity")
+        reason = ";".join(row_reasons)
+        reasons.append(reason)
+        feasibility_pass.append(not row_reasons)
+
+    annotated["probe_feasibility_score"] = feasibility_score.astype(float)
+    annotated["probe_failure_reason"] = reasons
+    annotated["probe_feasibility_pass"] = feasibility_pass
+    return annotated
 
 
 def load_visium_slide(slide_dir: str | Path, *, sample_id: str, manual_label_path: str | Path | None = None) -> Any:

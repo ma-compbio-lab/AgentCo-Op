@@ -103,12 +103,36 @@ def main(argv: list[str] | None = None) -> int:
         resolution=float(validation_plan.get("resolution", 0.65)),
         seed=int(validation_plan.get("seed", 0)),
     )
+    probe_failure_reasons: dict[str, str] = {}
+    probe_feasibility_path = str(design_result.get("probe_feasibility_path", "") or "").strip()
+    if probe_feasibility_path:
+        probe_frame = pd.read_csv(probe_feasibility_path)
+        for _, row in probe_frame.iterrows():
+            gene = str(row.get("gene", "")).strip()
+            if not gene:
+                continue
+            if not bool(row.get("probe_feasibility_pass", False)):
+                probe_failure_reasons[gene] = str(row.get("probe_failure_reason", "") or "").strip() or "probe_proxy_failed"
+
+    backup_panel_path = str(design_result.get("backup_panel_path", "") or "").strip()
+    prioritized_backups: list[str] = []
+    if backup_panel_path:
+        backup_frame = pd.read_csv(backup_panel_path)
+        feasible_backups = backup_frame[backup_frame.get("probe_feasibility_pass", False).astype(bool)] if "probe_feasibility_pass" in backup_frame else backup_frame
+        prioritized_backups = feasible_backups.get("gene", pd.Series(dtype=str)).astype(str).tolist()
+
     analysis_adata = validation["analysis_adata"]
+    spatial_failure_reasons = {
+        gene: "spatial_recovery_failed"
+        for gene in validation["failed_genes"]
+        if str(gene).strip()
+    }
+    all_failed_genes = sorted(set(spatial_failure_reasons) | set(probe_failure_reasons))
     min_validation_score = float(validation_plan.get("min_validation_score", 0.22))
     max_failed_genes = int(validation_plan.get("max_failed_genes", max(6, int(0.12 * len(panel_genes)))))
     needs_replan = bool(
         validation["validation_score"] < min_validation_score
-        or len(validation["failed_genes"]) > max_failed_genes
+        or len(all_failed_genes) > max_failed_genes
         or validation["usable_panel_size"] < max(12, int(0.75 * len(panel_genes)))
     )
 
@@ -139,8 +163,10 @@ def main(argv: list[str] | None = None) -> int:
         "validation_score": float(validation["validation_score"]),
         "ari": float(validation["ari"]),
         "nmi": float(validation["nmi"]),
-        "failed_genes": list(validation["failed_genes"]),
-        "replacement_candidates": list(validation["replacement_candidates"]),
+        "failed_genes": list(all_failed_genes),
+        "probe_failure_reasons": probe_failure_reasons,
+        "spatial_failure_reasons": spatial_failure_reasons,
+        "replacement_candidates": list(dict.fromkeys(prioritized_backups + list(validation["replacement_candidates"]))),
         "usable_panel_size": int(validation["usable_panel_size"]),
         "requested_panel_size": int(validation["requested_panel_size"]),
         "labeled_spot_count": int(validation["labeled_spot_count"]),
@@ -162,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"- ARI: `{validation_summary['ari']:.4f}`",
                 f"- NMI: `{validation_summary['nmi']:.4f}`",
                 f"- Failed genes: `{len(validation_summary['failed_genes'])}`",
+                f"- Probe-feasibility failures: `{len(validation_summary['probe_failure_reasons'])}`",
                 f"- Needs replan: `{needs_replan}`",
                 "",
                 "## Replacement candidates",
@@ -187,8 +214,10 @@ def main(argv: list[str] | None = None) -> int:
         "coverage_figure_path": str(coverage_path),
         "agreement_figure_path": str(agreement_path),
         "needs_replan": needs_replan,
-        "failed_genes": list(validation["failed_genes"]),
-        "replacement_candidates": list(validation["replacement_candidates"]),
+        "failed_genes": list(all_failed_genes),
+        "probe_failure_reasons": probe_failure_reasons,
+        "spatial_failure_reasons": spatial_failure_reasons,
+        "replacement_candidates": list(dict.fromkeys(prioritized_backups + list(validation["replacement_candidates"]))),
         "validation_score": float(validation["validation_score"]),
         "ari": float(validation["ari"]),
         "nmi": float(validation["nmi"]),

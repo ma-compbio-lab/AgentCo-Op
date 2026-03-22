@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from pathlib import Path
 import re
@@ -203,6 +204,60 @@ def _render_training_free_figures(adata_vis: Any, output_dir: Path, *, slide_id:
     }
 
 
+def _render_nmf_compartments(adata_vis: Any, output_dir: Path, *, slide_id: str, n_components: int = 4) -> dict[str, Any]:
+    from sklearn.decomposition import NMF
+
+    abundance_key = _resolve_abundance_key(adata_vis)
+    abundance = adata_vis.obsm[abundance_key]
+    factor_names = list(getattr(abundance, "columns", [])) or list(adata_vis.uns.get("mod", {}).get("factor_names", []))
+    matrix = np.asarray(abundance.values if hasattr(abundance, "values") else abundance, dtype=float)
+    matrix = np.clip(matrix, 0.0, None)
+    component_count = max(2, min(int(n_components), matrix.shape[0], matrix.shape[1]))
+    if component_count < 2:
+        raise RuntimeError("cell2location NMF rendering requires at least 2 usable factors")
+
+    nmf = NMF(n_components=component_count, init="nndsvda", random_state=0, max_iter=500)
+    W = nmf.fit_transform(matrix)
+    H = nmf.components_
+    dominant = np.argmax(W, axis=1).astype(int)
+    adata_vis.obs["nmf_compartment"] = [f"compartment_{index}" for index in dominant.tolist()]
+
+    import scanpy as sc
+
+    compartments_path = output_dir / "nmf_compartments.png"
+    sc.pl.spatial(adata_vis, color="nmf_compartment", spot_size=1.1, show=False)
+    fig = plt.gcf()
+    fig.suptitle(f"cell2location NMF compartments: {slide_id}", y=1.02)
+    fig.savefig(compartments_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+    rows: list[dict[str, Any]] = []
+    for idx in range(component_count):
+        ranking = np.argsort(H[idx])[::-1]
+        top_cell_types = [str(factor_names[position]) for position in ranking[: min(6, len(ranking))]]
+        rows.append(
+            {
+                "component": f"compartment_{idx}",
+                "top_cell_types": top_cell_types,
+                "mean_weight": float(np.mean(W[:, idx])),
+            }
+        )
+    nmf_summary = {
+        "component_count": component_count,
+        "components": rows,
+        "reconstruction_err": float(nmf.reconstruction_err_),
+        "nmf_compartments_path": str(compartments_path),
+    }
+    summary_path = output_dir / "nmf_compartments_summary.json"
+    summary_path.write_text(json.dumps(nmf_summary, ensure_ascii=True, indent=2), encoding="utf-8")
+    return {
+        "nmf_compartments_path": str(compartments_path),
+        "nmf_summary_path": str(summary_path),
+        "nmf_component_count": component_count,
+        "nmf_reconstruction_err": float(nmf.reconstruction_err_),
+    }
+
+
 def _train_cell2location_model(model: Any, *, max_epochs: int) -> None:
     train_kwargs = {"max_epochs": max_epochs, "train_size": 1.0, "batch_size": None}
     try:
@@ -296,6 +351,12 @@ def main(argv: list[str] | None = None) -> int:
     runtime_s = float(time.perf_counter() - started)
 
     figure_paths = _render_training_free_figures(adata_vis, output_dir, slide_id=holdout_slide)
+    nmf_outputs = _render_nmf_compartments(
+        adata_vis,
+        output_dir,
+        slide_id=holdout_slide,
+        n_components=int(analysis_config.get("nmf_components", 4)),
+    )
     mapped_path = output_dir / "sp.h5ad"
     adata_vis.write_h5ad(mapped_path)
 
@@ -321,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         "ari_manual_layer_vs_region_cluster": ari,
         "nmi_manual_layer_vs_region_cluster": nmi,
         **figure_paths,
+        **nmf_outputs,
         "mapped_h5ad_path": str(mapped_path),
     }
     summary_path = Path(write_json(mapping_summary, output_dir / "mapping_summary.json"))
@@ -343,13 +405,14 @@ def main(argv: list[str] | None = None) -> int:
                 "## Transfer Notes",
                 "- This run uses the official cell2location repo and the official precomputed mouse-brain reference signatures.",
                 "- The transfer target is a held-out Visium mouse-brain slide not used in the short demo headline pair.",
-                "- The implementation deliberately uses reduced CPU-friendly training and posterior-export settings.",
+                "- The implementation deliberately uses reduced CPU-friendly training and posterior-export settings, but still restores a downstream NMF compartment view.",
                 "",
                 "## Artifacts",
                 f"- mapped AnnData: `{mapped_path}`",
                 f"- mapping summary: `{summary_path}`",
                 f"- cell abundance panel: `{figure_paths['cell_abundance_panel_path']}`",
                 f"- Leiden regions: `{figure_paths['leiden_regions_path']}`",
+                f"- NMF compartments: `{nmf_outputs['nmf_compartments_path']}`",
                 f"- QC spatial: `{figure_paths['qc_spatial_path']}`",
             ]
         )
@@ -366,15 +429,25 @@ def main(argv: list[str] | None = None) -> int:
         "shared_gene_count": shared_gene_count,
         "ari": ari,
         "nmi": nmi,
+        "nmf_compartments_path": str(nmf_outputs["nmf_compartments_path"]),
+        "nmf_summary_path": str(nmf_outputs["nmf_summary_path"]),
         "summary": "cell2location repo transfer completed.",
     }
     outputs.update(figure_paths)
+    outputs.update(
+        {
+            "nmf_compartments_path": str(nmf_outputs["nmf_compartments_path"]),
+            "nmf_summary_path": str(nmf_outputs["nmf_summary_path"]),
+        }
+    )
     artifacts = [
         {"path": str(mapped_path), "mime": "application/x-hdf5"},
         {"path": str(summary_path), "mime": "application/json"},
         {"path": str(report_path), "mime": "text/markdown"},
         {"path": figure_paths["cell_abundance_panel_path"], "mime": "image/png"},
         {"path": figure_paths["leiden_regions_path"], "mime": "image/png"},
+        {"path": str(nmf_outputs["nmf_compartments_path"]), "mime": "image/png"},
+        {"path": str(nmf_outputs["nmf_summary_path"]), "mime": "application/json"},
         {"path": figure_paths["qc_spatial_path"], "mime": "image/png"},
     ]
     trace = {
@@ -390,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
             "mapping_summary_path": str(summary_path),
             "transfer_report_path": str(report_path),
             **figure_paths,
+            "nmf_compartments_path": str(nmf_outputs["nmf_compartments_path"]),
+            "nmf_summary_path": str(nmf_outputs["nmf_summary_path"]),
         },
         artifacts=artifacts,
         trace=trace,

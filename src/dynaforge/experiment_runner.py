@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import json
 import math
 import os
+import re
 import shutil
 import socket
 import statistics
@@ -20,6 +22,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from dynaforge.benchmarks import (
     BenchmarkSetupError,
+    probe_humaneval_call,
     grade_humaneval_prediction,
     grade_math_prediction,
     grade_medqa_prediction,
@@ -1132,12 +1135,14 @@ def probe_model_access(model_payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def build_medqa_task_blueprint(base_blueprint: WorkflowBlueprint, sample: Mapping[str, Any]) -> WorkflowBlueprint:
+    question_family = _infer_medqa_question_family(str(sample.get("question", "") or ""))
     task_hints = dict(base_blueprint.task.hints)
     task_hints.update(
         {
             "question_id": sample.get("question_id", ""),
             "question": sample["question"],
             "options": sample["options"],
+            "question_family": question_family,
             "benchmark": "medqa",
         }
     )
@@ -1149,7 +1154,13 @@ def build_medqa_task_blueprint(base_blueprint: WorkflowBlueprint, sample: Mappin
         }
     )
     updated_meta = dict(base_blueprint.meta)
-    updated_meta.update({"sample_id": sample["id"], "question_id": sample.get("question_id", "")})
+    updated_meta.update(
+        {
+            "sample_id": sample["id"],
+            "question_id": sample.get("question_id", ""),
+            "question_family": question_family,
+        }
+    )
     return base_blueprint.model_copy(update={"task": updated_task, "meta": updated_meta}, deep=True)
 
 
@@ -1413,21 +1424,77 @@ def _math_program_exec_handler(node: NodeSpec, inputs: Mapping[str, Any], contex
 
 def _math_selector_handler(node: NodeSpec, inputs: Mapping[str, Any], context: Any) -> NodeExecutionResult:
     del node, context
-    solver_answer = str(inputs.get("solver_answer", "") or "").strip()
+    task_payload = inputs.get("task", {}) if isinstance(inputs.get("task", {}), Mapping) else {}
+    question_text = str(task_payload.get("description", "") or "").strip()
+
+    solver_answer = _sanitize_math_answer_literal(str(inputs.get("solver_answer", "") or "").strip())
     solver_outline = str(inputs.get("solver_outline", "") or "").strip()
+    challenger_answer = _sanitize_math_answer_literal(str(inputs.get("challenger_answer", "") or "").strip())
+    challenger_outline = str(inputs.get("challenger_outline", "") or "").strip()
     execution_passed = bool(inputs.get("program_execution_passed", False))
-    executed_answer = str(inputs.get("program_executed_answer", "") or "").strip()
+    executed_answer = _sanitize_math_answer_literal(str(inputs.get("program_executed_answer", "") or "").strip())
     execution_error = str(inputs.get("program_execution_error", "") or "").strip()
     synthetic_program = bool(inputs.get("program_is_synthetic", False))
+    exact_required = _math_question_requires_exact_form(question_text)
+    discrete_required = _math_question_prefers_discrete_answer(question_text)
+    solver_dubious = _math_answer_looks_dubious(solver_answer, exact_required=exact_required, discrete_required=discrete_required)
+    challenger_dubious = _math_answer_looks_dubious(
+        challenger_answer,
+        exact_required=exact_required,
+        discrete_required=discrete_required,
+    )
+    executed_dubious = _math_answer_looks_dubious(
+        executed_answer,
+        exact_required=exact_required,
+        discrete_required=discrete_required,
+    )
 
     notes: list[str] = []
     needs_review = False
+    direct_disagreement = False
+
+    if challenger_answer:
+        if not solver_answer:
+            solver_answer = challenger_answer
+            solver_outline = challenger_outline
+            solver_dubious = challenger_dubious
+            notes.append("Primary solver answer missing; using challenger answer.")
+        elif _math_equal(solver_answer, challenger_answer):
+            if _prefer_symbolic_math_answer(challenger_answer, solver_answer):
+                solver_answer = challenger_answer
+                solver_outline = challenger_outline or solver_outline
+                solver_dubious = challenger_dubious
+            notes.append("Primary and challenger direct answers agree.")
+        else:
+            direct_disagreement = True
+            notes.append("Primary and challenger direct answers disagree.")
+            solver_matches_execution = bool(executed_answer) and _math_equal(solver_answer, executed_answer)
+            challenger_matches_execution = bool(executed_answer) and _math_equal(challenger_answer, executed_answer)
+            if challenger_matches_execution and not solver_matches_execution:
+                solver_answer = challenger_answer
+                solver_outline = challenger_outline
+                solver_dubious = challenger_dubious
+                notes.append("Challenger answer agrees with execution against the primary solver.")
+            elif not challenger_dubious and solver_dubious:
+                solver_answer = challenger_answer
+                solver_outline = challenger_outline
+                solver_dubious = challenger_dubious
+                notes.append("Challenger answer is structurally cleaner than the primary solver answer.")
+            elif exact_required and _prefer_symbolic_math_answer(challenger_answer, solver_answer) and not challenger_dubious:
+                solver_answer = challenger_answer
+                solver_outline = challenger_outline or solver_outline
+                solver_dubious = challenger_dubious
+                notes.append("Challenger answer preserves a stronger exact symbolic form.")
+
     final_answer = solver_answer or executed_answer
 
     if execution_passed and executed_answer:
         if not solver_answer:
             final_answer = executed_answer
             notes.append("No direct solver answer was available; using executed answer.")
+            if executed_dubious:
+                needs_review = True
+                notes.append("Executed answer shape conflicts with the question requirements.")
         elif _math_equal(executed_answer, solver_answer):
             if _prefer_symbolic_math_answer(solver_answer, executed_answer):
                 final_answer = solver_answer
@@ -1438,8 +1505,34 @@ def _math_selector_handler(node: NodeSpec, inputs: Mapping[str, Any], context: A
             if synthetic_program:
                 needs_review = True
                 notes.append("The executed program was synthetic fallback output, so execution is only weak evidence.")
+            if executed_dubious and not solver_dubious:
+                final_answer = solver_answer
+                needs_review = True
+                notes.append("Execution agreed numerically but returned a dubious answer shape; preserving solver form.")
         else:
-            if synthetic_program:
+            executed_style = _math_answer_style(executed_answer)
+            solver_style = _math_answer_style(solver_answer)
+            if exact_required and solver_style == "symbolic" and executed_style == "decimal" and not solver_dubious:
+                final_answer = solver_answer
+                needs_review = True
+                notes.append("The task asks for an exact form, but execution only produced a decimal approximation.")
+            elif discrete_required and executed_style == "decimal" and not solver_dubious:
+                final_answer = solver_answer
+                needs_review = True
+                notes.append("The task appears to require a discrete answer, but execution returned a non-integral decimal.")
+            elif exact_required and not solver_dubious and not executed_dubious:
+                final_answer = solver_answer
+                needs_review = True
+                notes.append("Exact-answer task with solver/execution disagreement; preserving the exact-form solver answer pending review.")
+            elif executed_dubious and not solver_dubious:
+                final_answer = solver_answer
+                needs_review = True
+                notes.append("Executed answer is structurally dubious; preferring solver answer pending review.")
+            elif solver_dubious and not executed_dubious:
+                final_answer = executed_answer
+                needs_review = True
+                notes.append("Solver answer is structurally dubious; preferring execution pending review.")
+            elif synthetic_program:
                 final_answer = solver_answer
                 needs_review = True
                 notes.append("Execution disagrees with the solver, but the program was synthetic fallback output; keeping solver answer pending review.")
@@ -1460,12 +1553,23 @@ def _math_selector_handler(node: NodeSpec, inputs: Mapping[str, Any], context: A
     if not final_answer:
         final_answer = solver_answer
 
+    if direct_disagreement:
+        needs_review = True
+        notes.append("Direct reasoning disagreement requires review before trusting the final answer.")
+
     if solver_outline and not solver_answer:
         notes.append("Solver returned an outline without a final answer.")
+    if final_answer and _math_answer_looks_dubious(final_answer, exact_required=exact_required, discrete_required=discrete_required):
+        needs_review = True
+        notes.append("Chosen answer shape still looks dubious for the task requirements.")
 
     confidence = 0.93 if execution_passed and not synthetic_program and not needs_review else 0.72
     if not execution_passed:
         confidence = 0.45 if final_answer else 0.2
+    if exact_required and _math_answer_style(final_answer) == "decimal":
+        confidence = min(confidence, 0.58)
+    if discrete_required and _math_answer_style(final_answer) == "decimal":
+        confidence = min(confidence, 0.52)
 
     return NodeExecutionResult(
         outputs={
@@ -1499,6 +1603,93 @@ def _prefer_symbolic_math_answer(primary: str, secondary: str) -> bool:
     return False
 
 
+def _sanitize_math_answer_literal(answer: str) -> str:
+    text = str(answer or "").strip()
+    if not text:
+        return ""
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        return text[1:-1].strip()
+    try:
+        literal = ast.literal_eval(text)
+    except Exception:
+        literal = None
+    if isinstance(literal, (list, tuple)) and len(literal) == 1:
+        return str(literal[0]).strip()
+    if isinstance(literal, str):
+        return literal.strip()
+    if isinstance(literal, (int, float)) and not isinstance(literal, bool):
+        numeric = float(literal)
+        if abs(numeric - round(numeric)) <= 1e-9:
+            return str(int(round(numeric)))
+        return str(numeric)
+    if re.fullmatch(r"-?\d+\.0+", text):
+        return text.split(".", 1)[0]
+    return text
+
+
+def _math_question_requires_exact_form(question: str) -> bool:
+    normalized = str(question or "").lower()
+    exact_markers = (
+        "exact form",
+        "exact value",
+        "simplest radical form",
+        "in simplest radical form",
+        "in exact form",
+        "express your answer in exact form",
+        "express your answer in simplest form",
+        "as a common fraction",
+        "in terms of pi",
+    )
+    return any(marker in normalized for marker in exact_markers)
+
+
+def _math_question_prefers_discrete_answer(question: str) -> bool:
+    normalized = str(question or "").lower()
+    discrete_markers = (
+        "how many",
+        "number of",
+        "possible values",
+        "integer divisors",
+        "positive integers",
+        "how many integer",
+    )
+    return any(marker in normalized for marker in discrete_markers)
+
+
+def _math_answer_style(answer: str) -> str:
+    text = str(answer or "").strip()
+    if not text:
+        return "empty"
+    if text[0] in "[({" and text[-1] in "])}":
+        return "container"
+    lowered = text.lower()
+    if any(token in lowered for token in ("\\pi", "pi", "sqrt", "\\sqrt", "frac", "/", "^")):
+        return "symbolic"
+    if re.fullmatch(r"-?\d+", text):
+        return "integer"
+    if re.fullmatch(r"-?\d+\.\d+", text):
+        return "decimal"
+    if "\\text{" in lowered or re.fullmatch(r"[A-Za-z][A-Za-z\\s-]*", text):
+        return "text"
+    return "expression"
+
+
+def _math_answer_looks_dubious(answer: str, *, exact_required: bool, discrete_required: bool) -> bool:
+    style = _math_answer_style(answer)
+    if style == "empty":
+        return True
+    if style == "container":
+        return True
+    if exact_required and style == "decimal":
+        return True
+    if discrete_required and style == "decimal":
+        try:
+            return abs(float(answer) - round(float(answer))) > 1e-9
+        except Exception:
+            return True
+    return False
+
+
 def _humaneval_public_test_handler(
     node: NodeSpec,
     inputs: Mapping[str, Any],
@@ -1513,11 +1704,27 @@ def _humaneval_public_test_handler(
         sample,
         python_executable=python_executable,
     )
+    failure_details = _extract_test_failure_details(str(result.get("public_result", "") or ""))
+    probe_details = {
+        "failing_actual_repr": "",
+        "probe_status": "",
+        "probe_message": "",
+    }
+    failing_call = str(failure_details.get("failing_call", "") or "").strip()
+    if failing_call:
+        probe_details = probe_humaneval_call(
+            completion=completion,
+            failing_call=failing_call,
+            entry_point=str(sample.get("entry_point", "") or ""),
+            python_executable=python_executable,
+        )
     outputs = {
         "passed": bool(result.get("public_passed", False)),
         "result": str(result.get("public_result", "") or "").strip(),
         "public_test_count": int(result.get("public_test_count", 0) or 0),
         "prediction_code": str(result.get("prediction_code", "") or ""),
+        **failure_details,
+        **probe_details,
     }
     return NodeExecutionResult(
         outputs=outputs,
@@ -1529,6 +1736,60 @@ def _humaneval_public_test_handler(
         cost=ExecutionCost(tool_calls=1),
         confidence=0.95 if outputs["passed"] else 0.2,
     )
+
+
+def _extract_test_failure_details(result_text: str) -> dict[str, str]:
+    lines = [line.rstrip() for line in str(result_text or "").splitlines() if line.strip()]
+    if not lines:
+        return {
+            "failure_summary": "",
+            "failing_assertion": "",
+            "failing_call": "",
+            "assertion_operator": "",
+            "expected_repr": "",
+            "exception_type": "",
+            "exception_message": "",
+        }
+    failing_assertion = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("assert ") or "assert candidate(" in stripped:
+            failing_assertion = stripped
+    last_line = lines[-1].strip()
+    exception_type = ""
+    exception_message = ""
+    if ":" in last_line:
+        exception_type, exception_message = [segment.strip() for segment in last_line.split(":", 1)]
+    else:
+        exception_type = last_line
+    failure_summary = exception_type or last_line
+    if failing_assertion:
+        failure_summary = f"{failure_summary}: {failing_assertion}"
+    failing_call = ""
+    assertion_operator = ""
+    expected_repr = ""
+    equality_match = re.search(
+        r"assert\s+(candidate\([^)]*\))\s*(==|!=|<=|>=|<|>)\s*(.+?)(?:,\s*\".*\")?$",
+        failing_assertion,
+    )
+    if equality_match:
+        failing_call = equality_match.group(1).strip()
+        assertion_operator = equality_match.group(2).strip()
+        expected_repr = equality_match.group(3).strip()
+    else:
+        truthy_match = re.search(r"assert\s+(candidate\([^)]*\))(?:,\s*\".*\")?$", failing_assertion)
+        if truthy_match:
+            failing_call = truthy_match.group(1).strip()
+            assertion_operator = "truthy"
+    return {
+        "failure_summary": failure_summary.strip(),
+        "failing_assertion": failing_assertion,
+        "failing_call": failing_call,
+        "assertion_operator": assertion_operator,
+        "expected_repr": expected_repr,
+        "exception_type": exception_type,
+        "exception_message": exception_message,
+    }
 
 
 def extract_answer_payload(
@@ -1974,7 +2235,7 @@ def _build_medqa_task_result(
     grading = grade_medqa_prediction(answer_payload, sample)
     workflow_signature = _workflow_signature(report)
     evaluation_failure_type = _medqa_evaluation_failure_type(report, grading["correct"])
-    question_type = _planner_question_type_from_report(report)
+    question_type = _planner_question_type_from_report(report) or str(sample.get("question_family", "") or "")
     report_path = recorder.write_json(f"traces/{sample['id']}.report.json", report.model_dump())
     return {
         "order": order,
@@ -2094,7 +2355,7 @@ def _build_medqa_task_result_from_existing_report(
     grading = grade_medqa_prediction(answer_payload, sample)
     workflow_signature = _workflow_signature(report)
     evaluation_failure_type = _medqa_evaluation_failure_type(report, grading["correct"])
-    question_type = _planner_question_type_from_report(report)
+    question_type = _planner_question_type_from_report(report) or str(sample.get("question_family", "") or "")
     return {
         "order": order,
         "sample_index": sample_index,
@@ -2191,6 +2452,8 @@ def _build_humaneval_task_result(
     public_test_outputs = report.node_results.get("public_test_runner", NodeExecutionResult()).outputs
     retest_outputs = report.node_results.get("retest_runner", NodeExecutionResult()).outputs
     rewrite_test_outputs = report.node_results.get("rewrite_test_runner", NodeExecutionResult()).outputs
+    reviser_outputs = report.node_results.get("reviser", NodeExecutionResult()).outputs
+    rewriter_outputs = report.node_results.get("rewriter", NodeExecutionResult()).outputs
     return {
         "order": order,
         "sample_index": sample_index,
@@ -2217,18 +2480,18 @@ def _build_humaneval_task_result(
         "rewrite_test_result": str(rewrite_test_outputs.get("result", "") or "")
         if isinstance(rewrite_test_outputs, Mapping)
         else "",
-        "repair_changed": bool(answer_payload.get("repair_changed", False))
-        if isinstance(answer_payload, Mapping)
-        else False,
-        "repair_change_reason": str(answer_payload.get("repair_change_reason", "") or "")
-        if isinstance(answer_payload, Mapping)
-        else "",
-        "rewrite_changed": bool(answer_payload.get("rewrite_changed", False))
-        if isinstance(answer_payload, Mapping)
-        else False,
-        "rewrite_change_reason": str(answer_payload.get("rewrite_change_reason", "") or "")
-        if isinstance(answer_payload, Mapping)
-        else "",
+        "repair_changed": bool(reviser_outputs.get("repair_changed", False))
+        if isinstance(reviser_outputs, Mapping)
+        else (bool(answer_payload.get("repair_changed", False)) if isinstance(answer_payload, Mapping) else False),
+        "repair_change_reason": str(reviser_outputs.get("repair_change_reason", "") or "")
+        if isinstance(reviser_outputs, Mapping)
+        else (str(answer_payload.get("repair_change_reason", "") or "") if isinstance(answer_payload, Mapping) else ""),
+        "rewrite_changed": bool(rewriter_outputs.get("rewrite_changed", False))
+        if isinstance(rewriter_outputs, Mapping)
+        else (bool(answer_payload.get("rewrite_changed", False)) if isinstance(answer_payload, Mapping) else False),
+        "rewrite_change_reason": str(rewriter_outputs.get("rewrite_change_reason", "") or "")
+        if isinstance(rewriter_outputs, Mapping)
+        else (str(answer_payload.get("rewrite_change_reason", "") or "") if isinstance(answer_payload, Mapping) else ""),
         "workflow_signature": _workflow_signature(report),
         "activated_gates": report.activated_gates,
         "active_subgraphs": report.active_subgraphs,
@@ -6247,6 +6510,22 @@ def _summarize_generic_case_study(
                 "artifacts": [_artifact_path_from_uri(getattr(item, "uri", "")) for item in trace.artifacts],
             }
         )
+    routing_eval: dict[str, Any] = {}
+    expected_routed_objective = str(case_assets.get("hidden_assets", {}).get("expected_routed_objective", "")).strip()
+    if expected_routed_objective:
+        predicted_routed_objective = ""
+        for trace in report.traces:
+            outputs = trace.outputs if isinstance(trace.outputs, Mapping) else {}
+            routed_objective = outputs.get("routed_objective")
+            if isinstance(routed_objective, str) and routed_objective.strip():
+                predicted_routed_objective = routed_objective.strip()
+                break
+        if predicted_routed_objective:
+            routing_eval = {
+                "expected_routed_objective": expected_routed_objective,
+                "predicted_routed_objective": predicted_routed_objective,
+                "correct": predicted_routed_objective == expected_routed_objective,
+            }
     return {
         "benchmark": "case_study",
         "case_id": case_assets.get("case_id", ""),
@@ -6267,6 +6546,7 @@ def _summarize_generic_case_study(
         "candidate_repos": list(case_assets.get("candidate_repos", [])),
         "selected_repos": selected_repos,
         "selected_specialists": selected_specialists,
+        "routing_eval": routing_eval,
         "runtime_events": runtime_events,
         "trace_details": trace_details,
         "artifact_paths": _report_artifact_paths(report),
@@ -6428,6 +6708,7 @@ def render_generic_case_study_analysis(summary: Mapping[str, Any]) -> str:
         f"- Candidate repos: `{json.dumps(summary.get('candidate_repos', []), ensure_ascii=True)}`",
         f"- Selected repos: `{json.dumps(summary.get('selected_repos', {}), ensure_ascii=True)}`",
         f"- Selected specialists: `{json.dumps(summary.get('selected_specialists', {}), ensure_ascii=True)}`",
+        f"- Routing evaluation: `{json.dumps(summary.get('routing_eval', {}), ensure_ascii=True)}`",
         "",
         "## Runtime",
         f"- Activated gates: `{json.dumps(summary.get('activated_gates', []), ensure_ascii=True)}`",
@@ -6475,6 +6756,7 @@ def render_generic_case_study_narrative(summary: Mapping[str, Any]) -> str:
         "",
         f"Selected repos: `{json.dumps(summary.get('selected_repos', {}), ensure_ascii=True)}`",
         f"Selected specialists: `{json.dumps(summary.get('selected_specialists', {}), ensure_ascii=True)}`",
+        f"Routing evaluation: `{json.dumps(summary.get('routing_eval', {}), ensure_ascii=True)}`",
         "",
         f"Outcome: success=`{summary.get('success', False)}`, failure_type=`{summary.get('failure_type', 'none')}`.",
     ]
@@ -6520,13 +6802,36 @@ def _workflow_signature(report: ExecutionReport) -> str:
 
 def _planner_question_type_from_report(report: ExecutionReport) -> str:
     for trace in report.traces:
-        if trace.node_id != "planner":
+        if trace.node_id not in {"planner", "solver"}:
             continue
         outputs = trace.outputs or {}
         question_type = outputs.get("question_type")
         if isinstance(question_type, str) and question_type.strip():
             return question_type.strip()
     return "unknown"
+
+
+def _infer_medqa_question_family(question: str) -> str:
+    normalized = str(question or "").lower()
+    if not normalized:
+        return "other"
+    if any(token in normalized for token in ("next action", "correct next action", "best next step", "most appropriate next step")):
+        if any(token in normalized for token in ("diagnos", "confirm", "test", "workup", "evaluate")):
+            return "next_step_diagnosis"
+        return "next_step_management"
+    if any(token in normalized for token in ("mechanism", "beneficial effect", "mode of action", "which of the following actions")):
+        return "mechanism"
+    if any(token in normalized for token in ("most likely diagnosis", "most likely cause", "best explains", "underlying cause")):
+        return "diagnosis"
+    if any(token in normalized for token in ("prognosis", "most likely outcome", "survival")):
+        return "prognosis"
+    if any(token in normalized for token in ("newborn", "day-old", "week-old", "month-old", "infant", "child")):
+        return "pediatrics"
+    if any(token in normalized for token in ("intoxication", "overdose", "poisoning", "toxicity")):
+        return "intoxication"
+    if any(token in normalized for token in ("attending", "operative report", "ethics committee", "disclose", "professionalism")):
+        return "professionalism"
+    return "other"
 
 
 def _medqa_question_type(result: Mapping[str, Any]) -> str:

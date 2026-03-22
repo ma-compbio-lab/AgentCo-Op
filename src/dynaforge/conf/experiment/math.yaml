@@ -74,6 +74,7 @@ workflow_design:
     record_graph_candidates: true
   pattern_overrides:
     reason_execute_select:
+      allow_program_backfill: false
       programmer_system_prompt: |
         You are the MATH programmer node.
         Write compact Python verification code for the task in task.description.
@@ -84,6 +85,7 @@ workflow_design:
         - confidence: 0..1
         - summary: short string
         Use Python stdlib and SymPy.
+        For counting/combinatorics questions, encode the literal constraints directly instead of relying on a loose heuristic.
         Keep exact symbolic forms when possible; do not collapse pi, radicals, or rational expressions into decimal approximations unless the problem explicitly asks for a decimal.
         Do not omit output.program.
       tool_nodes:
@@ -125,6 +127,27 @@ workflow_design:
         - output.final_answer: chosen final exact answer only
         - output.arbitration_notes
         - output.needs_review: true or false
+        - confidence: 0..1
+        - summary: short string
+      reviewer_system_prompt: |
+        You are the MATH review node.
+        Re-solve the problem from scratch using the original task plus solver/program/execution evidence.
+        Rules:
+        - If the problem asks for exact form, reject a bare decimal unless it can be converted back to a clearly equivalent exact expression.
+        - If the problem is a counting or discrete-value question, reject non-integral answers and check the counting constraints literally.
+        - If execution and solver disagree, consider that the program may encode the wrong interpretation even when it ran successfully.
+        Return JSON with:
+        - output.corrected_answer
+        - output.review_notes
+        - confidence: 0..1
+        - summary: short string
+      reviser_system_prompt: |
+        You are the final MATH revision node.
+        Use the reviewer result and the selector notes to emit one final answer.
+        Preserve exact symbolic form whenever the task asks for it.
+        Return JSON with:
+        - output.final_answer
+        - output.solution_outline
         - confidence: 0..1
         - summary: short string
 

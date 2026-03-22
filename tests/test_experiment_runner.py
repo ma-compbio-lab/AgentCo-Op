@@ -13,6 +13,7 @@ from dynaforge.experiment_runner import (
     _generic_specialist_router_handler,
     _build_humaneval_task_handlers,
     _build_math_task_handlers,
+    _extract_test_failure_details,
     _build_visium_multi_agent_collaboration_blueprint,
     _humaneval_public_test_handler,
     _load_existing_medqa_task_results,
@@ -35,7 +36,7 @@ from dynaforge.experiment_runner import (
     run_medqa_experiment,
 )
 from dynaforge.benchmarks import prepare_case_study_assets
-from dynaforge.config import build_executor_from_config, load_hydra_config, resolve_hydra_config
+from dynaforge.config import build_blueprint_from_config, build_executor_from_config, load_hydra_config, resolve_hydra_config
 from dynaforge.ir.schema import FailureType, NodeSpec, SandboxSpec
 from dynaforge.runtime.reports import ExecutionCost, ExecutionReport, NodeExecutionResult, NodeTrace
 
@@ -251,6 +252,39 @@ def test_generic_specialist_router_handler_selects_candidate_specialists() -> No
     assert result.outputs["selected_specialists"] == ["SpatialAgent", "BioDiscoveryAgent"]
     assert "specialist_a_delivers" in result.outputs["handoff_contract"]
     assert result.trace["deterministic_router"] is True
+
+
+def test_extract_test_failure_details_parses_call_and_expected_value() -> None:
+    result = _extract_test_failure_details(
+        "Traceback (most recent call last):\n"
+        "  File '/tmp/check.py', line 12, in <module>\n"
+        "    assert candidate([1, 2], 9) == 2, \"Error\"\n"
+        "AssertionError: Error\n"
+    )
+
+    assert result["failing_assertion"] == 'assert candidate([1, 2], 9) == 2, "Error"'
+    assert result["failing_call"] == "candidate([1, 2], 9)"
+    assert result["assertion_operator"] == "=="
+    assert result["expected_repr"] == "2"
+
+
+def test_build_math_task_blueprint_enables_challenger_solver() -> None:
+    config = load_hydra_config(overrides=["experiment=math_v2", "workflow_design.pattern_overrides.reason_execute_select.enable_challenger_solver=true"])
+    resolved = resolve_hydra_config(config)
+    base_blueprint = build_blueprint_from_config(resolved)
+    sample = {
+        "id": "aflow_validate:0000",
+        "question": "What is 1+1?",
+        "prompt": "What is 1+1?",
+        "gold_answer": "2",
+        "type": "Prealgebra",
+        "level": "Level 5",
+        "source_config": "aflow_validate",
+    }
+
+    blueprint = build_math_task_blueprint(base_blueprint, sample)
+
+    assert "solver_challenger" in blueprint.node_map()
 
 
 def test_experiment_cli_parses_shard_arguments(monkeypatch) -> None:

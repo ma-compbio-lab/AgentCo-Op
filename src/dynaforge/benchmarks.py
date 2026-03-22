@@ -315,6 +315,19 @@ def parse_math_answer(raw_prediction: Any) -> str:
         if boxed:
             return boxed
 
+    for candidate in candidates:
+        stripped = candidate.strip()
+        if not stripped:
+            continue
+        assignment_match = re.match(
+            r"^(?:[A-Za-z][A-Za-z0-9_]*\s*)=\s*(.+)$",
+            stripped,
+        )
+        if assignment_match:
+            rhs = assignment_match.group(1).strip().rstrip(".")
+            if rhs:
+                return rhs
+
     for candidate in reversed(candidates):
         stripped = candidate.strip()
         if stripped:
@@ -620,6 +633,72 @@ def run_humaneval_public_tests(
     }
 
 
+def probe_humaneval_call(
+    *,
+    completion: str,
+    failing_call: str,
+    entry_point: str,
+    python_executable: str | None = None,
+    timeout_s: int = 15,
+) -> dict[str, str]:
+    call_expr = str(failing_call or "").strip()
+    if not completion.strip() or not call_expr:
+        return {
+            "actual_repr": "",
+            "probe_status": "missing_probe",
+            "probe_message": "",
+        }
+
+    support_code = _humaneval_support_prelude(entry_point)
+    harness = (
+        "import hashlib\n"
+        "import math\n"
+        "import re\n"
+        "from typing import Any, Dict, List, Optional, Tuple\n\n"
+        f"{support_code}"
+        f"{completion.strip()}\n\n"
+        "candidate = " + entry_point + "\n"
+        "try:\n"
+        f"    _dynaforge_probe_value = {call_expr}\n"
+        "    print(repr(_dynaforge_probe_value))\n"
+        "except Exception as exc:\n"
+        "    print(type(exc).__name__ + ': ' + str(exc))\n"
+        "    raise\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="dynaforge_humaneval_probe_") as tmp_dir:
+        script_path = Path(tmp_dir) / "probe.py"
+        script_path.write_text(harness, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [python_executable or sys.executable, str(script_path)],
+                text=True,
+                capture_output=True,
+                timeout=timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "actual_repr": "",
+                "probe_status": "timeout",
+                "probe_message": "probe execution timed out",
+            }
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode == 0:
+        actual_repr = stdout.splitlines()[-1].strip() if stdout else ""
+        return {
+            "actual_repr": actual_repr,
+            "probe_status": "ok",
+            "probe_message": "",
+        }
+    detail = stderr or stdout or f"returncode={completed.returncode}"
+    return {
+        "actual_repr": "",
+        "probe_status": "failed",
+        "probe_message": detail,
+    }
+
+
 def prepare_medqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
     settings = get_benchmark_settings(config)
     if settings.get("kind") != "medqa":
@@ -792,7 +871,7 @@ def parse_medqa_answer(raw_prediction: Any, options: Sequence[Mapping[str, Any]]
 
     candidates: list[str] = []
     if isinstance(raw_prediction, Mapping):
-        for key in ("final_answer_label", "answer_label", "choice", "label"):
+        for key in ("final_answer_label", "corrected_answer_label", "answer_label", "choice", "label"):
             value = raw_prediction.get(key)
             if value is None:
                 continue
@@ -808,7 +887,7 @@ def parse_medqa_answer(raw_prediction: Any, options: Sequence[Mapping[str, Any]]
                 stripped = candidate.strip().upper()
                 if not label_candidate and stripped in valid_labels:
                     label_candidate = stripped
-        for key in ("final_answer_text", "answer_text", "answer", "result", "text"):
+        for key in ("final_answer_text", "corrected_answer_text", "answer_text", "answer", "result", "text"):
             value = raw_prediction.get(key)
             if value is None:
                 continue
