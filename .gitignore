@@ -224,3 +224,4 @@ archive/
 runs-current-benchmark-aggregated/
 data/
 runs-*/.worktrees/
+/.worktrees/
