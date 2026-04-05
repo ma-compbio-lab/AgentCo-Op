@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from agentcoop.ir.schema import BudgetSpec, ModelSpec, NodeKind, SkillRef, TaskSpec, WorkflowBlueprint
+from agentcoop.skills.assembler import SkillDrivenAssembler
+from agentcoop.skills.library import SkillLibrary
 from agentcoop.workflows.design import BlueprintCompilerConfig, TaskProfile, WorkflowPattern
 from agentcoop.workflows.patterns import PatternBuildContext, build_pattern_blueprint
 from agentcoop.workflows.synthesis import ComponentLibrary, ComponentSearcher
@@ -47,6 +50,13 @@ class WorkflowCompiler:
         resolved_config: Mapping[str, Any],
     ) -> tuple[WorkflowBlueprint, JsonDict]:
         review_model = review_model or model
+
+        # Skill-driven compilation (first priority)
+        if self.config.skill_driven.enabled:
+            result = self._try_skill_driven(task, budget, meta, model, review_model, resolved_config)
+            if result is not None:
+                return result
+
         candidates = self.search_candidates(self.config.task_profile)
         selected_pattern, selection_mode = self._select_pattern(candidates)
 
@@ -133,6 +143,68 @@ class WorkflowCompiler:
                     optional=True,
                 )
             )
+
+    def _try_skill_driven(
+        self,
+        task: TaskSpec,
+        budget: BudgetSpec,
+        meta: Mapping[str, Any],
+        model: ModelSpec,
+        review_model: ModelSpec,
+        resolved_config: Mapping[str, Any],
+    ) -> tuple[WorkflowBlueprint, JsonDict] | None:
+        search_paths = [Path(p) for p in self.config.skill_driven.skill_search_paths]
+        if not search_paths:
+            return None
+
+        library = SkillLibrary(search_paths=search_paths)
+        if not library.meta_skills:
+            return None
+
+        query = " ".join([
+            task.description,
+            self.config.task_profile.domain,
+            self.config.task_profile.answer_mode,
+            *([t for t in [
+                "tool" if self.config.task_profile.requires_tool_execution else "",
+                "code" if self.config.task_profile.answer_mode == "code" else "",
+                "repo" if self.config.task_profile.requires_repo_search else "",
+                "closed_loop" if self.config.task_profile.requires_closed_loop else "",
+            ] if t]),
+        ])
+        meta_results = library.search_meta_skills(query, top_k=3)
+        if not meta_results or meta_results[0][1] < self.config.skill_driven.min_meta_skill_score:
+            return None
+
+        best_meta_skill = meta_results[0][0]
+        assembler = SkillDrivenAssembler(
+            library=library,
+            max_skills_per_agent=self.config.skill_driven.max_skills_per_agent,
+            deduplicate=self.config.skill_driven.deduplicate_skills,
+        )
+        blueprint = assembler.assemble(
+            meta_skill=best_meta_skill,
+            task=task,
+            budget=budget,
+            model=model,
+            review_model=review_model,
+        )
+        self._attach_default_skills(blueprint)
+
+        compile_trace: JsonDict = {
+            "enabled": True,
+            "mode": "skill-driven",
+            "selection_mode": "skill-driven",
+            "meta_skill": best_meta_skill.name,
+            "meta_skill_score": round(meta_results[0][1], 4),
+            "task_profile": self.config.task_profile.model_dump(),
+            "agent_skill_assignments": {
+                node.node_id: [s.name for s in node.skills]
+                for node in blueprint.base_nodes
+            },
+        }
+        blueprint.meta.update({"compile_trace": compile_trace})
+        return blueprint, compile_trace
 
     def search_candidates(self, profile: TaskProfile) -> List[GraphCandidate]:
         preferred = (self.config.preferred_pattern or "").strip()

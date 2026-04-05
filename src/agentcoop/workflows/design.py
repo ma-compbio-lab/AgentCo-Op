@@ -80,6 +80,16 @@ class MonitoringSpec(BaseModel):
     record_web_search: bool = True
 
 
+class SkillDrivenSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    min_meta_skill_score: float = Field(default=0.4, ge=0, le=1)
+    max_skills_per_agent: int = Field(default=3, ge=1, le=10)
+    deduplicate_skills: bool = True
+    skill_search_paths: List[str] = Field(default_factory=list)
+
+
 class BlueprintCompilerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,6 +101,7 @@ class BlueprintCompilerConfig(BaseModel):
     synthesis: GraphSynthesisSpec = Field(default_factory=GraphSynthesisSpec)
     runtime_expansion: RuntimeExpansionSpec = Field(default_factory=RuntimeExpansionSpec)
     monitoring: MonitoringSpec = Field(default_factory=MonitoringSpec)
+    skill_driven: SkillDrivenSpec = Field(default_factory=SkillDrivenSpec)
     pattern_overrides: JsonDict = Field(default_factory=dict)
 
     def pattern_override(self, pattern_id: str) -> JsonDict:

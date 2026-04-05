@@ -334,3 +334,60 @@ def test_bootstrapped_meta_skill_has_valid_roles(tmp_path):
                     assert "skill_tags" in role
                 return
     raise AssertionError("No meta-skill found in bootstrapped output")
+
+
+from agentcoop.workflows.compiler import WorkflowCompiler
+from agentcoop.workflows.design import BlueprintCompilerConfig, TaskProfile, SkillDrivenSpec
+from agentcoop.ir.schema import TaskSpec, BudgetSpec, ModelSpec
+
+
+def test_compiler_skill_driven_path(tmp_path):
+    _write_skill(tmp_path, "my-pipeline", """
+        ---
+        name: my-pipeline
+        type: meta-skill
+        description: Simple pipeline for testing
+        domain_tags: [testing]
+        capability_tags: [pipeline, testing]
+        roles:
+          - role: Worker
+            description: Do work
+            skill_tags: [work]
+            kind: agent
+        edges: []
+        ---
+        Test pipeline.
+    """)
+    _write_skill(tmp_path, "work-agent", """
+        ---
+        name: work-agent
+        type: agent-skill
+        description: Agent that does work
+        domain_tags: [work]
+        capability_tags: [work, execution]
+        ---
+        Work hard.
+    """)
+
+    cfg = BlueprintCompilerConfig(
+        enabled=True,
+        mode="pattern_then_synthesize",
+        task_profile=TaskProfile(domain="testing"),
+        skill_driven=SkillDrivenSpec(
+            enabled=True,
+            skill_search_paths=[str(tmp_path)],
+            min_meta_skill_score=0.01,
+        ),
+    )
+    compiler = WorkflowCompiler(cfg)
+    blueprint, trace = compiler.compile(
+        task=TaskSpec(task_id="t1", title="Test", description="testing pipeline work"),
+        budget=BudgetSpec(),
+        meta={},
+        model=ModelSpec(provider="openai", name="gpt-4o-mini"),
+        review_model=None,
+        resolved_config={},
+    )
+    assert blueprint is not None
+    assert blueprint.meta.get("skill_driven") is True
+    assert "compile_trace" in blueprint.meta
