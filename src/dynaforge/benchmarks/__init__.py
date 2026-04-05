@@ -2814,3 +2814,23 @@ def _match_medqa_option_text(
 
 def _tokenize_text(value: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", value.lower()))
+
+
+# New runner classes — imported lazily to avoid circular dependency with
+# runner_base (which imports from experiment_runner).
+def __getattr__(name: str):  # type: ignore[override]
+    if name in ("BenchmarkRunner", "RunResult"):
+        from dynaforge.benchmarks.runner_base import BenchmarkRunner, RunResult
+        _globals = globals()
+        _globals["BenchmarkRunner"] = BenchmarkRunner
+        _globals["RunResult"] = RunResult
+        return _globals[name]
+    if name == "MathRunner":
+        from dynaforge.benchmarks.math_runner import MathRunner
+        globals()["MathRunner"] = MathRunner
+        return MathRunner
+    if name == "HumanEvalRunner":
+        from dynaforge.benchmarks.humaneval_runner import HumanEvalRunner
+        globals()["HumanEvalRunner"] = HumanEvalRunner
+        return HumanEvalRunner
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

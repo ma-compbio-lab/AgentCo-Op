@@ -211,7 +211,7 @@ task_plan.md
 experiments.md
 .secrets/
 runs/
-benchmarks/
+/benchmarks/
 *.out
 output/
 .dynaforge_sandboxes/

@@ -20,7 +20,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from omegaconf import DictConfig, OmegaConf
 
-from dynaforge.benchmarks import (
+from dynaforge.benchmarks_lib import (
     BenchmarkSetupError,
     probe_humaneval_call,
     grade_humaneval_prediction,
