@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from dynaforge.ir.schema import BudgetSpec, ModelSpec, NodeKind, SkillRef, TaskSpec, WorkflowBlueprint
 from dynaforge.workflows.design import BlueprintCompilerConfig, TaskProfile, WorkflowPattern
 from dynaforge.workflows.patterns import PatternBuildContext, build_pattern_blueprint
+from dynaforge.workflows.synthesis import ComponentLibrary, ComponentSearcher
+from dynaforge.workflows.synthesis.assembler import SynthesisAssembler, SynthesisError
+from dynaforge.workflows.synthesis.validator import BlueprintValidator, BlueprintValidationError
+
+logger = logging.getLogger(__name__)
 
 JsonDict = Dict[str, Any]
 
@@ -19,6 +25,14 @@ class GraphCandidate:
 
 
 class WorkflowCompiler:
+    _component_library: ComponentLibrary | None = None
+
+    @classmethod
+    def _get_library(cls) -> ComponentLibrary:
+        if cls._component_library is None:
+            cls._component_library = ComponentLibrary()
+        return cls._component_library
+
     def __init__(self, config: BlueprintCompilerConfig):
         self.config = config
 
@@ -35,6 +49,47 @@ class WorkflowCompiler:
         review_model = review_model or model
         candidates = self.search_candidates(self.config.task_profile)
         selected_pattern, selection_mode = self._select_pattern(candidates)
+
+        if selected_pattern == WorkflowPattern.synthesized_hybrid.value and self.config.synthesis.enabled:
+            component_results = getattr(self, "_last_component_results", [])
+            if component_results:
+                try:
+                    from dynaforge.runtime.llm import OpenAICompatibleLLMClient
+                    llm_client = OpenAICompatibleLLMClient()
+                    assembler = SynthesisAssembler(llm_client, review_model)
+                    validator = BlueprintValidator()
+                    context = PatternBuildContext(
+                        task=task,
+                        budget=budget,
+                        meta=dict(meta),
+                        model=model,
+                        review_model=review_model,
+                        design=self.config,
+                        resolved_config=resolved_config,
+                    )
+                    blueprint = assembler.assemble(context, component_results)
+                    validator.validate(blueprint)
+                    self._attach_default_skills(blueprint)
+                    compile_trace = {
+                        "enabled": True,
+                        "mode": self.config.mode,
+                        "selection_mode": "composition-search",
+                        "task_profile": self.config.task_profile.model_dump(),
+                        "selected_pattern": selected_pattern,
+                        "candidate_graphs": [
+                            {"pattern_id": c.pattern_id, "score": round(c.score, 4), "reasons": c.reasons}
+                            for c in candidates
+                        ],
+                        "top_components": [
+                            {"component_id": cs.component_id, "role": cs.role, "score": round(score, 4)}
+                            for cs, score in component_results[:5]
+                        ],
+                    }
+                    blueprint.meta.update({"compile_trace": compile_trace})
+                    return blueprint, compile_trace
+                except (SynthesisError, BlueprintValidationError) as exc:
+                    logger.warning("Synthesis assembly failed, falling back to pattern: %s", exc)
+
         context = PatternBuildContext(
             task=task,
             budget=budget,
@@ -96,17 +151,35 @@ class WorkflowCompiler:
                 reasons.append("preferred-pattern boost")
             candidates.append(GraphCandidate(pattern_id=pattern_id, score=min(score, 1.0), reasons=reasons))
         candidates.sort(key=lambda item: (item.score, item.pattern_id), reverse=True)
-        if self.config.synthesis.enabled and self.config.synthesis.allow_from_scratch:
-            synth_score = self._synthesis_score(candidates[0].score if candidates else 0.0)
-            candidates.append(
-                GraphCandidate(
-                    pattern_id=WorkflowPattern.synthesized_hybrid.value,
-                    score=synth_score,
-                    reasons=["fallback synthesis candidate"],
-                    source="synthesized",
-                )
+        if self.config.synthesis.enabled:
+            library = self._get_library()
+            searcher = ComponentSearcher(
+                library, top_k=self.config.synthesis.component_search_top_k
             )
-            candidates.sort(key=lambda item: (item.score, item.source == "synthesized", item.pattern_id), reverse=True)
+            component_results = searcher.search(self.config.task_profile)
+            if component_results:
+                best_component_score = component_results[0][1]
+                max_possible = max(r[1] for r in component_results) if component_results else 1.0
+                normalized = min(best_component_score / max(max_possible, 1.0), 1.0)
+                synth_score = self._synthesis_score(
+                    max(normalized, candidates[0].score if candidates else 0.0)
+                )
+                candidates.append(
+                    GraphCandidate(
+                        pattern_id=WorkflowPattern.synthesized_hybrid.value,
+                        score=synth_score,
+                        reasons=[
+                            f"composition-search: top component {component_results[0][0].role!r} "
+                            f"score={component_results[0][1]:.3f}"
+                        ],
+                        source="synthesized",
+                    )
+                )
+                candidates.sort(
+                    key=lambda item: (item.score, item.source == "synthesized", item.pattern_id),
+                    reverse=True,
+                )
+            self._last_component_results = component_results
         return candidates[: self.config.synthesis.max_candidates]
 
     def _select_pattern(self, candidates: List[GraphCandidate]) -> Tuple[str, str]:

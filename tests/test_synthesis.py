@@ -96,3 +96,41 @@ def test_validator_detects_cycle():
     ]
     with pytest.raises(BlueprintValidationError, match="Cycle detected"):
         BlueprintValidator().validate(bp)
+
+
+# ---- WorkflowCompiler integration tests ----
+
+from unittest.mock import MagicMock
+from dynaforge.workflows.compiler import WorkflowCompiler
+from dynaforge.workflows.design import BlueprintCompilerConfig, TaskProfile, GraphSynthesisSpec
+
+
+def test_compiler_uses_synthesis_when_selected(monkeypatch):
+    """WorkflowCompiler calls SynthesisAssembler when synthesis is selected."""
+    from dynaforge.workflows.synthesis.assembler import SynthesisAssembler
+    from dynaforge.workflows.synthesis.validator import BlueprintValidator
+
+    cfg = BlueprintCompilerConfig(
+        enabled=True,
+        mode="synthesize_only",
+        task_profile=TaskProfile(domain="coding", answer_mode="code", requires_test_execution=True),
+        synthesis=GraphSynthesisSpec(enabled=True, component_search_top_k=5),
+    )
+    compiler = WorkflowCompiler(cfg)
+
+    # Create a fake blueprint that the assembler will "return"
+    fake_bp = _minimal_blueprint()
+
+    monkeypatch.setattr(SynthesisAssembler, "assemble", lambda self, ctx, cands: fake_bp)
+    monkeypatch.setattr(BlueprintValidator, "validate", lambda self, bp: None)
+
+    blueprint, trace = compiler.compile(
+        task=TaskSpec(task_id="t1", title="code task", description="write code"),
+        budget=BudgetSpec(),
+        meta={},
+        model=ModelSpec(provider="openai", name="gpt-4o-mini"),
+        review_model=None,
+        resolved_config={},
+    )
+    assert blueprint is not None
+    assert "compile_trace" in blueprint.meta
