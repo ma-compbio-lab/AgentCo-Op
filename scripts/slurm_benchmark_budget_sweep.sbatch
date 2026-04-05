@@ -2,7 +2,6 @@
 # Submit from repo root, for example:
 #   BENCHMARK_COMMAND=math sbatch scripts/slurm_benchmark_budget_sweep.sbatch
 #   BENCHMARK_COMMAND=humaneval sbatch scripts/slurm_benchmark_budget_sweep.sbatch
-#   BENCHMARK_COMMAND=medqa BENCHMARK_EXPERIMENT=medqa_gpt5_review sbatch scripts/slurm_benchmark_budget_sweep.sbatch
 
 #SBATCH -J benchmark-budget
 #SBATCH -p cpu
@@ -26,11 +25,6 @@ BENCHMARK_NUM_SHARDS="${BENCHMARK_NUM_SHARDS:-8}"
 BENCHMARK_RESUME_LATEST="${BENCHMARK_RESUME_LATEST:-0}"
 
 case "${BENCHMARK_COMMAND}" in
-  medqa)
-    MODELS_CSV="${MODELS_CSV:-openai_gpt4o_mini,openai_gpt41_mini,openai_gpt5_mini}"
-    BENCHMARK_SUBSET="${BENCHMARK_SUBSET:-full}"
-    BASE_DIR_ROOT="${BASE_DIR_ROOT:-runs/medqa-budget-sweeps}"
-    ;;
   math|humaneval)
     MODELS_CSV="${MODELS_CSV:-openai_gpt4o_mini,openai_gpt41_mini,openai_gpt5_mini}"
     BENCHMARK_SUBSET="${BENCHMARK_SUBSET:-test}"
@@ -91,19 +85,7 @@ case "${BUDGET_TIER}" in
     ;;
 esac
 
-if [[ "${BENCHMARK_COMMAND}" == "medqa" ]]; then
-  case "${BUDGET_TIER}" in
-    tight)
-      OVERRIDES+=("+blueprint.base_nodes.1.max_steps=4")
-      ;;
-    balanced)
-      OVERRIDES+=("+blueprint.base_nodes.1.max_steps=6")
-      ;;
-    generous)
-      OVERRIDES+=("+blueprint.base_nodes.1.max_steps=8")
-      ;;
-  esac
-elif [[ "${BENCHMARK_COMMAND}" == "math" || "${BENCHMARK_COMMAND}" == "humaneval" ]]; then
+if [[ "${BENCHMARK_COMMAND}" == "math" || "${BENCHMARK_COMMAND}" == "humaneval" ]]; then
   case "${BUDGET_TIER}" in
     tight)
       OVERRIDES+=("blueprint.gates.0.trigger.all_of.1.value=0.65")

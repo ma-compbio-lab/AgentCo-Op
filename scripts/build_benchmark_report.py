@@ -13,10 +13,6 @@ OUTPUT_DIR = PROJECT_ROOT / "output" / "reports"
 
 MATH_AGGREGATE = PROJECT_ROOT / "runs/aggregated/math/test/math-aggregate/20260316_022906_5d4a6064"
 HUMANEVAL_AGGREGATE = PROJECT_ROOT / "runs/aggregated/humaneval/test/humaneval-aggregate/20260316_022906_b6d7c4b9"
-MEDQA_AGGREGATE = PROJECT_ROOT / "runs/aggregated/medqa/full/medqa-aggregate/20260316_022906_5ca6c968"
-MEDQA_V2_AGGREGATE = PROJECT_ROOT / "runs/aggregated-v2/medqa/full/medqa-aggregate/20260316_161856_f08e5587"
-MEDQA_VALIDATION_BASELINE = PROJECT_ROOT / "runs/medqa-validation-baseline/medqa-smoke/20260316_023714_62ffc8d9"
-MEDQA_VALIDATION_V2 = PROJECT_ROOT / "runs/medqa-validation-v2/medqa-smoke/20260316_023714_c168ea1b"
 MATH_REPAIR = PROJECT_ROOT / "runs/math-repair/math-test/20260316_024451_b51fda75"
 MATH_BUDGET_SWEEP = PROJECT_ROOT / "runs/aggregated-budget-sweeps/math/math_budget_sweep_summary.json"
 HUMANEVAL_BUDGET_SWEEP = PROJECT_ROOT / "runs/aggregated-budget-sweeps/humaneval/humaneval_budget_sweep_summary.json"
@@ -50,9 +46,7 @@ def rel(path: Path | str) -> str:
 def metric_key_for(benchmark: str) -> str:
     if benchmark == "math":
         return "solve_rate"
-    if benchmark == "humaneval":
-        return "pass_at_1"
-    return "accuracy"
+    return "pass_at_1"
 
 
 def workflow_design(benchmark: str, variant: str = "current") -> dict[str, Any]:
@@ -194,72 +188,7 @@ def workflow_design(benchmark: str, variant: str = "current") -> dict[str, Any]:
             "input_contract": "task.description is the HumanEval prompt; metadata.entry_point identifies the target function.",
             "expected_output": "A complete Python function that passes public tests and is scored with pass@1.",
         }
-    if variant == "v2":
-        return {
-            "graph": "planner -> responder -> [reviewer -> reviser]",
-            "base_nodes": [
-                {
-                    "node_id": "planner",
-                    "role": "Planner",
-                    "purpose": "Classify question type, extract decisive clue, and summarize the exact ask.",
-                },
-                {
-                    "node_id": "responder",
-                    "role": "Responder",
-                    "purpose": "Answer independently while treating planner guidance as advisory only.",
-                },
-            ],
-            "gated_subgraph": [
-                {
-                    "node_id": "reviewer",
-                    "role": "Reviewer",
-                    "purpose": "Re-solve the question independently before comparing with the responder.",
-                },
-                {
-                    "node_id": "reviser",
-                    "role": "Reviser",
-                    "purpose": "Emit the final corrected option using the review decisive clue.",
-                },
-            ],
-            "tool_nodes": [],
-            "gate_rule": (
-                "Trigger review for mechanism, next_step_diagnosis, prognosis, and moderately uncertain next_step_management; "
-                "also trigger when responder confidence < 0.84."
-            ),
-            "input_contract": "question stem + multiple-choice options + planner question_type/key_clues.",
-            "expected_output": "A single option label and exact option text.",
-        }
-    return {
-        "graph": "planner -> responder -> [reviewer -> reviser]",
-        "base_nodes": [
-            {
-                "node_id": "planner",
-                "role": "Planner",
-                "purpose": "Classify the question and extract key clues.",
-            },
-            {
-                "node_id": "responder",
-                "role": "Responder",
-                "purpose": "Choose the final answer option and explain it briefly.",
-            },
-        ],
-        "gated_subgraph": [
-            {
-                "node_id": "reviewer",
-                "role": "Reviewer",
-                "purpose": "Audit uncertain answers against the question and options.",
-            },
-            {
-                "node_id": "reviser",
-                "role": "Reviser",
-                "purpose": "Emit the corrected final answer after review.",
-            },
-        ],
-        "tool_nodes": [],
-        "gate_rule": "Historical baseline: trigger review on low confidence and planner-selected high-risk question families.",
-        "input_contract": "question stem + options + planner question_type/key clues.",
-        "expected_output": "A single option label and exact option text.",
-    }
+    raise ValueError(f"Unknown benchmark: {benchmark}")
 
 
 def read_task_results(run_dir: Path) -> list[dict[str, Any]]:
@@ -304,44 +233,6 @@ def validation_compare(
     }
 
 
-def medqa_validation_flips() -> dict[str, list[str]]:
-    baseline_rows = read_task_results(MEDQA_VALIDATION_BASELINE)
-    v2_rows = read_task_results(MEDQA_VALIDATION_V2)
-    baseline_by_id = {row["task_id"]: row for row in baseline_rows}
-    v2_by_id = {row["task_id"]: row for row in v2_rows}
-    improved = sorted(
-        task_id
-        for task_id in baseline_by_id
-        if (not baseline_by_id[task_id]["correct"]) and v2_by_id[task_id]["correct"]
-    )
-    regressed = sorted(
-        task_id
-        for task_id in baseline_by_id
-        if baseline_by_id[task_id]["correct"] and (not v2_by_id[task_id]["correct"])
-    )
-    return {"improved_task_ids": improved, "regressed_task_ids": regressed}
-
-
-def medqa_v2_final_status() -> dict[str, Any]:
-    baseline = load_json(MEDQA_AGGREGATE / "summaries/summary.json")
-    v2 = load_json(MEDQA_V2_AGGREGATE / "summaries/summary.json")
-    return {
-        "slurm_job_id": "30749",
-        "run_dir": str(MEDQA_V2_AGGREGATE),
-        "summary": v2,
-        "delta_vs_baseline": {
-            "accuracy": v2["accuracy"] - baseline["accuracy"],
-            "average_usd": v2["average_usd"] - baseline["average_usd"],
-            "average_latency_s": v2["average_latency_s"] - baseline["average_latency_s"],
-            "review_activation_delta": (
-                v2.get("gate_activations", {}).get("medqa_low_conf_review", 0)
-                - baseline.get("gate_activations", {}).get("medqa_low_conf_review", 0)
-            ),
-        },
-        "promoted_to_canonical": False,
-    }
-
-
 def load_track_payload(run_dir: Path, benchmark: str, variant: str = "current") -> dict[str, Any]:
     summary = load_json(run_dir / "summaries" / "summary.json")
     analysis_path = run_dir / "summaries" / "analysis.md"
@@ -356,9 +247,6 @@ def load_track_payload(run_dir: Path, benchmark: str, variant: str = "current") 
         payload["analysis_excerpt"] = "\n".join(
             analysis_path.read_text(encoding="utf-8").splitlines()[:20]
         )
-    if benchmark == "medqa":
-        payload["deep_analysis_path"] = str(run_dir / "summaries" / "deep_analysis.json")
-        payload["deep_analysis"] = load_optional_json(run_dir / "summaries" / "deep_analysis.json")
     return payload
 
 
@@ -483,79 +371,6 @@ def extract_humaneval_examples() -> dict[str, Any]:
     }
 
 
-def extract_medqa_examples() -> dict[str, Any]:
-    baseline_rows = read_task_results(MEDQA_AGGREGATE)
-    v2_rows = read_task_results(MEDQA_V2_AGGREGATE)
-    reviewed_success = find_first(
-        baseline_rows,
-        lambda row: row.get("correct")
-        and row.get("workflow_signature") == "planner->responder->reviewer->reviser",
-    )
-    reviewed_failure = find_first(
-        baseline_rows,
-        lambda row: (not row.get("correct"))
-        and row.get("workflow_signature") == "planner->responder->reviewer->reviser",
-    )
-    v2_regression = find_first(
-        v2_rows,
-        lambda row: (not row.get("correct"))
-        and row.get("workflow_signature") == "planner->responder->reviewer->reviser",
-    )
-    return {
-        "review_success_example": task_excerpt(
-            reviewed_success or {},
-            [
-                "task_id",
-                "question_type",
-                "question",
-                "prediction_node",
-                "prediction_label",
-                "prediction_text",
-                "gold_label",
-                "gold_text",
-                "workflow_signature",
-                "activated_gates",
-                "report_path",
-                "cost",
-            ],
-        ),
-        "review_failure_example": task_excerpt(
-            reviewed_failure or {},
-            [
-                "task_id",
-                "question_type",
-                "question",
-                "prediction_node",
-                "prediction_label",
-                "prediction_text",
-                "gold_label",
-                "gold_text",
-                "workflow_signature",
-                "activated_gates",
-                "report_path",
-                "cost",
-            ],
-        ),
-        "v2_failure_example": task_excerpt(
-            v2_regression or {},
-            [
-                "task_id",
-                "question_type",
-                "question",
-                "prediction_node",
-                "prediction_label",
-                "prediction_text",
-                "gold_label",
-                "gold_text",
-                "workflow_signature",
-                "activated_gates",
-                "report_path",
-                "cost",
-            ],
-        ),
-    }
-
-
 def collect_partial_repeat_status(run_family: str, benchmark: str) -> dict[str, Any]:
     root = PROJECT_ROOT / "runs" / run_family
     shard_dirs = sorted(root.glob(f"{benchmark}-test-shard*"))
@@ -652,14 +467,6 @@ def dataset_and_metric_notes() -> dict[str, Any]:
             "base_model": "gpt-4o-mini",
             "status": "Aligned to the released public package, metric, and 3-run protocol.",
         },
-        "medqa": {
-            "dataset_id": "bigbio/med_qa",
-            "paper_target": "not an AFlow public benchmark; internal consistency benchmark",
-            "public_package_reality": "1273-task official test split under med_qa_en_bigbio_qa",
-            "metric": "accuracy",
-            "base_model": "gpt-4o-mini",
-            "status": "Internal benchmark kept on GPT-4o-mini for consistency with the benchmark execution policy.",
-        },
     }
 
 
@@ -679,21 +486,13 @@ def historical_budget_sweep_notes() -> dict[str, Any]:
 
 
 def build_report() -> dict[str, Any]:
-    medqa_deep_analysis = load_optional_json(MEDQA_AGGREGATE / "summaries" / "deep_analysis.json") or {}
-    medqa_v2_summary = load_json(MEDQA_V2_AGGREGATE / "summaries" / "summary.json")
-    medqa_summary = load_json(MEDQA_AGGREGATE / "summaries/summary.json")
     math_historical = load_track_payload(MATH_AGGREGATE, "math", "historical")
     humaneval_historical = load_track_payload(HUMANEVAL_AGGREGATE, "humaneval", "historical")
-    medqa_current = load_track_payload(MEDQA_AGGREGATE, "medqa", "current")
 
     report = {
         "generated_from": {
             "math_historical": str(MATH_AGGREGATE),
             "humaneval_historical": str(HUMANEVAL_AGGREGATE),
-            "medqa_current": str(MEDQA_AGGREGATE),
-            "medqa_v2": str(MEDQA_V2_AGGREGATE),
-            "medqa_validation_baseline": str(MEDQA_VALIDATION_BASELINE),
-            "medqa_validation_v2": str(MEDQA_VALIDATION_V2),
             "math_repair": str(MATH_REPAIR),
             "math_budget_sweep": str(MATH_BUDGET_SWEEP),
             "humaneval_budget_sweep": str(HUMANEVAL_BUDGET_SWEEP),
@@ -756,34 +555,6 @@ def build_report() -> dict[str, Any]:
                     "The aligned full repeats have not finished yet, so the historical pre-v2 aggregate remains only a reference point, not the target final number.",
                 ],
             },
-            "medqa": {
-                "current_status": "completed",
-                "current_workflow": workflow_design("medqa", "current"),
-                "v2_workflow": workflow_design("medqa", "v2"),
-                "current_full_run": medqa_current,
-                "v2_full_run": load_track_payload(MEDQA_V2_AGGREGATE, "medqa", "v2"),
-                "validation_flips": medqa_validation_flips(),
-                "repair_loop": {
-                    "baseline_validation_summary": load_json(MEDQA_VALIDATION_BASELINE / "summaries/summary.json"),
-                    "v2_validation_summary": load_json(MEDQA_VALIDATION_V2 / "summaries/summary.json"),
-                    "v2_full_status": medqa_v2_final_status(),
-                },
-                "deep_analysis": medqa_deep_analysis,
-                "representative_examples": extract_medqa_examples(),
-                "current_takeaways": [
-                    "The official-test baseline remains the canonical MedQA result.",
-                    "The v2 prompt and routing changes improved the 20-task smoke but failed to improve the full 1273-task test.",
-                    "Review-heavy policies shift error clusters rather than raising net accuracy.",
-                ],
-                "delta_v2_vs_baseline": {
-                    "accuracy": medqa_v2_summary["accuracy"] - medqa_summary["accuracy"],
-                    "average_usd": medqa_v2_summary["average_usd"] - medqa_summary["average_usd"],
-                    "review_count_delta": (
-                        medqa_v2_summary.get("gate_activations", {}).get("medqa_low_conf_review", 0)
-                        - medqa_summary.get("gate_activations", {}).get("medqa_low_conf_review", 0)
-                    ),
-                },
-            },
         },
         "historical_budget_sweeps": historical_budget_sweep_notes(),
         "math_repair": {
@@ -791,7 +562,6 @@ def build_report() -> dict[str, Any]:
             "summary": load_json(MATH_REPAIR / "summaries/summary.json"),
         },
         "overall_takeaways": [
-            "The only completed trustworthy benchmark track right now is MedQA baseline; MedQA v2 is a failed repair and is not promoted.",
             "HumanEval and MATH have been realigned to AFlow-style workflows, but final 3-run full results are still pending.",
             "MATH now has the strongest structural improvement: execution-backed answer selection replaces pure confidence-based review.",
             "HumanEval now has a genuine tool-backed repair loop through public tests rather than prompt-only critique.",
@@ -832,8 +602,6 @@ def render_example(title: str, example: dict[str, Any]) -> list[str]:
 def render_markdown(report: dict[str, Any]) -> str:
     math_validation = report["aflow_realignment"]["math_validation_compare"]
     humaneval_validation = report["aflow_realignment"]["humaneval_validation_compare"]
-    medqa = report["benchmarks"]["medqa"]
-    medqa_deep = medqa.get("deep_analysis") or {}
     lines = [
         "# Detailed Benchmark Report",
         "",
@@ -855,7 +623,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             "## Dataset And Metric Alignment",
         ]
     )
-    for key in ("math", "humaneval", "medqa"):
+    for key in ("math", "humaneval"):
         note = report["dataset_and_metric_notes"][key]
         lines.extend(
             [
@@ -944,42 +712,6 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]
     )
     for item in humaneval["current_takeaways"]:
-        lines.append(f"- {item}")
-
-    lines.extend(
-        [
-            "",
-            "## Benchmark: MedQA",
-            "",
-            "### Status",
-            f"- canonical full run: `{rel(medqa['current_full_run']['run_dir'])}`",
-            f"- canonical accuracy: `{medqa['current_full_run']['summary']['accuracy']:.4f}`",
-            f"- v2 full rerun: `{rel(medqa['v2_full_run']['run_dir'])}`",
-            f"- v2 accuracy: `{medqa['v2_full_run']['summary']['accuracy']:.4f}`",
-            f"- delta accuracy: `{medqa['delta_v2_vs_baseline']['accuracy']:+.4f}`",
-            f"- delta average_usd: `{medqa['delta_v2_vs_baseline']['average_usd']:+.6f}`",
-            f"- delta review count: `{medqa['delta_v2_vs_baseline']['review_count_delta']:+d}`",
-            "",
-            "### Workflow Design",
-            *format_workflow_md("Canonical Baseline Workflow", medqa["current_workflow"]),
-            *format_workflow_md("V2 Repair Workflow", medqa["v2_workflow"]),
-            "",
-            "### Deep Analysis Highlights",
-            f"- canonical workflow patterns: `{short_json(medqa['current_full_run']['summary']['workflow_patterns'])}`",
-            f"- review failure breakdown: `{short_json(medqa_deep.get('review_failure_breakdown', {}))}`",
-            f"- question types present: `{', '.join(sorted((medqa_deep.get('question_type_breakdown') or {}).keys()))}`",
-            f"- validation improved task ids: `{short_json(medqa['validation_flips']['improved_task_ids'])}`",
-            f"- validation regressed task ids: `{short_json(medqa['validation_flips']['regressed_task_ids'])}`",
-            "",
-            "### Representative Results",
-            *render_example("review success example", medqa["representative_examples"]["review_success_example"]),
-            *render_example("review failure example", medqa["representative_examples"]["review_failure_example"]),
-            *render_example("v2 failure example", medqa["representative_examples"]["v2_failure_example"]),
-            "",
-            "### Interpretation",
-        ]
-    )
-    for item in medqa["current_takeaways"]:
         lines.append(f"- {item}")
 
     lines.extend(

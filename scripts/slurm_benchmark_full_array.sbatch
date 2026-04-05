@@ -2,7 +2,6 @@
 # Submit from repo root, for example:
 #   BENCHMARK_COMMAND=math sbatch scripts/slurm_benchmark_full_array.sbatch
 #   BENCHMARK_COMMAND=humaneval sbatch scripts/slurm_benchmark_full_array.sbatch
-#   BENCHMARK_COMMAND=medqa BENCHMARK_MODEL=openai_gpt5_mini sbatch scripts/slurm_benchmark_full_array.sbatch
 
 #SBATCH -J benchmark-full
 #SBATCH -p cpu
@@ -28,10 +27,6 @@ SHARD_INDEX="${SLURM_ARRAY_TASK_ID}"
 BENCHMARK_RESUME_LATEST="${BENCHMARK_RESUME_LATEST:-0}"
 
 case "${BENCHMARK_COMMAND}" in
-  medqa)
-    BENCHMARK_MODEL="${BENCHMARK_MODEL:-openai_gpt5_nano}"
-    BENCHMARK_SUBSET="${BENCHMARK_SUBSET:-full}"
-    ;;
   math|humaneval)
     BENCHMARK_MODEL="${BENCHMARK_MODEL:-openai_gpt4o_mini}"
     BENCHMARK_SUBSET="${BENCHMARK_SUBSET:-test}"

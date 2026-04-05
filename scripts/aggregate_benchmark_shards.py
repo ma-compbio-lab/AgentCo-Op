@@ -15,23 +15,20 @@ if str(SRC_ROOT) not in sys.path:
 from dynaforge.experiment_runner import (
     aggregate_humaneval_runs,
     aggregate_math_runs,
-    aggregate_medqa_runs,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Aggregate the latest shard runs for a benchmark full run.")
-    parser.add_argument("--benchmark", choices=("medqa", "math", "humaneval"), required=True)
+    parser.add_argument("--benchmark", choices=("math", "humaneval"), required=True)
     parser.add_argument("--runs-root", default="runs", help="Root directory containing benchmark shard runs.")
-    parser.add_argument("--subset", default="", help="Subset name. Defaults to full for MedQA and test otherwise.")
+    parser.add_argument("--subset", default="", help="Subset name. Defaults to test.")
     parser.add_argument("--output-dir", default="runs/aggregated", help="Directory for aggregated output.")
     return parser.parse_args()
 
 
 def discover_latest_shards(runs_root: Path, benchmark: str, subset: str) -> list[Path]:
     pattern = f"{benchmark}-{subset}-shard*of*/*/eval/task_results.json"
-    if benchmark == "medqa":
-        pattern = f"{benchmark}-{subset}-shard*of*/*/eval/task_results.json"
     latest_by_slug: dict[str, tuple[str, Path]] = {}
     for task_results_path in runs_root.glob(pattern):
         run_dir = task_results_path.parents[1]
@@ -46,12 +43,10 @@ def discover_latest_shards(runs_root: Path, benchmark: str, subset: str) -> list
 def main() -> int:
     args = parse_args()
     runs_root = Path(args.runs_root).resolve()
-    subset = args.subset or ("full" if args.benchmark == "medqa" else "test")
+    subset = args.subset or "test"
 
     aggregate_fn: Callable[..., dict]
-    if args.benchmark == "medqa":
-        aggregate_fn = aggregate_medqa_runs
-    elif args.benchmark == "math":
+    if args.benchmark == "math":
         aggregate_fn = aggregate_math_runs
     else:
         aggregate_fn = aggregate_humaneval_runs

@@ -81,59 +81,6 @@ def test_experiment_group_can_override_executor_settings() -> None:
     assert config.executor.max_repair_iterations == 2
 
 
-def test_medqa_config_uses_compiled_direct_answer_pattern() -> None:
-    config = load_hydra_config(overrides=["experiment=medqa", "model=openai_gpt4o_mini"])
-    blueprint = build_blueprint_from_config(config)
-
-    medqa_gate = blueprint.gates[0]
-
-    assert config.benchmark.split == "test"
-    assert config.benchmark.full_count == "all"
-    assert config.benchmark.paper_alignment.base_model == "gpt-5-nano"
-    assert list(blueprint.node_map().keys()) == ["solver", "reviewer", "reviser"]
-    assert blueprint.meta["workflow_pattern"] == "direct_answer"
-    assert blueprint.meta["compile_trace"]["selected_pattern"] == "direct_answer"
-    assert medqa_gate.trigger.all_of[0].field == "node.node_id"
-    assert medqa_gate.trigger.all_of[0].value == "solver"
-    assert medqa_gate.trigger.all_of[1].any_of[0].field == "node.outputs.requires_review"
-    assert medqa_gate.trigger.all_of[1].any_of[1].value == 0.48
-    risk_gate = medqa_gate.trigger.all_of[1].any_of[2]
-    assert len(risk_gate.any_of) >= 3
-
-
-def test_medqa_planner_gate_config_remains_loadable() -> None:
-    config = load_hydra_config(overrides=["experiment=medqa_planner_gate", "model=openai_gpt5_mini"])
-    blueprint = build_blueprint_from_config(config)
-
-    medqa_gate = blueprint.gates[0]
-
-    assert blueprint.meta["workflow_pattern"] == "direct_answer"
-    assert medqa_gate.trigger.all_of[0].field == "node.node_id"
-    assert medqa_gate.trigger.all_of[0].value == "solver"
-
-
-def test_medqa_gpt5_review_config_uses_stronger_review_model() -> None:
-    config = load_hydra_config(overrides=["experiment=medqa_gpt5_review", "model=openai_gpt5_mini"])
-    blueprint = build_blueprint_from_config(config)
-
-    review_nodes = blueprint.subgraphs[0].nodes
-    reviewer = next(node for node in review_nodes if node.node_id == "reviewer")
-    reviser = next(node for node in review_nodes if node.node_id == "reviser")
-
-    assert reviewer.model.name == "gpt-5"
-    assert reviser.model.name == "gpt-5"
-    assert blueprint.node_map()["responder"].model.name == "gpt-5-mini"
-
-
-def test_medqa_gpt5_review_gate90_config_raises_review_threshold() -> None:
-    config = load_hydra_config(overrides=["experiment=medqa_gpt5_review_gate90", "model=openai_gpt5_mini"])
-    blueprint = build_blueprint_from_config(config)
-    reviewer = next(node for node in blueprint.subgraphs[0].nodes if node.node_id == "reviewer")
-
-    assert reviewer.model.name == "gpt-5"
-    assert blueprint.gates[0].trigger.all_of[1].any_of[0].value == 0.90
-
-
 def test_math_config_matches_aflow_alignment() -> None:
     config = load_hydra_config(overrides=["experiment=math", "model=openai_gpt4o_mini"])
     blueprint = build_blueprint_from_config(config)

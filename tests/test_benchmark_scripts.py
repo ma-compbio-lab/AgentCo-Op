@@ -42,13 +42,13 @@ def test_aggregate_benchmark_budget_sweeps_discovers_timestamped_run_dirs(tmp_pa
     )
 
     sweeps_root = tmp_path / "sweeps"
-    newer = sweeps_root / "medqa_v2" / "openai_gpt4o_mini" / "balanced" / "medqa-full-shard00of08" / "20260316_120000_new"
-    older = sweeps_root / "medqa_v2" / "openai_gpt4o_mini" / "balanced" / "medqa-full-shard00of08" / "20260316_110000_old"
-    second = sweeps_root / "medqa_v2" / "openai_gpt4o_mini" / "balanced" / "medqa-full-shard01of08" / "20260316_121500_second"
+    newer = sweeps_root / "math_v2" / "openai_gpt4o_mini" / "balanced" / "math-full-shard00of08" / "20260316_120000_new"
+    older = sweeps_root / "math_v2" / "openai_gpt4o_mini" / "balanced" / "math-full-shard00of08" / "20260316_110000_old"
+    second = sweeps_root / "math_v2" / "openai_gpt4o_mini" / "balanced" / "math-full-shard01of08" / "20260316_121500_second"
     for run_dir in (newer, older, second):
         (run_dir / "eval").mkdir(parents=True)
         (run_dir / "eval" / "task_results.json").write_text("[]", encoding="utf-8")
 
     discovered = script.discover_latest_shards(sweeps_root)
 
-    assert discovered == {("medqa_v2", "openai_gpt4o_mini", "balanced"): [newer, second]}
+    assert discovered == {("math_v2", "openai_gpt4o_mini", "balanced"): [newer, second]}

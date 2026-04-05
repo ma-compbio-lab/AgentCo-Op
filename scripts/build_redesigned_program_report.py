@@ -107,12 +107,6 @@ BENCHMARK_POLICY = {
         "split": "AFlow released package: 33 validation / 131 test",
         "workflow_family": "code_generate_test_repair",
     },
-    "medqa": {
-        "planned_base_model": "gpt-5-nano",
-        "metric": "accuracy",
-        "split": "full test: 1273",
-        "workflow_family": "direct_answer",
-    },
 }
 
 
@@ -333,15 +327,11 @@ def collect_benchmark_program(benchmark_report: dict[str, Any]) -> dict[str, Any
     benchmarks = benchmark_report.get("benchmarks", {})
     rows = []
     details = {}
-    for benchmark_name in ["math", "humaneval", "medqa"]:
+    for benchmark_name in ["math", "humaneval"]:
         policy = BENCHMARK_POLICY[benchmark_name]
         entry = benchmarks.get(benchmark_name, {})
         current_status = str(entry.get("current_status", "unknown"))
-        if benchmark_name == "medqa":
-            latest = entry.get("current_full_run", {}).get("summary", {})
-            headline = f"accuracy={pretty_float(latest.get('accuracy'))}" if latest else "no completed full run"
-            status_note = "current full baseline available"
-        elif benchmark_name == "humaneval":
+        if benchmark_name == "humaneval":
             latest = entry.get("historical_full_run", {}).get("summary", {})
             validation_v2 = entry.get("validation_compare", {}).get("v2", {}).get("summary", {})
             headline = (
@@ -416,7 +406,7 @@ def render_benchmark_markdown(benchmark_program: dict[str, Any], budget_frontier
         f"![Benchmark budget frontiers]({rel(budget_frontier_path)})",
         "",
     ]
-    for benchmark_name in ["math", "humaneval", "medqa"]:
+    for benchmark_name in ["math", "humaneval"]:
         entry = benchmark_program["details"][benchmark_name]["entry"]
         current_workflow = entry.get("current_workflow", {})
         lines.extend(
@@ -446,13 +436,6 @@ def render_benchmark_markdown(benchmark_program: dict[str, Any], budget_frontier
                 f"- Validation delta after redesign: pass@1 {pretty_float(delta.get('pass_at_1'))}, "
                 f"average_usd {pretty_float(delta.get('average_usd'), 6)}, "
                 f"latency_s {pretty_float(delta.get('average_latency_s'))}"
-            )
-        if benchmark_name == "medqa":
-            delta = entry.get("delta_v2_vs_baseline", {})
-            lines.append(
-                f"- v2 vs baseline full-run delta: accuracy {pretty_float(delta.get('accuracy'))}, "
-                f"average_usd {pretty_float(delta.get('average_usd'), 6)}, "
-                f"review_count {delta.get('review_count_delta', '-')}"
             )
         lines.append("")
     return "\n".join(lines).replace("\n  -", "\n-")

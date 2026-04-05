@@ -61,7 +61,6 @@ def _mean_cost(task_results: list[dict[str, Any]], field: str) -> float:
 
 
 def _build_workflow_structure_analysis(
-    medqa_runs: list[tuple[str, list[dict[str, Any]]]],
     case_study_runs: list[dict[str, Any]],
 ) -> dict[str, Any]:
     workflow_counter: Counter[str] = Counter()
@@ -69,16 +68,6 @@ def _build_workflow_structure_analysis(
     role_counter: Counter[str] = Counter()
     sandbox_case_counter: Counter[str] = Counter()
     tool_case_counter: Counter[str] = Counter()
-
-    for _, task_results in medqa_runs:
-        for item in task_results:
-            signature = str(item.get("workflow_signature", ""))
-            if not signature:
-                continue
-            workflow_counter[signature] += 1
-            nodes = _workflow_nodes(signature)
-            node_count_counter[len(nodes)] += 1
-            role_counter.update(nodes)
 
     for summary in case_study_runs:
         signature = str(summary.get("workflow_signature", ""))
@@ -102,7 +91,6 @@ def _build_workflow_structure_analysis(
 
 
 def _build_failure_taxonomy(
-    medqa_runs: list[tuple[str, list[dict[str, Any]]]],
     case_study_run_histories: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     severity = {
@@ -118,15 +106,8 @@ def _build_failure_taxonomy(
         "budget_exceeded": 3,
         "unknown": 4,
     }
-    medqa_counter: Counter[str] = Counter()
     case_counter: Counter[str] = Counter()
     severity_counter: Counter[int] = Counter()
-
-    for _, task_results in medqa_runs:
-        for item in task_results:
-            failure_type = str(item.get("failure_type", "none") or "none")
-            medqa_counter[failure_type] += 1
-            severity_counter[severity.get(failure_type, 4)] += 1
 
     for _, history in case_study_run_histories.items():
         for summary in history:
@@ -135,31 +116,14 @@ def _build_failure_taxonomy(
             severity_counter[severity.get(failure_type, 4)] += 1
 
     return {
-        "medqa_failure_frequency": medqa_counter.most_common(),
         "case_study_failure_frequency": case_counter.most_common(),
         "severity_distribution": sorted(severity_counter.items()),
     }
 
 
 def _build_repair_effectiveness(
-    baseline_summary: dict[str, Any],
-    baseline_tasks: list[dict[str, Any]],
-    repaired_summary: dict[str, Any],
-    repaired_tasks: list[dict[str, Any]],
     case_study_run_histories: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    medqa_delta = {
-        "baseline_accuracy": float(baseline_summary.get("accuracy", 0.0)),
-        "repaired_accuracy": float(repaired_summary.get("accuracy", 0.0)),
-        "accuracy_delta": float(repaired_summary.get("accuracy", 0.0)) - float(baseline_summary.get("accuracy", 0.0)),
-        "baseline_average_usd": _mean_cost(baseline_tasks, "usd"),
-        "repaired_average_usd": _mean_cost(repaired_tasks, "usd"),
-        "average_usd_delta": _mean_cost(repaired_tasks, "usd") - _mean_cost(baseline_tasks, "usd"),
-        "baseline_review_rate": _review_rate(baseline_tasks),
-        "repaired_review_rate": _review_rate(repaired_tasks),
-        "review_rate_delta": _review_rate(repaired_tasks) - _review_rate(baseline_tasks),
-    }
-
     case_effects: dict[str, Any] = {}
     for case_name, history in case_study_run_histories.items():
         if not history:
@@ -177,34 +141,13 @@ def _build_repair_effectiveness(
         }
 
     return {
-        "medqa_baseline_vs_repaired": medqa_delta,
         "case_study_repair_history": case_effects,
     }
 
 
 def _build_cost_sanity(
-    medqa_runs: list[tuple[str, dict[str, Any], list[dict[str, Any]]]],
     case_study_runs: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    medqa_checks: list[dict[str, Any]] = []
-    for run_name, summary, task_results in medqa_runs:
-        computed_avg_usd = _mean_cost(task_results, "usd")
-        computed_avg_input = _mean_cost(task_results, "input_tokens")
-        computed_avg_output = _mean_cost(task_results, "output_tokens")
-        medqa_checks.append(
-            {
-                "run": run_name,
-                "reported_average_usd": float(summary.get("average_usd", 0.0)),
-                "computed_average_usd": computed_avg_usd,
-                "average_usd_delta": computed_avg_usd - float(summary.get("average_usd", 0.0)),
-                "reported_average_input_tokens": float(summary.get("average_input_tokens", 0.0)),
-                "computed_average_input_tokens": computed_avg_input,
-                "reported_average_output_tokens": float(summary.get("average_output_tokens", 0.0)),
-                "computed_average_output_tokens": computed_avg_output,
-                "task_count_matches": int(summary.get("task_count", 0)) == len(task_results),
-            }
-        )
-
     case_checks: list[dict[str, Any]] = []
     for summary in case_study_runs:
         cost = summary.get("cost", {})
@@ -219,7 +162,6 @@ def _build_cost_sanity(
             }
         )
     return {
-        "medqa_cost_checks": medqa_checks,
         "case_study_cost_checks": case_checks,
     }
 
@@ -256,32 +198,26 @@ def _render_analysis_markdown(payload: dict[str, Any]) -> str:
             "## Failure taxonomy analysis",
         ]
     )
-    for failure_type, count in payload["failure_taxonomy"]["medqa_failure_frequency"]:
-        lines.append(f"- MedQA `{failure_type}`: {count}")
     for failure_type, count in payload["failure_taxonomy"]["case_study_failure_frequency"]:
         lines.append(f"- Case study `{failure_type}`: {count}")
     lines.extend(
         [
             "",
             "## Repair effectiveness analysis",
-            (
-                "- MedQA baseline vs repaired: "
-                f"accuracy {payload['repair_effectiveness']['medqa_baseline_vs_repaired']['baseline_accuracy']:.4f} -> "
-                f"{payload['repair_effectiveness']['medqa_baseline_vs_repaired']['repaired_accuracy']:.4f}, "
-                f"avg usd {payload['repair_effectiveness']['medqa_baseline_vs_repaired']['baseline_average_usd']:.6f} -> "
-                f"{payload['repair_effectiveness']['medqa_baseline_vs_repaired']['repaired_average_usd']:.6f}, "
-                f"review rate {payload['repair_effectiveness']['medqa_baseline_vs_repaired']['baseline_review_rate']:.4f} -> "
-                f"{payload['repair_effectiveness']['medqa_baseline_vs_repaired']['repaired_review_rate']:.4f}"
-            ),
+        ]
+    )
+    for case_name, effect in payload["repair_effectiveness"]["case_study_repair_history"].items():
+        lines.append(
+            f"- `{case_name}`: attempts={effect['attempt_count']}, "
+            f"first_success={effect['first_success']}, last_success={effect['last_success']}, "
+            f"improved={effect['success_improved']}"
+        )
+    lines.extend(
+        [
             "",
             "## Cost accounting sanity check",
         ]
     )
-    for item in payload["cost_sanity"]["medqa_cost_checks"]:
-        lines.append(
-            f"- `{item['run']}`: avg_usd delta={item['average_usd_delta']:.8f}, "
-            f"task_count_matches={item['task_count_matches']}"
-        )
     lines.extend(
         [
             "",
@@ -301,28 +237,13 @@ def _render_analysis_markdown(payload: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the required internal analysis experiments.")
-    parser.add_argument(
-        "--baseline-medqa-run",
-        default="runs/medqa-aggregate/20260308_064241_944508ed",
-    )
-    parser.add_argument(
-        "--repaired-medqa-run",
-        default="runs/medqa-aggregate/20260310_032806_6f57aae7",
-    )
     parser.add_argument("--scanpy-run-root", default="runs/scanpy-pbmc3k-case")
     parser.add_argument("--squidpy-run-root", default="runs/squidpy-visium-case")
     parser.add_argument("--base-dir", default="runs")
     args = parser.parse_args(argv)
 
-    baseline_run = Path(args.baseline_medqa_run).resolve()
-    repaired_run = Path(args.repaired_medqa_run).resolve()
     scanpy_root = Path(args.scanpy_run_root).resolve()
     squidpy_root = Path(args.squidpy_run_root).resolve()
-
-    baseline_summary = _load_json(baseline_run / "summaries" / "summary.json")
-    repaired_summary = _load_json(repaired_run / "summaries" / "summary.json")
-    baseline_tasks = _load_json(baseline_run / "eval" / "task_results.json")
-    repaired_tasks = _load_json(repaired_run / "eval" / "task_results.json")
 
     scanpy_history = [_load_json(path) for path in sorted(scanpy_root.glob("*/summaries/summary.json"))]
     squidpy_history = [_load_json(path) for path in sorted(squidpy_root.glob("*/summaries/summary.json"))]
@@ -331,43 +252,25 @@ def main(argv: list[str] | None = None) -> int:
     analysis = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "inputs": {
-            "baseline_medqa_run": str(baseline_run),
-            "repaired_medqa_run": str(repaired_run),
             "scanpy_run_root": str(scanpy_root),
             "squidpy_run_root": str(squidpy_root),
         },
         "workflow_structure": _build_workflow_structure_analysis(
-            medqa_runs=[
-                ("medqa_baseline", baseline_tasks),
-                ("medqa_repaired", repaired_tasks),
-            ],
             case_study_runs=case_successes,
         ),
         "failure_taxonomy": _build_failure_taxonomy(
-            medqa_runs=[
-                ("medqa_baseline", baseline_tasks),
-                ("medqa_repaired", repaired_tasks),
-            ],
             case_study_run_histories={
                 "scanpy_pbmc3k_umap": scanpy_history,
                 "squidpy_visium_hne_spatial": squidpy_history,
             },
         ),
         "repair_effectiveness": _build_repair_effectiveness(
-            baseline_summary,
-            baseline_tasks,
-            repaired_summary,
-            repaired_tasks,
             {
                 "scanpy_pbmc3k_umap": scanpy_history,
                 "squidpy_visium_hne_spatial": squidpy_history,
             },
         ),
         "cost_sanity": _build_cost_sanity(
-            medqa_runs=[
-                ("medqa_baseline", baseline_summary, baseline_tasks),
-                ("medqa_repaired", repaired_summary, repaired_tasks),
-            ],
             case_study_runs=case_successes,
         ),
         "reproducibility": _build_reproducibility(

@@ -14,13 +14,12 @@ if str(SRC_ROOT) not in sys.path:
 from dynaforge.experiment_runner import (
     aggregate_humaneval_repeats,
     aggregate_math_repeats,
-    aggregate_medqa_repeats,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Aggregate already-aggregated benchmark repeats into AFlow-style 3-run summaries.")
-    parser.add_argument("--benchmark", choices=("medqa", "math", "humaneval"), required=True)
+    parser.add_argument("--benchmark", choices=("math", "humaneval"), required=True)
     parser.add_argument("--output-dir", default="runs/repeat-aggregated", help="Directory for repeat aggregate outputs.")
     parser.add_argument("run_dirs", nargs="+", help="Per-repeat aggregate run directories.")
     return parser.parse_args()
@@ -29,9 +28,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir).resolve() / args.benchmark
-    if args.benchmark == "medqa":
-        summary = aggregate_medqa_repeats(args.run_dirs, base_dir=output_dir)
-    elif args.benchmark == "math":
+    if args.benchmark == "math":
         summary = aggregate_math_repeats(args.run_dirs, base_dir=output_dir)
     else:
         summary = aggregate_humaneval_repeats(args.run_dirs, base_dir=output_dir)

@@ -138,9 +138,6 @@ def benchmark_source_paths() -> dict[str, Path | None]:
             "runs/aflow-validation-check/humaneval-validation/*/summaries/summary.json",
             "coder->public_test_runner",
         ),
-        "medqa_full_baseline": latest_summary("runs/aggregated/medqa/full/medqa-aggregate/*/summaries/summary.json"),
-        "medqa_full_current": latest_summary("runs-current-benchmark-aggregated/medqa-aggregate/*/summaries/summary.json"),
-        "medqa_current_smoke": latest_summary("runs-benchmark-refresh/medqa-smoke/*/summaries/summary.json"),
     }
 
 
@@ -214,17 +211,11 @@ def build_benchmark_payload() -> dict[str, Any]:
     humaneval_val_base = load_summary_bundle(sources["humaneval_validation_baseline"])
     humaneval_val_v2 = load_summary_bundle(sources["humaneval_validation_v2"])
 
-    medqa_full = load_summary_bundle(sources["medqa_full_baseline"])
-    medqa_current_full = load_summary_bundle(sources["medqa_full_current"])
-    medqa_smoke = load_summary_bundle(sources["medqa_current_smoke"])
-
     math_rows = load_task_results(math_full["run_dir"] / "eval" / "task_results.json") if math_full else []
     humaneval_rows = load_task_results(humaneval_full["run_dir"] / "eval" / "task_results.json") if humaneval_full else []
-    medqa_rows = load_task_results(medqa_current_full["run_dir"] / "eval" / "task_results.json") if medqa_current_full else []
 
     math_analysis = analyze_math_rows(math_rows)
     humaneval_analysis = analyze_humaneval_rows(humaneval_rows)
-    medqa_analysis = analyze_medqa_rows(medqa_rows)
 
     cards = [
         {
@@ -240,13 +231,6 @@ def build_benchmark_payload() -> dict[str, Any]:
             "workflow": "coder -> public_test_runner -> [reviewer -> reviser -> retest_runner]",
             "gate": "repair only when public tests fail",
             "note": "The public-test loop is doing real work; the remaining failures are concentrated in the repair branch.",
-        },
-        {
-            "title": "MedQA",
-            "subtitle": "direct answer + selective review",
-            "workflow": "solver -> [reviewer -> reviser]",
-            "gate": "review only for ambiguity or explicitly high-risk medical questions",
-            "note": "The simpler direct-answer graph is now the intended default, and the current full rerun is complete. The remaining gap is accuracy, not missing execution.",
         },
     ]
 
@@ -268,15 +252,6 @@ def build_benchmark_payload() -> dict[str, Any]:
             "pass@1",
             metric_cell(humaneval_full, "pass_at_1"),
             "Repeat-1 full run completed; 3-run protocol not finished.",
-        ],
-        [
-            "MedQA",
-            "Repository medical QA extension with simpler direct-answer policy.",
-            "gpt-5-nano",
-            "1273-question official test",
-            "accuracy",
-            metric_cell(medqa_current_full, "accuracy"),
-            "Current direct-answer full rerun completed; legacy baseline retained only for comparison.",
         ],
     ]
 
@@ -308,20 +283,6 @@ def build_benchmark_payload() -> dict[str, Any]:
             "analysis": humaneval_analysis,
             "next_action": (
                 "Focus on the repair branch, not the first-pass coder. The plain coder path already clears most tasks; the residual losses are cases where reviewer+reviser still fail to repair after a public-test miss."
-            ),
-        },
-        {
-            "name": "MedQA",
-            "why": "We use MedQA as a repository benchmark extension to check whether the workflow can stay simple on lower-entropy medical MCQ tasks instead of over-engineering every question.",
-            "input_contract": "Question stem plus five labeled options. Output is one option label and the exact option text.",
-            "current_workflow": cards[2]["workflow"],
-            "historical_full_baseline": summary_min(medqa_full),
-            "current_full": summary_min(medqa_current_full),
-            "current_smoke": summary_min(medqa_smoke),
-            "analysis": medqa_analysis,
-            "next_action": (
-                "Keep the simpler direct-answer default and reduce avoidable review-path contract failures. "
-                "The current full rerun already beats the legacy planner-heavy baseline, but the remaining gap is still wrong medical reasoning rather than a missing tool."
             ),
         },
     ]
@@ -450,38 +411,6 @@ def analyze_humaneval_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "repair_failure_count": repair_fail,
         "plain_count": len(plain_rows),
         "plain_success_count": plain_success,
-    }
-
-
-def analyze_medqa_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    if not rows:
-        return {}
-    review_count = 0
-    review_correct = 0
-    solver_only_count = 0
-    solver_only_correct = 0
-    high_conf_wrong = 0
-    contract_failures = 0
-    for row in rows:
-        if "reviewer" in str(row.get("workflow_signature", "")):
-            review_count += 1
-            if row.get("correct"):
-                review_correct += 1
-        else:
-            solver_only_count += 1
-            if row.get("correct"):
-                solver_only_correct += 1
-        if not row.get("correct") and float(row.get("confidence", 0.0) or 0.0) >= 0.8:
-            high_conf_wrong += 1
-        if row.get("failure_type") == "output_contract_violation":
-            contract_failures += 1
-    return {
-        "review_count": review_count,
-        "review_accuracy": round(review_correct / review_count, 4) if review_count else 0.0,
-        "solver_only_count": solver_only_count,
-        "solver_only_accuracy": round(solver_only_correct / solver_only_count, 4) if solver_only_count else 0.0,
-        "high_confidence_wrong_count": high_conf_wrong,
-        "contract_failure_count": contract_failures,
     }
 
 
@@ -636,31 +565,6 @@ def render_benchmark_report(payload: Mapping[str, Any], figure_path: Path) -> st
                     f"- All `{benchmark['analysis'].get('repair_failure_count', 0)}` residual failures came from the repair branch, not the plain path.",
                 ]
             )
-        else:
-            lines.extend(
-                [
-                    "",
-                    render_table(
-                        ["Signal", "Value"],
-                        [
-                            ["Legacy planner-heavy baseline", metric_cell_wrapped(benchmark.get("historical_full_baseline"), "accuracy")],
-                            ["Current direct-answer smoke", metric_cell_wrapped(benchmark.get("current_smoke"), "accuracy")],
-                            ["Current direct-answer full", metric_cell_wrapped(benchmark.get("current_full"), "accuracy")],
-                            ["Review count in current full run", str(benchmark["analysis"].get("review_count", 0))],
-                            ["Review accuracy", f"{benchmark['analysis'].get('review_accuracy', 0.0):.4f}"],
-                            ["Solver-only accuracy", f"{benchmark['analysis'].get('solver_only_accuracy', 0.0):.4f}"],
-                            ["Review-path contract failures", str(benchmark["analysis"].get("contract_failure_count", 0))],
-                            ["High-confidence wrong answers", str(benchmark["analysis"].get("high_confidence_wrong_count", 0))],
-                        ],
-                    ),
-                    "",
-                    "What the logs say:",
-                    f"- The current direct-answer full run improved over the legacy planner-heavy baseline while using a much simpler default path.",
-                    f"- Most questions still stay on the solver-only branch ({benchmark['analysis'].get('solver_only_count', 0)} tasks), which is the intended design for MedQA.",
-                    f"- The remaining avoidable failures are concentrated in review-path contract issues ({benchmark['analysis'].get('contract_failure_count', 0)} cases) and ordinary wrong medical reasoning, not missing tools.",
-                ]
-            )
-
         lines.extend(
             [
                 "",
@@ -820,7 +724,6 @@ def render_program_report(
             [
                 ["MATH", "gpt-4o-mini", "solve_rate", metric_cell_wrapped(benchmark_payload["benchmarks"][0].get("full_v2"), "solve_rate"), "Execution-backed design is necessary, but the current selector/programmer stack is still weak."],
                 ["HumanEval", "gpt-4o-mini", "pass@1", metric_cell_wrapped(benchmark_payload["benchmarks"][1].get("full_v2"), "pass_at_1"), "Public-test execution is working; the residual gap sits in repair."],
-                ["MedQA", "gpt-5-nano", "accuracy", metric_cell_wrapped(benchmark_payload["benchmarks"][2].get("current_full"), "accuracy"), "The workflow should stay simpler here; the direct-answer path now outperforms the legacy planner-heavy baseline, but medical reasoning errors still dominate."],
             ],
         ),
         "",

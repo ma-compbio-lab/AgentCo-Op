@@ -16,13 +16,12 @@ if str(SRC_ROOT) not in sys.path:
 from dynaforge.experiment_runner import (
     aggregate_humaneval_runs,
     aggregate_math_runs,
-    aggregate_medqa_runs,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Aggregate benchmark budget sweep shards and emit summary tables.")
-    parser.add_argument("--benchmark", choices=("medqa", "math", "humaneval"), required=True)
+    parser.add_argument("--benchmark", choices=("math", "humaneval"), required=True)
     parser.add_argument("--sweeps-root", required=True, help="Root directory containing budget sweep run directories.")
     parser.add_argument("--output-dir", required=True, help="Directory for aggregated outputs.")
     parser.add_argument("--plot", action="store_true", help="Generate Pareto plots if matplotlib is available.")
@@ -102,10 +101,7 @@ def main() -> int:
 
     aggregate_fn: Callable[..., dict[str, Any]]
     metric_key: str
-    if args.benchmark == "medqa":
-        aggregate_fn = aggregate_medqa_runs
-        metric_key = "accuracy"
-    elif args.benchmark == "math":
+    if args.benchmark == "math":
         aggregate_fn = aggregate_math_runs
         metric_key = "solve_rate"
     else:

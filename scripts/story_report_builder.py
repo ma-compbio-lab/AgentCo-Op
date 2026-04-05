@@ -277,20 +277,6 @@ def benchmark_specs() -> dict[str, dict[str, Any]]:
             "aggregate": PROJECT_ROOT / "runs-current-benchmark/humaneval-aggregate/20260318_034850_c72333b0/summaries/summary.json",
             "task_results_glob": "runs/aflow-full/humaneval-test-shard*/**/eval/task_results.json",
         },
-        "medqa": {
-            "label": "MedQA",
-            "why": "Probe whether the workflow can stay simple on lower-entropy medical MCQ tasks instead of over-engineering review chains.",
-            "dataset": "MedQA official English test set",
-            "split": "full test: 1273",
-            "metric": "accuracy",
-            "base_model": "gpt-5-nano",
-            "workflow": "solver -> [reviewer -> reviser]",
-            "nodes": ["solver", "reviewer", "reviser"],
-            "legacy_full": PROJECT_ROOT / "runs/aggregated/medqa/full/medqa-aggregate/20260316_022906_5ca6c968/summaries/summary.json",
-            "current_smoke": PROJECT_ROOT / "runs-repair-pass2/medqa-smoke/20260318_034550_65292d8e/summaries/summary.json",
-            "partial_glob": "runs-current-benchmark/medqa-full-shard*/**/eval/task_results.json",
-            "legacy_task_results_glob": "runs/benchmark-full/medqa-full-shard*/**/eval/task_results.json",
-        },
     }
 
 
@@ -367,49 +353,6 @@ def summarize_humaneval_failures(task_results_glob: str) -> dict[str, Any]:
         "reviewed_count": reviewed,
         "repaired_count": repaired,
         "representative_failure": representative or {},
-    }
-
-
-def summarize_medqa_current(spec: dict[str, Any]) -> dict[str, Any]:
-    legacy_full = read_summary(spec["legacy_full"]) or {}
-    current_smoke = read_summary(spec["current_smoke"]) or {}
-    rows: list[dict[str, Any]] = []
-    for path in sorted(PROJECT_ROOT.glob(spec["partial_glob"])):
-        rows.extend(load_task_results(path))
-    partial = None
-    if rows:
-        correct = sum(1 for row in rows if row.get("correct"))
-        workflow_patterns = Counter(row.get("workflow_signature", "") for row in rows)
-        failure_breakdown = Counter(row.get("failure_type", "none") for row in rows)
-        partial = {
-            "task_count": len(rows),
-            "accuracy": correct / len(rows),
-            "workflow_patterns": dict(workflow_patterns),
-            "failure_breakdown": dict(failure_breakdown),
-        }
-    representative_success = None
-    for row in rows:
-        if not row.get("correct"):
-            continue
-        if "review" not in (row.get("workflow_signature") or ""):
-            continue
-        report = load_json(Path(row["report_path"]))
-        node_results = report.get("node_results", {})
-        solver = (node_results.get("solver") or {}).get("outputs", {})
-        reviewer = (node_results.get("reviewer") or {}).get("outputs", {})
-        reviser = (node_results.get("reviser") or {}).get("outputs", {})
-        representative_success = {
-            "solver_answer": solver.get("final_answer_label"),
-            "solver_rationale": shorten(solver.get("rationale", ""), 220),
-            "reviewer_verdict": reviewer.get("review_verdict"),
-            "revised_answer": reviser.get("final_answer_label"),
-        }
-        break
-    return {
-        "legacy_full": legacy_full,
-        "current_smoke": current_smoke,
-        "current_partial": partial,
-        "representative_reviewed_success": representative_success or {},
     }
 
 
@@ -512,7 +455,6 @@ def build_benchmark_story_report() -> dict[str, Any]:
     specs = benchmark_specs()
     math_summary = load_json(specs["math"]["aggregate"])
     humaneval_summary = load_json(specs["humaneval"]["aggregate"])
-    medqa_summary = summarize_medqa_current(specs["medqa"])
     math_detail = summarize_math_failures(specs["math"]["task_results_glob"])
     humaneval_detail = summarize_humaneval_failures(specs["humaneval"]["task_results_glob"])
 
@@ -532,14 +474,6 @@ def build_benchmark_story_report() -> dict[str, Any]:
             specs["humaneval"]["base_model"],
             pretty_metric(humaneval_summary.get("pass_at_1")),
             "Completed",
-        ],
-        [
-            "MedQA",
-            specs["medqa"]["dataset"],
-            specs["medqa"]["metric"],
-            specs["medqa"]["base_model"],
-            "partial full rerun: 0.7164 on 483 / 1273",
-            "Current rerun in progress",
         ],
     ]
 
@@ -561,13 +495,6 @@ def build_benchmark_story_report() -> dict[str, Any]:
                 "badges": ["131 test", pretty_metric(humaneval_summary.get("pass_at_1")), "gpt-4o-mini"],
                 "note": "Why this task: code should be repaired by concrete test evidence, not just by critique. The public-test loop is working; most tasks stop after coder -> public_test_runner, and a minority enter repair.",
             },
-            {
-                "title": "MedQA",
-                "subtitle": "Repository extension benchmark for low-entropy medical MCQ",
-                "nodes": specs["medqa"]["nodes"],
-                "badges": ["1273 test", "0.7164*", "gpt-5-nano"],
-                "note": "Why this task: MedQA should reward restraint. The redesigned path is intentionally closer to a strong single-step solver, with review only when the answer is genuinely unstable.",
-            },
         ],
     )
 
@@ -577,10 +504,9 @@ def build_benchmark_story_report() -> dict[str, Any]:
         "## Story",
         "Experiment 1 is meant to answer a narrow question: can the workflow choose the right amount of structure for different benchmark families instead of forcing every task through the same multi-agent recipe?",
         "",
-        "The three benchmarks deliberately stress different failure modes:",
+        "The two benchmarks deliberately stress different failure modes:",
         "- `MATH` is about exact answers and executable verification.",
         "- `HumanEval` is about code generation grounded by tests.",
-        "- `MedQA` is about not over-engineering a task that often benefits from a strong single-step solver.",
         "",
         "## Status Table",
         md_table(
@@ -639,38 +565,7 @@ def build_benchmark_story_report() -> dict[str, Any]:
         f"- Reviewer note: {humaneval_detail['representative_failure'].get('review_notes', '-')}",
         f"- Retest result: {humaneval_detail['representative_failure'].get('retest_result', '-')}",
         "",
-        "Interpretation: this is the healthiest benchmark of the three. The test loop is doing real work. The remaining gap is not “more critique”; it is better repair fidelity or a stronger candidate-generation step before repair.",
-        "",
-        "## MedQA",
-        f"Why this task: {specs['medqa']['why']}",
-        "",
-        md_table(
-            ["Field", "Value"],
-            [
-                ["Input", "Medical multiple-choice stem plus answer options."],
-                ["Expected output", "One option label plus the exact option text."],
-                ["Legacy full baseline", f"{pretty_metric(medqa_summary['legacy_full'].get('accuracy'))} with planner -> responder -> [reviewer -> reviser]"],
-                ["Current smoke", f"{pretty_metric(medqa_summary['current_smoke'].get('accuracy'))} with review on only {medqa_summary['current_smoke']['gate_activations'].get('direct_answer_review_gate', 0)} / 20 tasks"],
-                ["Current partial full rerun", "0.7164 on 483 / 1273 tasks"],
-            ],
-        ),
-        "",
-        "Current log interpretation:",
-        "- The earlier planner/responder baseline overused review and often amplified weak guesses instead of correcting them.",
-        "- The current redesign moved MedQA back toward a direct-answer workflow, which is closer to the task entropy.",
-        "- A robustness fix was needed because reviewer outputs sometimes used `output_...` alias keys instead of the expected schema fields; the runtime now normalizes those aliases.",
-        "",
-        "Current partial full-run evidence:",
-        f"- Current partial accuracy: `{pretty_metric(medqa_summary['current_partial']['accuracy'])}` over `{medqa_summary['current_partial']['task_count']}` tasks.",
-        f"- Current workflow mix: `{medqa_summary['current_partial']['workflow_patterns']}`",
-        f"- Current failure breakdown: `{medqa_summary['current_partial']['failure_breakdown']}`",
-        "",
-        "Representative reviewed success:",
-        f"- Solver answer: `{medqa_summary['representative_reviewed_success'].get('solver_answer', '-')}`",
-        f"- Reviewer verdict: `{medqa_summary['representative_reviewed_success'].get('reviewer_verdict', '-')}`",
-        f"- Revised answer: `{medqa_summary['representative_reviewed_success'].get('revised_answer', '-')}`",
-        "",
-        "Interpretation: MedQA is the clearest example that simplicity matters. The current redesign is finally moving in the right direction, but the benchmark is not finished until the new full rerun completes.",
+        "Interpretation: this is the healthiest benchmark of the two. The test loop is doing real work. The remaining gap is not “more critique”; it is better repair fidelity or a stronger candidate-generation step before repair.",
     ]
 
     md_path = OUTPUT_DIR / "benchmark_program_report.md"
@@ -680,7 +575,6 @@ def build_benchmark_story_report() -> dict[str, Any]:
         "benchmarks": {
             "math": {"summary": math_summary, "failure_analysis": math_detail},
             "humaneval": {"summary": humaneval_summary, "failure_analysis": humaneval_detail},
-            "medqa": medqa_summary,
         },
         "figures": {"workflow": rel_from_reports(workflow_figure)},
     }
@@ -868,7 +762,6 @@ def build_combined_report(benchmark_report: dict[str, Any], exp3_report: dict[st
         "## Current Headline Status",
         "- `MATH`: aligned full run completed, but performance is still weak enough that the workflow needs a deeper structural redesign.",
         "- `HumanEval`: aligned full run completed with a healthy public-test loop.",
-        "- `MedQA`: current redesigned direct-answer full rerun is in progress and is materially ahead of the older planner/responder baseline on early evidence.",
         "- `Experiment 3.1 / 3.2 / 3.3`: all completed successfully on the compiled-generic path.",
         "",
         "## Report Index",
