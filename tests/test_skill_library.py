@@ -271,6 +271,7 @@ def test_assembler_deduplicates_non_shareable_skills(tmp_path):
           - src: A
             dst: B
         ---
+        Generic pipeline.
     """)
     _write_skill(tmp_path, "only-skill", """
         ---
