@@ -13,7 +13,7 @@ from dynaforge.runtime.reports import ExecutionCost, NodeExecutionResult
 from dynaforge.runtime.skills import SkillPromptBundle
 
 if TYPE_CHECKING:
-    from dynaforge.runtime.executor import NodeExecutionContext
+    from dynaforge.runtime.execution_context import NodeExecutionContext
 
 JsonDict = Dict[str, Any]
 

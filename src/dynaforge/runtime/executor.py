@@ -5,7 +5,6 @@ import os
 import subprocess
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set
 
@@ -17,12 +16,13 @@ from dynaforge.integrations.web_search import BUILTIN_WEB_SEARCH_SERVER, build_b
 from dynaforge.runtime.blame import BlameAssigner, FailureClassifier
 from dynaforge.runtime.cache import ArtifactStore
 from dynaforge.runtime.conditions import evaluate_trigger
+from dynaforge.runtime.execution_context import NodeExecutionContext  # noqa: F401
+from dynaforge.runtime.node_handlers import dispatch_node
 from dynaforge.runtime.expression import evaluate_predicate
 from dynaforge.runtime.llm import LLMRouter
 from dynaforge.runtime.patching import DeterministicPatchPolicy, apply_patch_plan, compute_impacted_nodes
 from dynaforge.runtime.skills import SkillRegistry
 from dynaforge.runtime.tool_scout import ToolScout
-from dynaforge.runtime.direct_sandbox import execute_direct_sandbox_node
 from dynaforge.runtime.reports import (
     BudgetLedger,
     ContractViolation,
@@ -47,22 +47,6 @@ class NodeHandler(Protocol):
         context: "NodeExecutionContext",
     ) -> NodeExecutionResult:
         ...
-
-
-@dataclass
-class NodeExecutionContext:
-    blueprint: WorkflowBlueprint
-    artifact_store: ArtifactStore
-    active_subgraphs: Set[str]
-    node_results: Dict[str, NodeExecutionResult]
-    budget_remaining: Dict[str, Any]
-    llm_router: LLMRouter
-    mcp_client: MCPClientManager
-    tool_registry: ToolRegistry
-    tool_scout: ToolScout
-    skill_registry: SkillRegistry
-    sandbox_runner: SandboxRunner
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class BlueprintExecutor:
@@ -549,54 +533,7 @@ class BlueprintExecutor:
         return result
 
     def _default_handler(self, node: NodeSpec, inputs: JsonDict, context: NodeExecutionContext) -> NodeExecutionResult:
-        if node.kind in {NodeKind.agent, NodeKind.evaluator, NodeKind.router}:
-            return self.llm_router.run_node(node, inputs, context)
-
-        if node.kind == NodeKind.tool:
-            if bool(node.meta.get("direct_sandbox_handler", False)):
-                try:
-                    return execute_direct_sandbox_node(node, inputs, context)
-                except Exception as exc:
-                    return NodeExecutionResult(
-                        failure_type=FailureType.tool_runtime_error,
-                        error=f"Direct sandbox tool failed: {exc}",
-                        trace={"live_direct_sandbox": True, "node_id": node.node_id},
-                    )
-            if not node.tools:
-                return NodeExecutionResult(
-                    failure_type=FailureType.tool_runtime_error,
-                    error=f"Tool node {node.node_id} has no bound tools",
-                )
-            try:
-                tool_result = self.mcp_client.call_bound_tool(
-                    node.tools,
-                    f"{node.tools[0].server}:{node.tools[0].tool}",
-                    inputs,
-                    blueprint=context.blueprint,
-                    sandbox_runner=context.sandbox_runner,
-                )
-            except Exception as exc:
-                return NodeExecutionResult(
-                    failure_type=FailureType.tool_runtime_error,
-                    error=f"MCP tool call failed: {exc}",
-                    trace={"live_mcp": True, "tool": f"{node.tools[0].server}:{node.tools[0].tool}"},
-                )
-            return NodeExecutionResult(
-                outputs={"result": tool_result},
-                trace={
-                    "live_mcp": True,
-                    "server": node.tools[0].server,
-                    "tool": node.tools[0].tool,
-                },
-                cost=ExecutionCost(tool_calls=1),
-                confidence=0.9,
-            )
-
-        return NodeExecutionResult(
-            outputs={"result": inputs},
-            trace={"passthrough": True, "kind": node.kind.value},
-            confidence=1.0,
-        )
+        return dispatch_node(node, inputs, context)
 
     def _validate_input_contract(self, node: NodeSpec, inputs: JsonDict) -> list[ContractViolation]:
         return self._validate_schema(node.node_id, "input_schema", node.io.input_schema, inputs)
