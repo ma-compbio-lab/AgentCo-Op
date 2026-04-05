@@ -1,6 +1,12 @@
+import pytest
+
 from dynaforge.workflows.synthesis.component_library import ComponentLibrary, ComponentSpec
 from dynaforge.workflows.synthesis.searcher import ComponentSearcher
+from dynaforge.workflows.synthesis.validator import BlueprintValidator, BlueprintValidationError
 from dynaforge.workflows.design import TaskProfile
+from dynaforge.ir.schema import (
+    WorkflowBlueprint, TaskSpec, BudgetSpec, NodeSpec, NodeKind, EdgeSpec, ModelSpec, IOContract,
+)
 
 
 def test_component_library_builds_without_error():
@@ -34,3 +40,59 @@ def test_searcher_code_profile_returns_results():
     # All results should be valid (component, score) tuples
     assert len(results) > 0
     assert all(isinstance(c, ComponentSpec) and isinstance(s, float) for c, s in results)
+
+
+# ---- BlueprintValidator tests ----
+
+def _minimal_blueprint() -> WorkflowBlueprint:
+    return WorkflowBlueprint(
+        task=TaskSpec(task_id="t1", title="T", description="Test"),
+        budget=BudgetSpec(),
+        base_nodes=[NodeSpec(
+            node_id="solver",
+            kind=NodeKind.agent,
+            role="Solver",
+            description="solve",
+            model=ModelSpec(provider="openai", name="gpt-4o-mini"),
+            io=IOContract(),
+        )],
+        base_edges=[],
+    )
+
+
+def test_validator_accepts_valid_blueprint():
+    BlueprintValidator().validate(_minimal_blueprint())
+
+
+def test_validator_rejects_empty_nodes():
+    bp = _minimal_blueprint()
+    bp.base_nodes = []
+    with pytest.raises(BlueprintValidationError, match="no base_nodes"):
+        BlueprintValidator().validate(bp)
+
+
+def test_validator_rejects_unknown_edge_src():
+    bp = _minimal_blueprint()
+    # Bypass Pydantic's own model validator by mutating after construction
+    bp.base_edges = [EdgeSpec(edge_id="e1", src="nonexistent", dst="solver")]
+    with pytest.raises(BlueprintValidationError, match="src="):
+        BlueprintValidator().validate(bp)
+
+
+def test_validator_detects_cycle():
+    bp = _minimal_blueprint()
+    node2 = NodeSpec(
+        node_id="node2",
+        kind=NodeKind.agent,
+        role="Node2",
+        description="n2",
+        model=ModelSpec(provider="openai", name="gpt-4o-mini"),
+        io=IOContract(),
+    )
+    bp.base_nodes.append(node2)
+    bp.base_edges = [
+        EdgeSpec(edge_id="e1", src="solver", dst="node2"),
+        EdgeSpec(edge_id="e2", src="node2", dst="solver"),
+    ]
+    with pytest.raises(BlueprintValidationError, match="Cycle detected"):
+        BlueprintValidator().validate(bp)
