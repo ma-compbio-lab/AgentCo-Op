@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import gzip
 import json
 import math
 import os
@@ -91,8 +92,20 @@ class RunRecorder:
     def write_json(self, relative_path: str | Path, payload: Any) -> Path:
         path = self.root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        data = json.dumps(payload, ensure_ascii=True, indent=2).encode("utf-8")
+        if str(path).endswith(".gz"):
+            with gzip.open(path, "wb") as f:
+                f.write(data)
+        else:
+            path.write_bytes(data)
         return path
+
+    @staticmethod
+    def read_json(path: Path) -> Any:
+        if str(path).endswith(".gz"):
+            with gzip.open(path, "rb") as f:
+                return json.loads(f.read().decode("utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def write_text(self, relative_path: str | Path, content: str) -> Path:
         path = self.root / relative_path
@@ -1608,6 +1621,14 @@ def _resolve_generic_indices(
     return indices
 
 
+def _find_report_path(trace_dir: Path, sample_id: str) -> Path | None:
+    for suffix in (".report.json.gz", ".report.json"):
+        p = trace_dir / f"{sample_id}{suffix}"
+        if p.exists():
+            return p
+    return None
+
+
 def _load_existing_generic_task_results(
     *,
     run_root: Path,
@@ -1626,10 +1647,10 @@ def _load_existing_generic_task_results(
     reconstructed: list[dict[str, Any]] = []
     for order, index in enumerate(selected_indices, start=1):
         sample = records[index]
-        report_path = run_root / "traces" / f"{sample['id']}.report.json"
-        if not report_path.exists():
+        report_path = _find_report_path(run_root / "traces", str(sample["id"]))
+        if report_path is None:
             continue
-        report = ExecutionReport.model_validate(json.loads(report_path.read_text(encoding="utf-8")))
+        report = ExecutionReport.model_validate(RunRecorder.read_json(report_path))
         reconstructed.append(
             result_builder(
                 sample=sample,

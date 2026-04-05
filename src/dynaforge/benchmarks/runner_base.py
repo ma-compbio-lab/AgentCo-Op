@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import gzip
 import json
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -56,11 +57,11 @@ def _run_one_sample(
 
     _, report = _run_blueprint(resolved, task_blueprint, executor, handlers=handlers)
     sample_id = str(sample["id"])
-    report_path = Path(trace_dir) / f"{sample_id}.report.json"
+    report_path = Path(trace_dir) / f"{sample_id}.report.json.gz"
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(
-        json.dumps(report.model_dump(), ensure_ascii=True, indent=2), encoding="utf-8"
-    )
+    data = json.dumps(report.model_dump(), ensure_ascii=True, indent=2).encode("utf-8")
+    with gzip.open(report_path, "wb") as f:
+        f.write(data)
 
     task_result = runner.build_task_result(
         sample=sample,
