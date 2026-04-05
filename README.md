@@ -21,7 +21,8 @@ DynaForge is a Python implementation of a dynamic-by-construction workflow compi
 - Failure classification and blame assignment.
 - Deterministic patch policy plus patch application helpers.
 - Hydra + YAML-based model/experiment configuration and a runnable CLI entrypoint.
-- Benchmark preparation helpers for MedQA, MATH, and HumanEval.
+- Benchmark preparation helpers for MATH and HumanEval with parallel execution via ProcessPoolExecutor.
+- Composition-based workflow synthesis backend with BM25 component search and LLM assembly.
 - MCP server wrapper template for containerized tool/agent exposure.
 - Prompt templates for LLM patch planning.
 - A runnable minimal example and tests.
@@ -29,7 +30,9 @@ DynaForge is a Python implementation of a dynamic-by-construction workflow compi
 ## Project layout
 
 - `src/dynaforge/ir/schema.py`: Typed IR and patch-plan schema.
-- `src/dynaforge/runtime/executor.py`: Workflow executor and repair loop.
+- `src/dynaforge/runtime/executor.py`: Workflow executor core (graph traversal, gating, repair loop).
+- `src/dynaforge/runtime/node_handlers.py`: Per-NodeKind dispatch (agent, tool, router, evaluator).
+- `src/dynaforge/runtime/execution_context.py`: `NodeExecutionContext` dataclass for handler injection.
 - `src/dynaforge/runtime/llm.py`: Live LLM router and OpenAI-compatible client.
 - `src/dynaforge/runtime/skills.py`: `SKILL.md` registry, parsing, and prompt bundle construction.
 - `src/dynaforge/runtime/tool_scout.py`: Deterministic candidate-tool ranking for discovery-enabled nodes.
@@ -43,14 +46,13 @@ DynaForge is a Python implementation of a dynamic-by-construction workflow compi
 - `src/dynaforge/integrations/web_search_server.py`: Builtin FastMCP web-search server.
 - `src/dynaforge/integrations/sandbox.py`: Docker/Repo2Run-backed sandbox runner.
 - `src/dynaforge/config.py`: Hydra config loading and experiment execution helpers.
-- `src/dynaforge/benchmarks.py`: Benchmark-specific preparation and validation helpers.
+- `src/dynaforge/benchmarks/`: Benchmark runner package (`BenchmarkRunner`, `MathRunner`, `HumanEvalRunner`).
 - `src/dynaforge/cli.py`: CLI entrypoint for composed Hydra runs.
 - `src/dynaforge/conf/`: Default YAML config groups for models and experiments.
 - `src/dynaforge/integrations/mcp_wrapper.py`: FastMCP wrapper template.
 - `templates/mcp/server.py`: Drop-in server template for containerized agents.
 - `examples/minimal_blueprint.py`: Minimal end-to-end example.
 - `examples/hydra_experiment.py`: Hydra-configured example run.
-- `scripts/prepare_medqa.py`: Download a local MedQA preview and metadata cache.
 - `scripts/prepare_math.py`: Download and normalize the AFlow-aligned MATH benchmark slice.
 - `scripts/prepare_humaneval.py`: Download and normalize the AFlow-aligned HumanEval benchmark split.
 - `scripts/aggregate_benchmark_repeats.py`: Average per-run benchmark aggregates into AFlow-style multi-run summaries.
@@ -95,29 +97,11 @@ Agent skills are also node-level and opt-in. LLM-backed nodes can declare `skill
 
 For exact control, prefer an explicit `path`. A minimal packaged example is available via `experiment=minimal_skills`.
 
-If a resolved skill declares `allowed-tools` metadata, that metadata is now enforced as a runtime allowlist over the node's candidate tools. The enforcement is applied before tool selection, shows up in the node trace under `tool_discovery.skill_tool_policy`, and does not affect nodes that do not declare constrained skills.
+If a resolved skill declares `allowed_tools` metadata, that metadata is now enforced as a runtime allowlist over the node's candidate tools. The enforcement is applied before tool selection, shows up in the node trace under `tool_discovery.skill_tool_policy`, and does not affect nodes that do not declare constrained skills.
 
 ## Benchmark setup
 
 The repository now includes reproducible helpers for the active benchmark tracks.
-
-MedQA:
-
-```bash
-pip install -e ".[benchmarks]"
-.venv/bin/python scripts/prepare_medqa.py
-.venv/bin/python -m dynaforge.experiment_cli medqa --model openai_gpt4o_mini
-```
-
-- Uses `bigbio/med_qa`
-- Requires `datasets<4`
-- Uses `trust_remote_code=True`
-- Uses `gpt-4o-mini` as the benchmark-aligned base execution model
-- Writes local artifacts under `benchmarks/medqa/`
-- Restores both:
-  - canonical benchmark eval cache under `benchmarks/medqa/processed_test/`
-  - full split assets under `benchmarks/medqa/all_splits/`
-- Exports a `train_sample_records.jsonl` sample of `1000` train examples
 
 MATH:
 
