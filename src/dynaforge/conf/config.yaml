@@ -8,3 +8,4 @@ executor:
   allow_offline_fallback: true
   repair_enabled: false
   max_repair_iterations: 3
+  benchmark_workers: 8
