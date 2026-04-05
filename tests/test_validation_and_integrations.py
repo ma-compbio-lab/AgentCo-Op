@@ -271,7 +271,7 @@ def test_skill_allowed_tools_becomes_runtime_constraint(tmp_path) -> None:
         "---\n"
         "name: calculator-only\n"
         "description: Use only the calculator tool for this node.\n"
-        "allowed-tools:\n"
+        "allowed_tools:\n"
         "  - local-tools:calculator\n"
         "---\n\n"
         "Use the calculator tool when external tools are needed.\n",
@@ -352,7 +352,7 @@ def test_skill_allowed_tools_rejects_disallowed_tool_request(tmp_path) -> None:
     (skill_dir / "SKILL.md").write_text(
         "---\n"
         "name: calculator-only\n"
-        "allowed-tools:\n"
+        "allowed_tools:\n"
         "  - local-tools:calculator\n"
         "---\n\n"
         "Use only calculator.\n",

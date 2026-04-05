@@ -164,11 +164,7 @@ def execute_direct_sandbox_node(
     if isinstance(selected_specialists, list):
         trace["selected_specialists"] = list(selected_specialists)
 
-    confidence_value = payload.get("confidence", 0.82)
-    try:
-        confidence = float(confidence_value)
-    except (TypeError, ValueError):
-        confidence = 0.82
+    confidence = float(payload.get("confidence", 0.82))
 
     return NodeExecutionResult(
         outputs=dict(outputs),

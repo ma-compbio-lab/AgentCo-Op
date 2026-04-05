@@ -19,7 +19,7 @@ from dynaforge.runtime.conditions import evaluate_trigger
 from dynaforge.runtime.execution_context import NodeExecutionContext  # noqa: F401
 from dynaforge.runtime.node_handlers import dispatch_node
 from dynaforge.runtime.expression import evaluate_predicate
-from dynaforge.runtime.llm import LLMRouter
+from dynaforge.runtime.llm import LLMClientError, LLMRouter
 from dynaforge.runtime.patching import DeterministicPatchPolicy, apply_patch_plan, compute_impacted_nodes
 from dynaforge.runtime.skills import SkillRegistry
 from dynaforge.runtime.tool_scout import ToolScout
@@ -514,11 +514,25 @@ class BlueprintExecutor:
         start_time = time.perf_counter()
         try:
             result = handler(node, inputs, context) if handler is not None else self._default_handler(node, inputs, context)
+        except SandboxError as exc:
+            result = NodeExecutionResult(
+                failure_type=FailureType.tool_runtime_error,
+                error=str(exc),
+                trace={"exception": "SandboxError", "node_id": node.node_id},
+            )
+        except LLMClientError as exc:
+            result = NodeExecutionResult(
+                failure_type=FailureType.reasoning_inconsistency,
+                error=str(exc),
+                trace={"exception": "LLMClientError", "node_id": node.node_id},
+            )
+        except ValueError:
+            raise  # From dispatch_node for unknown NodeKind — let it propagate
         except Exception as exc:
             result = NodeExecutionResult(
                 failure_type=FailureType.unknown,
                 error=str(exc),
-                trace={"exception": exc.__class__.__name__},
+                trace={"exception": exc.__class__.__name__, "node_id": node.node_id},
             )
         elapsed_s = max(0.0, time.perf_counter() - start_time)
         result.cost = result.cost.add(ExecutionCost(wall_time_s=round(elapsed_s, 6)))

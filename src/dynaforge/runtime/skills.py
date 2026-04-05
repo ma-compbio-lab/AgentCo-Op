@@ -31,7 +31,7 @@ class LoadedSkill:
 
     @property
     def allowed_tools(self) -> list[str]:
-        raw = self.metadata.get("allowed-tools", self.metadata.get("allowed_tools", []))
+        raw = self.metadata.get("allowed_tools", [])
         if isinstance(raw, str):
             value = raw.strip()
             return [value] if value else []
