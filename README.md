@@ -99,6 +99,26 @@ For exact control, prefer an explicit `path`. A minimal packaged example is avai
 
 If a resolved skill declares `allowed_tools` metadata, that metadata is now enforced as a runtime allowlist over the node's candidate tools. The enforcement is applied before tool selection, shows up in the node trace under `tool_discovery.skill_tool_policy`, and does not affect nodes that do not declare constrained skills.
 
+## Skill-driven compilation
+
+AgentCo-Op supports skill-driven workflow compilation where SKILL.md files define both topology (meta-skills) and agent behavior (agent-skills). Instead of designing multi-agent topologies from scratch, the compiler searches a skill library for matching meta-skills (which define agent roles and connections) and agent-skills (which specialize each agent's behavior via system prompts and tool allowlists).
+
+Bootstrap meta-skills from existing patterns:
+```bash
+agentcoop-bootstrap-skills
+```
+
+Enable skill-driven compilation in experiment config:
+```yaml
+workflow_design:
+  enabled: true
+  skill_driven:
+    enabled: true
+    skill_search_paths: ["./skills"]
+```
+
+The compiler tries skill-driven assembly first (BM25 search over meta-skills, then per-role agent-skill assignment), falling back to the existing pattern/synthesis path if no suitable meta-skill is found.
+
 ## Benchmark setup
 
 The repository now includes reproducible helpers for the active benchmark tracks.

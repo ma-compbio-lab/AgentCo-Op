@@ -31,6 +31,9 @@ agentcoop-run model=openai_gpt41_mini experiment=minimal
 # Run with overrides
 agentcoop-run model=openai_gpt41 experiment=minimal_repair executor.repair_enabled=true
 
+# Bootstrap meta-skills from existing patterns
+agentcoop-bootstrap-skills
+
 # Run benchmarks
 agentcoop-exp math run --model openai_gpt41_mini
 agentcoop-exp humaneval run --model openai_gpt41_mini
@@ -95,6 +98,9 @@ Defined in `ir/schema.py` as `NodeKind` enum: `agent`, `tool`, `router`, `evalua
 | `workflows/compiler.py` | Pattern-based + synthesis-based blueprint generation |
 | `workflows/patterns/` | Per-pattern blueprint builders (package, one file per pattern) |
 | `workflows/synthesis/` | Composition-based synthesis: `ComponentLibrary`, `ComponentSearcher` (BM25), `SynthesisAssembler`, `BlueprintValidator` |
+| `skills/library.py` | `SkillLibrary` — unified BM25 index over agent-skills and meta-skills |
+| `skills/assembler.py` | `SkillDrivenAssembler` — assembles blueprint from meta-skill topology + per-agent skill selection |
+| `skills/bootstrapper.py` | `SkillBootstrapper` — generates meta-skill SKILL.md from existing patterns |
 
 ### Configuration (Hydra)
 
@@ -123,6 +129,17 @@ When `workflow_design.synthesis.enabled=True`, the compiler uses a composition-b
 4. `BlueprintValidator` validates the assembled blueprint (acyclicity, edge refs, gate refs)
 
 Falls back to the existing pattern-based builder on synthesis failure.
+
+### Skill-Driven Compilation
+
+When `workflow_design.skill_driven.enabled=True`, the compiler uses a skill-first pipeline before the synthesis backend:
+1. `SkillLibrary` indexes all SKILL.md files, partitioning into meta-skills (topology) and agent-skills (behavior)
+2. BM25 search ranks meta-skills against the task description; best match defines the agent topology (roles + edges)
+3. For each role, `SkillDrivenAssembler` searches agent-skills via BM25 and assigns top-K as `SkillRef` bindings
+4. Blueprint assembled: each role becomes a `NodeSpec`, each agent gets different skills for specialized behavior
+5. Falls back to pattern/synthesis path if no meta-skill scores above threshold
+
+Bootstrap meta-skills from existing patterns: `agentcoop-bootstrap-skills`
 
 ### Benchmarks
 
