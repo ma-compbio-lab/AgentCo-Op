@@ -55,6 +55,7 @@ class GraphSynthesisSpec(BaseModel):
     allow_from_scratch: bool = True
     llm_planner: bool = False
     max_candidates: int = Field(default=4, ge=1, le=8)
+    component_search_top_k: int = Field(default=10, ge=1, le=50)
 
 
 class RuntimeExpansionSpec(BaseModel):
