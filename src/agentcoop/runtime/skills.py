@@ -39,6 +39,38 @@ class LoadedSkill:
             return [str(item).strip() for item in raw if str(item).strip()]
         return []
 
+    @property
+    def skill_type(self) -> str:
+        return str(self.metadata.get("type", "agent-skill")).strip()
+
+    @property
+    def domain_tags(self) -> list[str]:
+        raw = self.metadata.get("domain_tags", [])
+        return [str(t).strip() for t in raw] if isinstance(raw, list) else []
+
+    @property
+    def capability_tags(self) -> list[str]:
+        raw = self.metadata.get("capability_tags", [])
+        return [str(t).strip() for t in raw] if isinstance(raw, list) else []
+
+    @property
+    def shareable(self) -> bool:
+        return bool(self.metadata.get("shareable", False))
+
+    @property
+    def roles(self) -> list[dict]:
+        if self.skill_type != "meta-skill":
+            return []
+        raw = self.metadata.get("roles", [])
+        return list(raw) if isinstance(raw, list) else []
+
+    @property
+    def edges(self) -> list[dict]:
+        if self.skill_type != "meta-skill":
+            return []
+        raw = self.metadata.get("edges", [])
+        return list(raw) if isinstance(raw, list) else []
+
 
 @dataclass
 class SkillPromptBundle:
