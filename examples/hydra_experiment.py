@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dynaforge.config import load_hydra_config, run_configured_experiment
+from agentcoop.config import load_hydra_config, run_configured_experiment
 
 
 if __name__ == "__main__":

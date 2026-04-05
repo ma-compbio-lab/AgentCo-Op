@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dynaforge.ir import (
+from agentcoop.ir import (
     BudgetSpec,
     EdgeSpec,
     GateSpec,
@@ -14,11 +14,11 @@ from dynaforge.ir import (
     TriggerExpr,
     WorkflowBlueprint,
 )
-from dynaforge.runtime.conditions import evaluate_trigger
-from dynaforge.runtime.executor import BlueprintExecutor
-from dynaforge.runtime.llm import LLMRouter
-from dynaforge.runtime.patching import DeterministicPatchPolicy, apply_patch_plan
-from dynaforge.runtime.reports import BlameCandidate, ExecutionReport, NodeExecutionResult
+from agentcoop.runtime.conditions import evaluate_trigger
+from agentcoop.runtime.executor import BlueprintExecutor
+from agentcoop.runtime.llm import LLMRouter
+from agentcoop.runtime.patching import DeterministicPatchPolicy, apply_patch_plan
+from agentcoop.runtime.reports import BlameCandidate, ExecutionReport, NodeExecutionResult
 
 
 class StubLLMClient:
@@ -129,7 +129,7 @@ def test_executor_records_wall_time(monkeypatch) -> None:
             }
 
     clock = iter([10.0, 10.25])
-    monkeypatch.setattr("dynaforge.runtime.executor.time.perf_counter", lambda: next(clock))
+    monkeypatch.setattr("agentcoop.runtime.executor.time.perf_counter", lambda: next(clock))
 
     blueprint = WorkflowBlueprint(
         task=TaskSpec(task_id="runtime-wall-time", title="Runtime", description="Desc"),

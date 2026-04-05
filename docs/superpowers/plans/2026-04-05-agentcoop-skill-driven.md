@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rename framework from DynaForge to AgentCo-Op and implement skill-driven workflow compilation where meta-skills define topology and agent-skills specialize each node.
+**Goal:** Rename framework from AgentCo-Op to AgentCo-Op and implement skill-driven workflow compilation where meta-skills define topology and agent-skills specialize each node.
 
 **Architecture:** Two-tier skill system (meta-skills for topology, agent-skills for behavior) with BM25 search over a unified skill library. The compiler tries skill-driven assembly first, falls back to existing pattern/synthesis path. Existing patterns are bootstrapped into meta-skills.
 
@@ -16,7 +16,7 @@
 
 **Modify (mechanical find-replace):**
 - `pyproject.toml` — package name, entrypoints, package-data
-- `src/dynaforge/` → `src/agentcoop/` (entire directory renamed)
+- `src/agentcoop/` → `src/agentcoop/` (entire directory renamed)
 - All `*.py` files under `src/` and `tests/` — imports
 - `scripts/*.py` — sys.path and imports
 - `README.md`, `CLAUDE.md` — documentation
@@ -39,14 +39,14 @@
 
 ---
 
-## Sub-project A: Rename dynaforge → agentcoop
+## Sub-project A: Rename agentcoop → agentcoop
 
 ---
 
 ### Task 1: Rename package directory and update all imports
 
 **Files:**
-- Rename: `src/dynaforge/` → `src/agentcoop/`
+- Rename: `src/agentcoop/` → `src/agentcoop/`
 - Modify: `pyproject.toml`
 - Modify: all `*.py` files under `src/agentcoop/`, `tests/`, `scripts/`
 
@@ -54,12 +54,12 @@
 
 ```bash
 cd /path/to/worktree
-git mv src/dynaforge src/agentcoop
+git mv src/agentcoop src/agentcoop
 ```
 
 - [ ] **Step 2: Update `pyproject.toml`**
 
-Replace all occurrences of `dynaforge` with `agentcoop`:
+Replace all occurrences of `agentcoop` with `agentcoop`:
 
 ```toml
 [project]
@@ -78,20 +78,20 @@ agentcoop = ["conf/**/*.yaml", "skills/**/*.md"]
 
 ```bash
 # Replace in all Python files under src/
-find src/ -name '*.py' -exec sed -i '' 's/from dynaforge\./from agentcoop./g' {} +
-find src/ -name '*.py' -exec sed -i '' 's/import dynaforge\./import agentcoop./g' {} +
-find src/ -name '*.py' -exec sed -i '' 's/import dynaforge$/import agentcoop/g' {} +
-find src/ -name '*.py' -exec sed -i '' 's/"dynaforge\./"agentcoop./g' {} +
+find src/ -name '*.py' -exec sed -i '' 's/from agentcoop\./from agentcoop./g' {} +
+find src/ -name '*.py' -exec sed -i '' 's/import agentcoop\./import agentcoop./g' {} +
+find src/ -name '*.py' -exec sed -i '' 's/import agentcoop$/import agentcoop/g' {} +
+find src/ -name '*.py' -exec sed -i '' 's/"agentcoop\./"agentcoop./g' {} +
 
 # Replace in tests
-find tests/ -name '*.py' -exec sed -i '' 's/from dynaforge\./from agentcoop./g' {} +
-find tests/ -name '*.py' -exec sed -i '' 's/import dynaforge\./import agentcoop./g' {} +
-find tests/ -name '*.py' -exec sed -i '' 's/import dynaforge$/import agentcoop/g' {} +
-find tests/ -name '*.py' -exec sed -i '' 's/"dynaforge\./"agentcoop./g' {} +
+find tests/ -name '*.py' -exec sed -i '' 's/from agentcoop\./from agentcoop./g' {} +
+find tests/ -name '*.py' -exec sed -i '' 's/import agentcoop\./import agentcoop./g' {} +
+find tests/ -name '*.py' -exec sed -i '' 's/import agentcoop$/import agentcoop/g' {} +
+find tests/ -name '*.py' -exec sed -i '' 's/"agentcoop\./"agentcoop./g' {} +
 
 # Replace in scripts
-find scripts/ -name '*.py' -exec sed -i '' 's/from dynaforge\./from agentcoop./g' {} +
-find scripts/ -name '*.py' -exec sed -i '' 's/import dynaforge\./import agentcoop./g' {} +
+find scripts/ -name '*.py' -exec sed -i '' 's/from agentcoop\./from agentcoop./g' {} +
+find scripts/ -name '*.py' -exec sed -i '' 's/import agentcoop\./import agentcoop./g' {} +
 ```
 
 - [ ] **Step 4: Update environment variable name**
@@ -109,7 +109,7 @@ DEFAULT_SKILL_PATH_ENV = "AGENTCOOP_SKILL_PATHS"
 
 In `src/agentcoop/conf/config.yaml`, replace:
 ```yaml
-artifact_root: .dynaforge_artifacts
+artifact_root: .agentcoop_artifacts
 ```
 with:
 ```yaml
@@ -123,21 +123,21 @@ artifact_root: str | Path = ".agentcoop_artifacts",
 
 - [ ] **Step 6: Update `.gitignore`**
 
-Replace `.dynaforge_artifacts` with `.agentcoop_artifacts`.
+Replace `.agentcoop_artifacts` with `.agentcoop_artifacts`.
 
 - [ ] **Step 7: Update string references in docs**
 
 In `README.md` and `CLAUDE.md`:
-- Replace `dynaforge-run` → `agentcoop-run`
-- Replace `dynaforge-exp` → `agentcoop-exp`
-- Replace `DynaForge` → `AgentCo-Op`
-- Replace `dynaforge` → `agentcoop` in code paths
+- Replace `agentcoop-run` → `agentcoop-run`
+- Replace `agentcoop-exp` → `agentcoop-exp`
+- Replace `AgentCo-Op` → `AgentCo-Op`
+- Replace `agentcoop` → `agentcoop` in code paths
 
 - [ ] **Step 8: Update remaining string literals**
 
-Search for any remaining `dynaforge` string references:
+Search for any remaining `agentcoop` string references:
 ```bash
-grep -rn "dynaforge" src/ tests/ scripts/ pyproject.toml README.md CLAUDE.md --include="*.py" --include="*.yaml" --include="*.toml" --include="*.md"
+grep -rn "agentcoop" src/ tests/ scripts/ pyproject.toml README.md CLAUDE.md --include="*.py" --include="*.yaml" --include="*.toml" --include="*.md"
 ```
 Fix any remaining hits.
 
@@ -153,7 +153,7 @@ Expected: all tests pass (same count as before).
 
 ```bash
 git add -A
-git commit -m "[refactor] rename dynaforge to agentcoop
+git commit -m "[refactor] rename agentcoop to agentcoop
 
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
 ```

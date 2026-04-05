@@ -1,0 +1,121 @@
+# @package _global_
+
+benchmark:
+  kind: case_study
+  case_id: scanpy_paul15_specialized_collaboration
+  title: Scanpy Paul15 specialized-agent collaboration
+  case_root: benchmarks/case_studies/scanpy_paul15_collaboration
+  repo_root: external/case_studies/scanpy_paul15/repos
+  methods_excerpt: |
+    Load the public Paul15 hematopoiesis dataset, normalize counts, log-transform, select highly variable genes,
+    run PCA and a neighborhood graph, cluster cells, infer coarse lineage structure with PAGA, compute diffusion-based
+    pseudotime from an automatically selected root cell, and reproduce a paper-style figure package with a trajectory embedding,
+    a PAGA graph, and a dynamic-gene evidence panel linked to pseudotime progression.
+  target_figure_description: |
+    Produce a paper-style figure package for the Paul15 dataset consisting of a trajectory figure, a PAGA graph,
+    and a dynamic-gene panel that shows genes whose expression varies strongly along pseudotime.
+  analysis_config:
+    dataset_id: paul15
+    target_sum: 10000.0
+    n_top_genes: 2000
+    n_neighbors: 12
+    n_pcs: 30
+    resolution: 0.8
+    max_scale_value: 10.0
+    seed: 0
+    cluster_key: leiden
+    root_strategy: min_diffmap_1
+    dpi: 150
+    paga_threshold: 0.03
+    marker_top_n: 3
+    dynamic_gene_top_n: 5
+    dynamic_gene_panel_top_n: 4
+  enable_refinement_subgraph: true
+  refinement_threshold: 8.0
+  candidate_repos:
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+    - name: scanpy-tutorials
+      url: https://github.com/scverse/scanpy-tutorials.git
+  paper_spec_sandbox:
+    sandbox_id: paul15-paper-spec-v2
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_TRANSPORT: stdio
+      SPECIALIZED_AGENT_ROLE: paper_spec
+      SPECIALIZED_AGENT_ALLOW_UNAUTHENTICATED: "true"
+    safety:
+      allow_network: true
+      cpu_quota: 1.0
+      mem_limit_mb: 4096
+      timeout_s: 900
+    bootstrap_cmds:
+      - [python, -m, pip, install, mcp]
+  planner_sandbox:
+    sandbox_id: paul15-execution-planner-v2
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_TRANSPORT: stdio
+      SPECIALIZED_AGENT_ROLE: execution_planner
+      SPECIALIZED_AGENT_ALLOW_UNAUTHENTICATED: "true"
+    safety:
+      allow_network: true
+      cpu_quota: 1.0
+      mem_limit_mb: 4096
+      timeout_s: 900
+    bootstrap_cmds:
+      - [python, -m, pip, install, mcp]
+  trajectory_sandbox:
+    sandbox_id: paul15-trajectory-specialist
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: scanpy-paul15
+      MCP_TRANSPORT: stdio
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 8192
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/scanpy_paul15/repos/scanpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, leidenalg, igraph, pillow, mcp]
+  critic_sandbox:
+    sandbox_id: paul15-figure-critic-v2
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_TRANSPORT: stdio
+      SPECIALIZED_AGENT_ROLE: figure_critic
+      SPECIALIZED_AGENT_ALLOW_UNAUTHENTICATED: "true"
+    safety:
+      allow_network: true
+      cpu_quota: 1.0
+      mem_limit_mb: 4096
+      timeout_s: 900
+    bootstrap_cmds:
+      - [python, -m, pip, install, mcp]
+
+blueprint:
+  task:
+    task_id: scanpy_paul15_specialized_collaboration_case
+    title: Scanpy Paul15 specialized-agent collaboration
+    description: Compose reusable paper-spec, planning, execution, and figure-critic specialists for Paul15.
+  budget:
+    max_total_usd: 12.0
+    max_total_tokens: 45000
+    max_wall_time_s: 3600
+    max_tool_calls: 8
+    max_container_starts: 10
+
+executor:
+  artifact_root: .agentcoop_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

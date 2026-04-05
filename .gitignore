@@ -214,7 +214,7 @@ runs/
 /benchmarks/
 *.out
 output/
-.dynaforge_sandboxes/
+.agentcoop_sandboxes/
 tmp/
 runs-current-benchmark/
 runs-benchmark-refresh/

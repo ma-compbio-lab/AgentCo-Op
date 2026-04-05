@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dynaforge"
+name = "agentcoop"
 version = "0.1.0"
-description = "Dynamic-by-construction workflow compiler/runtime for open-world agentic research automation."
+description = "Skill-driven workflow compiler/runtime for specialized agent collaboration."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-dynaforge-run = "dynaforge.cli:main"
-dynaforge-exp = "dynaforge.experiment_cli:main"
+agentcoop-run = "agentcoop.cli:main"
+agentcoop-exp = "agentcoop.experiment_cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -41,7 +41,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-dynaforge = ["conf/**/*.yaml", "skills/**/*.md"]
+agentcoop = ["conf/**/*.yaml", "skills/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

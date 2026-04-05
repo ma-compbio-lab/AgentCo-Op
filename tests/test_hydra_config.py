@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dynaforge.config import (
+from agentcoop.config import (
     build_blueprint_from_config,
     build_executor_from_config,
     load_hydra_config,
     run_configured_experiment,
 )
 from hydra import compose, initialize_config_dir
-from dynaforge.runtime.executor import BlueprintExecutor
-from dynaforge.runtime.llm import LLMRouter
+from agentcoop.runtime.executor import BlueprintExecutor
+from agentcoop.runtime.llm import LLMRouter
 
 
 class StubLLMClient:
@@ -141,7 +141,7 @@ def test_generic_repo_transfer_smoke_config_uses_compiled_generic_runner() -> No
     assert blueprint.meta["workflow_pattern"] == "repo_transfer_validate"
     assert blueprint.meta["compile_trace"]["selected_pattern"] == "repo_transfer_validate"
     assert blueprint.node_map()["repo_runner"].meta["direct_sandbox_handler"] is True
-    assert blueprint.node_map()["repo_runner"].meta["job_module"] == "dynaforge.case_studies.generic_repo_echo_job"
+    assert blueprint.node_map()["repo_runner"].meta["job_module"] == "agentcoop.case_studies.generic_repo_echo_job"
 
 
 def test_closed_loop_spatial_panel_design_case_compiles_generic_closed_loop_pattern() -> None:
@@ -170,8 +170,8 @@ def test_spatial_crispr_specialist_collaboration_case_compiles_generic_specialis
 
     assert config.model.name == "gpt-5"
     assert blueprint.meta["workflow_pattern"] == "specialist_assembly"
-    assert blueprint.node_map()["specialist_a"].meta["job_module"] == "dynaforge.case_studies.spatialagent_context_job"
-    assert blueprint.node_map()["specialist_b"].meta["job_module"] == "dynaforge.case_studies.biodiscovery_perturbation_job"
+    assert blueprint.node_map()["specialist_a"].meta["job_module"] == "agentcoop.case_studies.spatialagent_context_job"
+    assert blueprint.node_map()["specialist_b"].meta["job_module"] == "agentcoop.case_studies.biodiscovery_perturbation_job"
     assert blueprint.node_map()["specialist_b"].sandbox.image.startswith("conda-env:")
 
 
@@ -470,7 +470,7 @@ def test_nested_config_shape_is_still_supported() -> None:
 
 
 def test_load_hydra_config_works_when_hydra_is_already_initialized() -> None:
-    from dynaforge.config import DEFAULT_CONFIG_DIR
+    from agentcoop.config import DEFAULT_CONFIG_DIR
 
     with initialize_config_dir(
         config_dir=str(DEFAULT_CONFIG_DIR.resolve()),

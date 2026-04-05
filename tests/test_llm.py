@@ -4,8 +4,8 @@ import io
 import json
 import urllib.error
 
-from dynaforge.ir.schema import ModelProvider, ModelSpec
-from dynaforge.runtime.llm import LLMRouter, OpenAICompatibleLLMClient
+from agentcoop.ir.schema import ModelProvider, ModelSpec
+from agentcoop.runtime.llm import LLMRouter, OpenAICompatibleLLMClient
 
 
 class _FakeHTTPResponse:
@@ -182,7 +182,7 @@ def test_openai_client_retries_gpt5_reasoning_saturation_with_minimal_effort(mon
     assert payloads[0]["reasoning_effort"] == "high"
     assert payloads[1]["reasoning_effort"] == "minimal"
     assert response["content"]
-    assert response["raw"]["dynaforge_reasoning_retry"] == {"from": "high", "to": "minimal"}
+    assert response["raw"]["agentcoop_reasoning_retry"] == {"from": "high", "to": "minimal"}
 
 
 def test_normalize_output_accepts_output_underscore_aliases() -> None:

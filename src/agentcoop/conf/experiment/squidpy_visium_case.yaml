@@ -1,0 +1,66 @@
+# @package _global_
+
+benchmark:
+  kind: case_study
+  case_id: squidpy_visium_hne_spatial
+  title: Squidpy Visium H&E spatial plot reproduction
+  case_root: benchmarks/case_studies/squidpy_visium_hne
+  repo_root: external/case_studies/squidpy_spatial/repos
+  methods_excerpt: |
+    Load the public cropped Visium H&E dataset, preserve the spatial image metadata,
+    construct a spatial-neighbor graph, and render a spatial scatter plot colored by the cluster labels
+    on the tissue image. Keep the output faithful to a standard Squidpy spatial visualization.
+  target_figure_description: |
+    Produce a PNG spatial scatter plot for the cropped Visium H&E dataset with cluster labels overlaid
+    on the tissue image. The figure should show a coherent spatial layout, visible tissue background,
+    and clearly distinguishable labeled regions.
+  candidate_repos:
+    - name: squidpy
+      url: https://github.com/scverse/squidpy.git
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+  analysis_config:
+    color_by: cluster
+    shape: hex
+    library_key:
+    img: true
+    size: 1.0
+    dpi: 150
+    compute_spatial_neighbors: true
+  enable_refinement_subgraph: true
+  refinement_threshold: 8.0
+  review_model: ${model}
+  sandbox:
+    sandbox_id: squidpy-visium
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: squidpy-visium
+      MCP_TRANSPORT: stdio
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 12288
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/squidpy_spatial/repos/squidpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, pillow, mcp]
+
+blueprint:
+  task:
+    task_id: squidpy_visium_case
+    title: Squidpy Visium H&E spatial plot reproduction
+    description: Reproduce a Visium H&E spatial cluster figure from a methods excerpt using a sandboxed external repo.
+  budget:
+    max_total_usd: 10.0
+    max_total_tokens: 30000
+    max_wall_time_s: 3600
+    max_tool_calls: 6
+    max_container_starts: 4
+
+executor:
+  artifact_root: .agentcoop_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

@@ -1,4 +1,4 @@
-# DynaForge Refactor Design — 2026-04-04
+# AgentCo-Op Refactor Design — 2026-04-04
 
 ## Scope
 

@@ -49,7 +49,7 @@ fi
 
 echo "Running ${BENCHMARK_COMMAND} ${BENCHMARK_SUBSET} shard ${SHARD_INDEX}/${BENCHMARK_NUM_SHARDS} with model ${BENCHMARK_MODEL}"
 
-.venv/bin/python -m dynaforge.experiment_cli "${BENCHMARK_COMMAND}" \
+.venv/bin/python -m agentcoop.experiment_cli "${BENCHMARK_COMMAND}" \
   --experiment "${BENCHMARK_EXPERIMENT}" \
   --subset "${BENCHMARK_SUBSET}" \
   --num-shards "${BENCHMARK_NUM_SHARDS}" \

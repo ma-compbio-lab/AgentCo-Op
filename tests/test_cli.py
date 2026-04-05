@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dynaforge.cli import main
+from agentcoop.cli import main
 
 
 def test_cli_help_returns_zero(capsys) -> None:

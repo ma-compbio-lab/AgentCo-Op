@@ -112,7 +112,7 @@ fi
 echo "Running ${BENCHMARK_COMMAND} budget sweep shard ${SHARD_INDEX}/${BENCHMARK_NUM_SHARDS}"
 echo "Experiment=${BENCHMARK_EXPERIMENT} Model=${MODEL} BudgetTier=${BUDGET_TIER} BaseDir=${BASE_DIR}"
 
-.venv/bin/python -m dynaforge.experiment_cli "${BENCHMARK_COMMAND}" \
+.venv/bin/python -m agentcoop.experiment_cli "${BENCHMARK_COMMAND}" \
   --experiment "${BENCHMARK_EXPERIMENT}" \
   --subset "${BENCHMARK_SUBSET}" \
   --num-shards "${BENCHMARK_NUM_SHARDS}" \

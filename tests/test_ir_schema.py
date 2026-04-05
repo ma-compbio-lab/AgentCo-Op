@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from dynaforge.ir import (
+from agentcoop.ir import (
     EdgeSpec,
     MCPServerRef,
     ModelProvider,

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 
-from dynaforge.ir.schema import ModelProvider, ModelSpec, NodeKind, NodeSpec, TaskSpec, WorkflowBlueprint
-from dynaforge.runtime.executor import BlueprintExecutor
-from dynaforge.runtime.llm import LLMRouter, OpenAICompatibleLLMClient
-from dynaforge.runtime.reports import NodeExecutionResult
-from dynaforge.secrets import load_local_secrets
+from agentcoop.ir.schema import ModelProvider, ModelSpec, NodeKind, NodeSpec, TaskSpec, WorkflowBlueprint
+from agentcoop.runtime.executor import BlueprintExecutor
+from agentcoop.runtime.llm import LLMRouter, OpenAICompatibleLLMClient
+from agentcoop.runtime.reports import NodeExecutionResult
+from agentcoop.secrets import load_local_secrets
 
 
 def test_load_local_secrets_reads_secret_files(tmp_path, monkeypatch) -> None:

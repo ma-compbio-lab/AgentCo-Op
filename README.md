@@ -1,6 +1,6 @@
-# DynaForge
+# AgentCo-Op
 
-DynaForge is a Python implementation of a dynamic-by-construction workflow compiler/runtime for open-world agentic research automation. It is organized around four core ideas:
+AgentCo-Op is a Python implementation of a dynamic-by-construction workflow compiler/runtime for open-world agentic research automation. It is organized around four core ideas:
 
 - Dynamic topology is a first-class concept through `WorkflowBlueprint = base graph + gated subgraphs`.
 - Metric bootstrapping is explicit through hard checks, soft judges, and trace assertions.
@@ -29,27 +29,27 @@ DynaForge is a Python implementation of a dynamic-by-construction workflow compi
 
 ## Project layout
 
-- `src/dynaforge/ir/schema.py`: Typed IR and patch-plan schema.
-- `src/dynaforge/runtime/executor.py`: Workflow executor core (graph traversal, gating, repair loop).
-- `src/dynaforge/runtime/node_handlers.py`: Per-NodeKind dispatch (agent, tool, router, evaluator).
-- `src/dynaforge/runtime/execution_context.py`: `NodeExecutionContext` dataclass for handler injection.
-- `src/dynaforge/runtime/llm.py`: Live LLM router and OpenAI-compatible client.
-- `src/dynaforge/runtime/skills.py`: `SKILL.md` registry, parsing, and prompt bundle construction.
-- `src/dynaforge/runtime/tool_scout.py`: Deterministic candidate-tool ranking for discovery-enabled nodes.
-- `src/dynaforge/runtime/validation.py`: JSON Schema validation helpers.
-- `src/dynaforge/runtime/expression.py`: Constrained expression evaluator for invariants and trace checks.
-- `src/dynaforge/runtime/blame.py`: Failure classification and blame assignment.
-- `src/dynaforge/runtime/patching.py`: Deterministic patch policy and blueprint patch application.
-- `src/dynaforge/integrations/mcp_client.py`: Real MCP client manager.
-- `src/dynaforge/integrations/tool_registry.py`: Registry-wide MCP tool enumeration across blueprint servers.
-- `src/dynaforge/integrations/web_search.py`: Builtin web-search adapter and MCP server helper.
-- `src/dynaforge/integrations/web_search_server.py`: Builtin FastMCP web-search server.
-- `src/dynaforge/integrations/sandbox.py`: Docker/Repo2Run-backed sandbox runner.
-- `src/dynaforge/config.py`: Hydra config loading and experiment execution helpers.
-- `src/dynaforge/benchmarks/`: Benchmark runner package (`BenchmarkRunner`, `MathRunner`, `HumanEvalRunner`).
-- `src/dynaforge/cli.py`: CLI entrypoint for composed Hydra runs.
-- `src/dynaforge/conf/`: Default YAML config groups for models and experiments.
-- `src/dynaforge/integrations/mcp_wrapper.py`: FastMCP wrapper template.
+- `src/agentcoop/ir/schema.py`: Typed IR and patch-plan schema.
+- `src/agentcoop/runtime/executor.py`: Workflow executor core (graph traversal, gating, repair loop).
+- `src/agentcoop/runtime/node_handlers.py`: Per-NodeKind dispatch (agent, tool, router, evaluator).
+- `src/agentcoop/runtime/execution_context.py`: `NodeExecutionContext` dataclass for handler injection.
+- `src/agentcoop/runtime/llm.py`: Live LLM router and OpenAI-compatible client.
+- `src/agentcoop/runtime/skills.py`: `SKILL.md` registry, parsing, and prompt bundle construction.
+- `src/agentcoop/runtime/tool_scout.py`: Deterministic candidate-tool ranking for discovery-enabled nodes.
+- `src/agentcoop/runtime/validation.py`: JSON Schema validation helpers.
+- `src/agentcoop/runtime/expression.py`: Constrained expression evaluator for invariants and trace checks.
+- `src/agentcoop/runtime/blame.py`: Failure classification and blame assignment.
+- `src/agentcoop/runtime/patching.py`: Deterministic patch policy and blueprint patch application.
+- `src/agentcoop/integrations/mcp_client.py`: Real MCP client manager.
+- `src/agentcoop/integrations/tool_registry.py`: Registry-wide MCP tool enumeration across blueprint servers.
+- `src/agentcoop/integrations/web_search.py`: Builtin web-search adapter and MCP server helper.
+- `src/agentcoop/integrations/web_search_server.py`: Builtin FastMCP web-search server.
+- `src/agentcoop/integrations/sandbox.py`: Docker/Repo2Run-backed sandbox runner.
+- `src/agentcoop/config.py`: Hydra config loading and experiment execution helpers.
+- `src/agentcoop/benchmarks/`: Benchmark runner package (`BenchmarkRunner`, `MathRunner`, `HumanEvalRunner`).
+- `src/agentcoop/cli.py`: CLI entrypoint for composed Hydra runs.
+- `src/agentcoop/conf/`: Default YAML config groups for models and experiments.
+- `src/agentcoop/integrations/mcp_wrapper.py`: FastMCP wrapper template.
 - `templates/mcp/server.py`: Drop-in server template for containerized agents.
 - `examples/minimal_blueprint.py`: Minimal end-to-end example.
 - `examples/hydra_experiment.py`: Hydra-configured example run.
@@ -65,33 +65,33 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 python examples/minimal_blueprint.py
-python -m dynaforge.cli
+python -m agentcoop.cli
 ```
 
 ## Hydra configuration
 
 The repository now supports Hydra-composed YAML configuration for both model selection and experiment setup.
 
-- Default configs live under `src/dynaforge/conf/`.
-- Model groups live under `src/dynaforge/conf/model/`.
-- Experiment groups live under `src/dynaforge/conf/experiment/`.
+- Default configs live under `src/agentcoop/conf/`.
+- Model groups live under `src/agentcoop/conf/model/`.
+- Experiment groups live under `src/agentcoop/conf/experiment/`.
 - You can run with overrides through the CLI, for example:
 
 ```bash
-python -m dynaforge.cli model=openai_gpt41
-python -m dynaforge.cli experiment=minimal_repair executor.repair_enabled=true
-dynaforge-run model=local_openai_compat
+python -m agentcoop.cli model=openai_gpt41
+python -m agentcoop.cli experiment=minimal_repair executor.repair_enabled=true
+agentcoop-run model=local_openai_compat
 ```
 
 The composed config is converted into a `WorkflowBlueprint` via `build_blueprint_from_config()` and executed via `run_configured_experiment()`.
 
-Tool discovery is node-level and opt-in. A node can keep explicit `tools`, or it can enable `tool_discovery` to search the blueprint MCP registry and optionally include the builtin web-search server. A minimal discovery-oriented config is available via `experiment=minimal_tool_discovery`. The builtin web-search MCP server requires the `dynaforge[mcp]` extra at runtime.
+Tool discovery is node-level and opt-in. A node can keep explicit `tools`, or it can enable `tool_discovery` to search the blueprint MCP registry and optionally include the builtin web-search server. A minimal discovery-oriented config is available via `experiment=minimal_tool_discovery`. The builtin web-search MCP server requires the `agentcoop[mcp]` extra at runtime.
 
 Agent skills are also node-level and opt-in. LLM-backed nodes can declare `skills` that point to named or explicit-path `SKILL.md` files. The runtime resolves those skills from, in order:
 
-- `executor.skill_search_paths` or `DYNAFORGE_SKILL_PATHS`
+- `executor.skill_search_paths` or `AGENTCOOP_SKILL_PATHS`
 - `<project-root>/skills`
-- packaged `src/dynaforge/skills`
+- packaged `src/agentcoop/skills`
 - `~/.codex/skills`
 - `~/.agents/skills`
 
@@ -107,7 +107,7 @@ MATH:
 
 ```bash
 .venv/bin/python scripts/prepare_math.py
-.venv/bin/python -m dynaforge.experiment_cli math --subset validation --model openai_gpt4o_mini
+.venv/bin/python -m agentcoop.experiment_cli math --subset validation --model openai_gpt4o_mini
 ```
 
 - Uses `EleutherAI/hendrycks_math`
@@ -128,7 +128,7 @@ HumanEval:
 
 ```bash
 .venv/bin/python scripts/prepare_humaneval.py
-.venv/bin/python -m dynaforge.experiment_cli humaneval --subset validation --model openai_gpt4o_mini
+.venv/bin/python -m agentcoop.experiment_cli humaneval --subset validation --model openai_gpt4o_mini
 ```
 
 - Uses `openai/openai_humaneval`

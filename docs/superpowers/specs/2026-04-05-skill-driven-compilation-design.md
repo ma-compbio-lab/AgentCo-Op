@@ -3,7 +3,7 @@
 ## Scope
 
 Two sub-projects:
-- **Sub-project A**: Full rename `dynaforge` → `agentcoop` (package, imports, CLI, configs, docs)
+- **Sub-project A**: Full rename `agentcoop` → `agentcoop` (package, imports, CLI, configs, docs)
 - **Sub-project B**: Skill-driven workflow compilation with two-tier skill system
 
 ## Constraints
@@ -17,21 +17,21 @@ Two sub-projects:
 
 ---
 
-## Sub-project A: Rename dynaforge → agentcoop
+## Sub-project A: Rename agentcoop → agentcoop
 
 ### Scope
 
 | What | Before | After |
 |---|---|---|
-| Python package | `src/dynaforge/` | `src/agentcoop/` |
-| All imports | `from dynaforge.X` | `from agentcoop.X` |
-| CLI: workflow runner | `dynaforge-run` | `agentcoop-run` |
-| CLI: experiments | `dynaforge-exp` | `agentcoop-exp` |
+| Python package | `src/agentcoop/` | `src/agentcoop/` |
+| All imports | `from agentcoop.X` | `from agentcoop.X` |
+| CLI: workflow runner | `agentcoop-run` | `agentcoop-run` |
+| CLI: experiments | `agentcoop-exp` | `agentcoop-exp` |
 | CLI: new | — | `agentcoop-bootstrap-skills` |
-| Config dir | `src/dynaforge/conf/` | `src/agentcoop/conf/` |
+| Config dir | `src/agentcoop/conf/` | `src/agentcoop/conf/` |
 | Env var | `DYNAFORGE_SKILL_PATHS` | `AGENTCOOP_SKILL_PATHS` |
-| Artifacts | `.dynaforge_artifacts` | `.agentcoop_artifacts` |
-| pyproject.toml name | `dynaforge` | `agentcoop` |
+| Artifacts | `.agentcoop_artifacts` | `.agentcoop_artifacts` |
+| pyproject.toml name | `agentcoop` | `agentcoop` |
 
 Done as a single dedicated commit before any feature work.
 
@@ -290,7 +290,7 @@ Each agent's tool allowlist = intersection of its assigned skills' `allowed_tool
 
 | Commit | Scope |
 |---|---|
-| `[refactor] rename dynaforge to agentcoop` | Sub-project A |
+| `[refactor] rename agentcoop to agentcoop` | Sub-project A |
 | `[feat] extend SKILL.md format with type, tags, roles, edges` | Schema + parsing |
 | `[feat] add SkillLibrary with BM25 search over agent-skills and meta-skills` | Library + indexing |
 | `[feat] add SkillBootstrapper and agentcoop-bootstrap-skills CLI` | Pattern → meta-skill codegen |

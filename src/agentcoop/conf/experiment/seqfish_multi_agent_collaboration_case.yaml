@@ -1,0 +1,104 @@
+# @package _global_
+
+benchmark:
+  kind: case_study
+  case_id: seqfish_multi_agent_collaboration
+  title: seqFISH multi-specialized-agent collaboration
+  case_root: benchmarks/case_studies/seqfish_multi_agent_collaboration_v1
+  repo_root: external/case_studies/visium_multi_agent/repos
+  methods_excerpt: |
+    Load the public seqFISH dataset. First run a Scanpy-style gene-expression workflow to normalize counts,
+    select highly variable genes, build a PCA/neighborhood graph, cluster cells, and summarize marker genes.
+    Then pass the annotated data to a Squidpy-style spatial workflow that constructs a spatial-neighbor graph
+    and computes neighborhood enrichment across the learned clusters.
+  target_figure_description: |
+    Produce a collaboration-style figure package consisting of a Scanpy cluster UMAP, a Scanpy marker heatmap,
+    a Squidpy seqFISH spatial plot, and a Squidpy neighborhood-enrichment heatmap, along with structured
+    clustering and interaction summaries.
+  candidate_repos:
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+    - name: scanpy-tutorials
+      url: https://github.com/scverse/scanpy-tutorials.git
+    - name: squidpy
+      url: https://github.com/scverse/squidpy.git
+  planner_mode: fixed
+  cluster_analysis_config:
+    dataset_id: seqfish
+    target_sum: 10000.0
+    n_top_genes: 2000
+    n_neighbors: 10
+    n_pcs: 30
+    resolution: 0.6
+    max_scale_value: 10.0
+    seed: 0
+    cluster_key: scanpy_leiden
+    dpi: 150
+    marker_top_n: 3
+    marker_cluster_limit: 6
+  interaction_analysis_config:
+    dataset_id: seqfish
+    cluster_key: scanpy_leiden
+    dpi: 150
+    compute_spatial_neighbors: true
+    compute_nhood_enrichment: true
+    nhood_top_n: 5
+    linkage_method: ward
+    cmap: coolwarm
+    seed: 0
+  review_model: ${model}
+  scanpy_sandbox:
+    sandbox_id: seqfish-scanpy-cluster-v1
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: scanpy-visium-cluster
+      MCP_TRANSPORT: stdio
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 8192
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/visium_multi_agent/repos/scanpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, leidenalg, igraph, pillow, mcp]
+  squidpy_sandbox:
+    sandbox_id: seqfish-squidpy-interactions-v1
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: squidpy-visium-interactions
+      MCP_TRANSPORT: stdio
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 12288
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/visium_multi_agent/repos/squidpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, pillow, mcp, leidenalg, igraph]
+
+blueprint:
+  task:
+    task_id: seqfish_multi_agent_collaboration_case
+    title: seqFISH multi-specialized-agent collaboration
+    description: Run specialized Scanpy and Squidpy agents in separate sandboxes and compare against a shared reference summary on seqFISH.
+  budget:
+    max_total_usd: 12.0
+    max_total_tokens: 24000
+    max_wall_time_s: 3600
+    max_tool_calls: 4
+    max_container_starts: 6
+
+executor:
+  artifact_root: .agentcoop_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

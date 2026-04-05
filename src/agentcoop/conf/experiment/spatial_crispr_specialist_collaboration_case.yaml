@@ -1,0 +1,199 @@
+# @package _global_
+
+defaults:
+  - override /model: openai_gpt5_thinking
+
+benchmark:
+  kind: case_study
+  runner_mode: compiled_generic
+  case_id: spatial_crispr_specialist_collaboration
+  title: Spatially Grounded CRISPR Design via Specialized-Agent Collaboration
+  case_root: benchmarks/case_studies/spatial_crispr_specialist_collaboration
+  repo_root: external/case_studies/spatial_crispr_collaboration/repos
+  methods_excerpt: experiment3-3.md
+  target_figure_description: |
+    Build and run SpatialAgent and BioDiscoveryAgent in separate sandboxes, route a breast-cancer spatial case to
+    the most plausible immune-reactivation objective, then generate a ranked CRISPR perturbation batch and a collaboration report.
+  task_notes: |
+    This first real collaboration run uses the lightweight packaged 10x breast-cancer Visium input and routes to one of
+    {Carnevale22_Adenosine, IFNG, IL2, Steinhart}. The hidden evaluation label is stored outside task hints.
+  candidate_repos:
+    - name: SpatialAgent
+      path: external/case_studies/spatial_crispr_collaboration/repos/SpatialAgent
+    - name: BioDiscoveryAgent
+      path: external/case_studies/spatial_crispr_collaboration/repos/BioDiscoveryAgent
+  hidden_assets:
+    expected_routed_objective: Carnevale22_Adenosine
+  input_assets:
+    public_data_bundle: tenx_visium_breast_cancer
+    biodiscovery_repo_path: external/case_studies/spatial_crispr_collaboration/repos/BioDiscoveryAgent
+    spatialagent:
+      model: gpt-5
+    biodiscovery:
+      model: gpt-5
+      task: perturb-genes-brief
+      steps: 3
+      num_genes: 32
+  expected_outputs:
+    - spatial_context_report.json
+    - routed_objective.json
+    - ranked_gene_batch.tsv
+    - revised_ranked_gene_batch.tsv
+    - hitrate_eval.json
+    - spatial_grounding_scores.tsv
+    - collaboration_gain.json
+    - suppressive_niche_map.png
+    - objective_rationale_figure.png
+  output_contract:
+    must_include:
+      - spatial_context_report_path
+      - routed_objective_path
+      - ranked_gene_batch_path
+      - revised_ranked_gene_batch_path
+      - hitrate_eval_path
+      - spatial_grounding_scores_path
+      - collaboration_gain_path
+
+workflow_design:
+  enabled: true
+  mode: pattern_then_synthesize
+  preferred_pattern: specialist_assembly
+  task_profile:
+    domain: specialist_collaboration
+    answer_mode: artifact_bundle
+    complexity: high
+    requires_repo_search: true
+    requires_web_research: true
+    requires_specialists: true
+    requires_artifact_validation: true
+    preferred_review_style: gate
+    expected_artifacts:
+      - spatial_context_report.json
+      - ranked_gene_batch.tsv
+      - hitrate_eval.json
+  runtime_expansion:
+    enabled: true
+    max_expansions: 2
+  pattern_overrides:
+    specialist_assembly:
+      router_system_prompt: |
+        You are routing a multi-specialist scientific task.
+        Select specialist repos and define the handoff contract. Return strict JSON with:
+        - output.selected_specialists
+        - output.handoff_contract
+        - output.summary
+        Prefer SpatialAgent for spatial-context routing and BioDiscoveryAgent for perturbation design when those repos are available.
+      integrator_system_prompt: |
+        Integrate the specialist outputs into one coherent CRISPR-screen proposal.
+        Return strict JSON with:
+        - output.integrated_result
+        - output.handoff_summary
+        - output.requires_specialist_repair
+      reviewer_system_prompt: |
+        Review the collaboration result. Return strict JSON with:
+        - output.overall_verdict
+        - output.artifact_completeness
+        - output.should_refine
+        - output.concerns
+        Critique missing specialist evidence, weak handoff logic, or unsupported objective routing.
+      repair_system_prompt: |
+        Repair the specialist plan after review. Return strict JSON with:
+        - output.selected_specialists
+        - output.handoff_contract
+        - output.summary
+      tool_nodes:
+        specialist_a:
+          role: SpatialContextSpecialist
+          description: Run SpatialAgent-backed spatial context analysis and objective routing.
+          sandbox:
+            sandbox_id: spatialagent-context
+            backend: local_venv
+            image: python:3.13
+            workdir: repo
+            safety:
+              allow_network: true
+              cpu_quota: 2.0
+              mem_limit_mb: 16384
+              timeout_s: 7200
+            repo2run:
+              source: external/case_studies/spatial_crispr_collaboration/repos/SpatialAgent
+              build_cmd:
+                - python
+                - -m
+                - pip
+                - install
+                - langchain>=1.0,<2.0
+                - langchain-core>=1.0,<2.0
+                - langchain-openai>=0.3,<1.0
+                - langgraph>=1.0,<2.0
+                - langgraph-checkpoint>=2.0,<3.0
+                - langsmith>=0.3.45,<1.0
+                - openai
+                - scanpy>=1.10,<2.0
+                - anndata>=0.11
+                - numpy>=2.0,<2.2
+                - pandas>=2.2,<3.0
+                - scipy>=1.14,<2.0
+                - scikit-learn>=1.5,<2.0
+                - matplotlib>=3.9,<4.0
+                - seaborn>=0.13,<0.14
+                - pillow
+                - pydantic>=2.8,<3.0
+                - rich
+                - leidenalg<0.11
+                - igraph
+          io:
+            output_schema:
+              type: object
+              required: [selected_repo, selected_specialists, spatial_context_report_path, routed_objective_path, routed_objective, summary]
+          meta:
+            direct_sandbox_handler: true
+            job_module: agentcoop.case_studies.spatialagent_context_job
+        specialist_b:
+          role: PerturbationDesignSpecialist
+          description: Run BioDiscoveryAgent on the routed perturbation objective.
+          sandbox:
+            sandbox_id: biodiscovery-perturbation-v2
+            backend: local_venv
+            image: conda-env:/home/shuaikes/miniconda3/envs/agent
+            workdir: repo
+            safety:
+              allow_network: true
+              cpu_quota: 2.0
+              mem_limit_mb: 16384
+              timeout_s: 7200
+            repo2run:
+              source: external/case_studies/spatial_crispr_collaboration/repos/BioDiscoveryAgent
+              build_cmd:
+                - python
+                - -m
+                - pip
+                - install
+                - beautifulsoup4
+                - anndata>=0.11
+                - scanpy>=1.10,<2.0
+                - h5py
+          io:
+            output_schema:
+              type: object
+              required: [selected_repo, selected_specialists, ranked_gene_batch_path, revised_ranked_gene_batch_path, hitrate_eval_path, spatial_grounding_scores_path, collaboration_gain_path, predicted_genes, summary]
+          meta:
+            direct_sandbox_handler: true
+            job_module: agentcoop.case_studies.biodiscovery_perturbation_job
+
+blueprint:
+  task:
+    task_id: spatial_crispr_specialist_collaboration
+    title: Spatially Grounded CRISPR Design
+    description: Reuse two specialized repositories in separate sandboxes to route a tumor-context objective and design perturbations.
+  budget:
+    max_total_usd: 25.0
+    max_total_tokens: 80000
+    max_wall_time_s: 14400
+    max_tool_calls: 4
+    max_container_starts: 4
+
+executor:
+  artifact_root: .agentcoop_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

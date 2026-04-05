@@ -22,7 +22,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from dynaforge.benchmarks import grade_math_prediction
+from agentcoop.benchmarks import grade_math_prediction
 
 OUTPUT_DIR = REPO_ROOT / "output" / "reports"
 FIGURES_DIR = OUTPUT_DIR / "figures"

@@ -1,10 +1,10 @@
 import pytest
 
-from dynaforge.workflows.synthesis.component_library import ComponentLibrary, ComponentSpec
-from dynaforge.workflows.synthesis.searcher import ComponentSearcher
-from dynaforge.workflows.synthesis.validator import BlueprintValidator, BlueprintValidationError
-from dynaforge.workflows.design import TaskProfile
-from dynaforge.ir.schema import (
+from agentcoop.workflows.synthesis.component_library import ComponentLibrary, ComponentSpec
+from agentcoop.workflows.synthesis.searcher import ComponentSearcher
+from agentcoop.workflows.synthesis.validator import BlueprintValidator, BlueprintValidationError
+from agentcoop.workflows.design import TaskProfile
+from agentcoop.ir.schema import (
     WorkflowBlueprint, TaskSpec, BudgetSpec, NodeSpec, NodeKind, EdgeSpec, ModelSpec, IOContract,
 )
 
@@ -101,14 +101,14 @@ def test_validator_detects_cycle():
 # ---- WorkflowCompiler integration tests ----
 
 from unittest.mock import MagicMock
-from dynaforge.workflows.compiler import WorkflowCompiler
-from dynaforge.workflows.design import BlueprintCompilerConfig, TaskProfile, GraphSynthesisSpec
+from agentcoop.workflows.compiler import WorkflowCompiler
+from agentcoop.workflows.design import BlueprintCompilerConfig, TaskProfile, GraphSynthesisSpec
 
 
 def test_compiler_uses_synthesis_when_selected(monkeypatch):
     """WorkflowCompiler calls SynthesisAssembler when synthesis is selected."""
-    from dynaforge.workflows.synthesis.assembler import SynthesisAssembler
-    from dynaforge.workflows.synthesis.validator import BlueprintValidator
+    from agentcoop.workflows.synthesis.assembler import SynthesisAssembler
+    from agentcoop.workflows.synthesis.validator import BlueprintValidator
 
     cfg = BlueprintCompilerConfig(
         enabled=True,

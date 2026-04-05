@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**DynaForge** is a dynamic-by-construction workflow compiler/runtime for multi-agent research automation. It compiles declarative `WorkflowBlueprint` IR into executable agent graphs with dynamic topology, metric bootstrapping, containerized agent reuse, and causal credit assignment.
+**AgentCo-Op** is a dynamic-by-construction workflow compiler/runtime for multi-agent research automation. It compiles declarative `WorkflowBlueprint` IR into executable agent graphs with dynamic topology, metric bootstrapping, containerized agent reuse, and causal credit assignment.
 
 ## Commands
 
@@ -26,14 +26,14 @@ pytest tests/test_runtime.py
 pytest tests/test_runtime.py::test_function_name -v
 
 # Run the workflow CLI
-dynaforge-run model=openai_gpt41_mini experiment=minimal
+agentcoop-run model=openai_gpt41_mini experiment=minimal
 
 # Run with overrides
-dynaforge-run model=openai_gpt41 experiment=minimal_repair executor.repair_enabled=true
+agentcoop-run model=openai_gpt41 experiment=minimal_repair executor.repair_enabled=true
 
 # Run benchmarks
-dynaforge-exp math run --model openai_gpt41_mini
-dynaforge-exp humaneval run --model openai_gpt41_mini
+agentcoop-exp math run --model openai_gpt41_mini
+agentcoop-exp humaneval run --model openai_gpt41_mini
 
 # Run minimal example
 python examples/minimal_blueprint.py
@@ -43,7 +43,7 @@ python examples/minimal_blueprint.py
 
 ### Core Abstraction: WorkflowBlueprint
 
-The central IR unit is `WorkflowBlueprint` (defined in `src/dynaforge/ir/schema.py`). A blueprint contains:
+The central IR unit is `WorkflowBlueprint` (defined in `src/agentcoop/ir/schema.py`). A blueprint contains:
 - `base_nodes / base_edges` — the primary directed execution graph
 - `subgraphs` — conditional branches that can be activated/deactivated at runtime
 - `gates` — trigger conditions (`TriggerExpr`) that activate/deactivate subgraphs based on execution state
@@ -98,16 +98,16 @@ Defined in `ir/schema.py` as `NodeKind` enum: `agent`, `tool`, `router`, `evalua
 
 ### Configuration (Hydra)
 
-Configs live in `src/dynaforge/conf/`. The composition structure is:
+Configs live in `src/agentcoop/conf/`. The composition structure is:
 
 ```
 config.yaml (root)
   └── defaults:
-        - model: openai_gpt41_mini      # src/dynaforge/conf/model/
-        - experiment: minimal           # src/dynaforge/conf/experiment/
+        - model: openai_gpt41_mini      # src/agentcoop/conf/model/
+        - experiment: minimal           # src/agentcoop/conf/experiment/
 ```
 
-Override on CLI: `dynaforge-run model=openai_gpt5 experiment=math_v2`
+Override on CLI: `agentcoop-run model=openai_gpt5 experiment=math_v2`
 
 Key executor settings (in `config.yaml`):
 - `executor.artifact_root` — where reports and artifacts are written
@@ -126,13 +126,13 @@ Falls back to the existing pattern-based builder on synthesis failure.
 
 ### Benchmarks
 
-Benchmark runners live in `src/dynaforge/benchmarks/`:
+Benchmark runners live in `src/agentcoop/benchmarks/`:
 - `BenchmarkRunner` — abstract base with shared loop, parallel execution via `ProcessPoolExecutor`
 - `MathRunner` — MATH benchmark (EleutherAI/hendrycks_math, AFlow-aligned split)
 - `HumanEvalRunner` — HumanEval benchmark (OpenAI official dataset)
 
-Use `dynaforge-exp <benchmark> run` for execution and `dynaforge-exp <benchmark>-aggregate` for result aggregation across runs. Reports are gzip-compressed (`.report.json.gz`).
+Use `agentcoop-exp <benchmark> run` for execution and `agentcoop-exp <benchmark>-aggregate` for result aggregation across runs. Reports are gzip-compressed (`.report.json.gz`).
 
 ### Case Studies
 
-Domain-specific workflows are in `src/dynaforge/case_studies/`. Each is a standalone job file that constructs and runs a `WorkflowBlueprint` for a specific research task.
+Domain-specific workflows are in `src/agentcoop/case_studies/`. Each is a standalone job file that constructs and runs a `WorkflowBlueprint` for a specific research task.

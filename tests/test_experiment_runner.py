@@ -5,8 +5,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-from dynaforge.experiment_cli import main as experiment_main
-from dynaforge.experiment_runner import (
+from agentcoop.experiment_cli import main as experiment_main
+from agentcoop.experiment_runner import (
     RunRecorder,
     _apply_shard,
     _build_generic_case_study_blueprint,
@@ -30,10 +30,10 @@ from dynaforge.experiment_runner import (
     build_humaneval_task_blueprint,
     build_math_task_blueprint,
 )
-from dynaforge.benchmarks import prepare_case_study_assets
-from dynaforge.config import build_blueprint_from_config, build_executor_from_config, load_hydra_config, resolve_hydra_config
-from dynaforge.ir.schema import FailureType, NodeSpec, SandboxSpec
-from dynaforge.runtime.reports import ExecutionCost, ExecutionReport, NodeExecutionResult
+from agentcoop.benchmarks import prepare_case_study_assets
+from agentcoop.config import build_blueprint_from_config, build_executor_from_config, load_hydra_config, resolve_hydra_config
+from agentcoop.ir.schema import FailureType, NodeSpec, SandboxSpec
+from agentcoop.runtime.reports import ExecutionCost, ExecutionReport, NodeExecutionResult
 
 
 def test_apply_shard_slices_index_list() -> None:
@@ -208,13 +208,13 @@ def test_build_math_task_blueprint_enables_challenger_solver() -> None:
 def test_experiment_cli_parses_math_arguments(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr("dynaforge.experiment_cli.load_hydra_config", lambda overrides: {"ok": True})
+    monkeypatch.setattr("agentcoop.experiment_cli.load_hydra_config", lambda overrides: {"ok": True})
 
     def fake_run(config, **kwargs):
         captured.update(kwargs)
         return {"task_count": 3}
 
-    monkeypatch.setattr("dynaforge.experiment_cli.run_math_experiment", fake_run)
+    monkeypatch.setattr("agentcoop.experiment_cli.run_math_experiment", fake_run)
 
     exit_code = experiment_main(["math", "--subset", "test", "--task-ids", "a,b", "--num-shards", "4", "--shard-index", "2"])
 
@@ -228,13 +228,13 @@ def test_experiment_cli_parses_math_arguments(monkeypatch) -> None:
 def test_experiment_cli_parses_humaneval_arguments(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr("dynaforge.experiment_cli.load_hydra_config", lambda overrides: {"ok": True})
+    monkeypatch.setattr("agentcoop.experiment_cli.load_hydra_config", lambda overrides: {"ok": True})
 
     def fake_run(config, **kwargs):
         captured.update(kwargs)
         return {"task_count": 2}
 
-    monkeypatch.setattr("dynaforge.experiment_cli.run_humaneval_experiment", fake_run)
+    monkeypatch.setattr("agentcoop.experiment_cli.run_humaneval_experiment", fake_run)
 
     exit_code = experiment_main(["humaneval", "--subset", "validation", "--resume-run-dir", "/tmp/he-run"])
 
@@ -244,13 +244,13 @@ def test_experiment_cli_parses_humaneval_arguments(monkeypatch) -> None:
 
 
 def test_experiment_cli_runs_math_aggregate(monkeypatch) -> None:
-    monkeypatch.setattr("dynaforge.experiment_cli.aggregate_math_runs", lambda run_dirs, base_dir: {"task_count": 2})
+    monkeypatch.setattr("agentcoop.experiment_cli.aggregate_math_runs", lambda run_dirs, base_dir: {"task_count": 2})
     exit_code = experiment_main(["math-aggregate", "/tmp/run-a", "/tmp/run-b"])
     assert exit_code == 0
 
 
 def test_experiment_cli_runs_humaneval_aggregate(monkeypatch) -> None:
-    monkeypatch.setattr("dynaforge.experiment_cli.aggregate_humaneval_runs", lambda run_dirs, base_dir: {"task_count": 2})
+    monkeypatch.setattr("agentcoop.experiment_cli.aggregate_humaneval_runs", lambda run_dirs, base_dir: {"task_count": 2})
     exit_code = experiment_main(["humaneval-aggregate", "/tmp/run-a", "/tmp/run-b"])
     assert exit_code == 0
 
@@ -454,7 +454,7 @@ def test_aggregate_humaneval_repeats_averages_repeat_summaries(tmp_path) -> None
 
 
 def test_build_math_task_blueprint_does_not_leak_gold_answer() -> None:
-    from dynaforge.config import load_hydra_config, build_blueprint_from_config
+    from agentcoop.config import load_hydra_config, build_blueprint_from_config
 
     config = load_hydra_config(overrides=["experiment=math_v2", "model=openai_gpt4o_mini"])
     blueprint = build_blueprint_from_config(config)
@@ -521,7 +521,7 @@ def test_humaneval_public_test_handler_runs_assertions() -> None:
 
 
 def test_build_math_and_humaneval_handlers_detect_v2_nodes() -> None:
-    from dynaforge.config import load_hydra_config, build_blueprint_from_config
+    from agentcoop.config import load_hydra_config, build_blueprint_from_config
 
     math_config = load_hydra_config(overrides=["experiment=math_v2", "model=openai_gpt4o_mini"])
     math_blueprint = build_blueprint_from_config(math_config)
@@ -620,7 +620,7 @@ def test_case_planner_drops_runtime_only_analysis_keys() -> None:
 
 
 def test_scanpy_paul15_planner_can_run_in_fixed_mode() -> None:
-    from dynaforge.experiment_runner import _scanpy_paul15_planner_handler
+    from agentcoop.experiment_runner import _scanpy_paul15_planner_handler
 
     node = NodeSpec.model_validate(
         {
@@ -652,7 +652,7 @@ def test_scanpy_paul15_planner_can_run_in_fixed_mode() -> None:
 
 
 def test_squidpy_planner_can_run_in_fixed_mode() -> None:
-    from dynaforge.experiment_runner import _squidpy_planner_handler
+    from agentcoop.experiment_runner import _squidpy_planner_handler
 
     node = NodeSpec.model_validate(
         {
@@ -685,7 +685,7 @@ def test_squidpy_planner_can_run_in_fixed_mode() -> None:
 
 
 def test_visium_multi_agent_planner_can_run_in_fixed_mode() -> None:
-    from dynaforge.experiment_runner import _visium_multi_agent_planner_handler
+    from agentcoop.experiment_runner import _visium_multi_agent_planner_handler
 
     node = NodeSpec.model_validate(
         {

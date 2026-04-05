@@ -12,7 +12,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from dynaforge.experiment_runner import (
+from agentcoop.experiment_runner import (
     aggregate_humaneval_runs,
     aggregate_math_runs,
 )

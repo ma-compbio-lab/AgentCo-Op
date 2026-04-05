@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from dynaforge.benchmarks import prepare_math_dataset
-from dynaforge.config import load_hydra_config
+from agentcoop.benchmarks import prepare_math_dataset
+from agentcoop.config import load_hydra_config
 
 
 def main() -> int:

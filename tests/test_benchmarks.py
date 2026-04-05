@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from dynaforge.benchmarks import (
+from agentcoop.benchmarks import (
     _ensure_huggingface_cache_is_writable,
     grade_humaneval_prediction,
     grade_math_prediction,
@@ -16,7 +16,7 @@ from dynaforge.benchmarks import (
     prepare_math_dataset,
     run_humaneval_public_tests,
 )
-from dynaforge.case_studies.legacy_registry import legacy_case_default_run_name, legacy_case_family
+from agentcoop.case_studies.legacy_registry import legacy_case_default_run_name, legacy_case_family
 
 
 class _FakeDatasetsModule:
@@ -110,8 +110,8 @@ def test_ensure_huggingface_cache_falls_back_to_project_cache(monkeypatch, tmp_p
     monkeypatch.delenv("HF_DATASETS_CACHE", raising=False)
     monkeypatch.delenv("HF_MODULES_CACHE", raising=False)
     monkeypatch.delenv("HUGGINGFACE_HUB_CACHE", raising=False)
-    monkeypatch.setattr("dynaforge.benchmarks.Path.home", lambda: tmp_path / "readonly-home")
-    monkeypatch.setattr("dynaforge.benchmarks._path_is_writable", lambda path: False)
+    monkeypatch.setattr("agentcoop.benchmarks.Path.home", lambda: tmp_path / "readonly-home")
+    monkeypatch.setattr("agentcoop.benchmarks._path_is_writable", lambda path: False)
 
     _ensure_huggingface_cache_is_writable()
 
@@ -136,7 +136,7 @@ def test_probe_humaneval_call_returns_actual_repr() -> None:
 
 
 def test_prepare_math_dataset_writes_processed_records(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("dynaforge.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
+    monkeypatch.setattr("agentcoop.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
 
     manifest = prepare_math_dataset(
         {
@@ -163,7 +163,7 @@ def test_prepare_math_dataset_writes_processed_records(monkeypatch, tmp_path) ->
 
 
 def test_prepare_humaneval_dataset_writes_processed_records(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("dynaforge.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
+    monkeypatch.setattr("agentcoop.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
 
     manifest = prepare_humaneval_dataset(
         {
@@ -215,11 +215,11 @@ def test_legacy_case_registry_preserves_old_case_mapping() -> None:
 
 def test_prepare_math_dataset_supports_aflow_package(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        "dynaforge.benchmarks._prepare_aflow_public_benchmark_archive",
+        "agentcoop.benchmarks._prepare_aflow_public_benchmark_archive",
         lambda settings: tmp_path / "aflow.tar.gz",
     )
     monkeypatch.setattr(
-        "dynaforge.benchmarks._prepare_math_upstream_assets",
+        "agentcoop.benchmarks._prepare_math_upstream_assets",
         lambda settings, **kwargs: {
             "manifest_path": str(tmp_path / "math_upstream_manifest.json"),
             "train_count": 0,
@@ -228,7 +228,7 @@ def test_prepare_math_dataset_supports_aflow_package(monkeypatch, tmp_path) -> N
         },
     )
     monkeypatch.setattr(
-        "dynaforge.benchmarks._read_aflow_jsonl_records",
+        "agentcoop.benchmarks._read_aflow_jsonl_records",
         lambda archive_path, member_name: (
             [{"problem": "v", "solution": "\\boxed{1}", "level": "Level 5", "type": "Prealgebra"}]
             if member_name == "math_validate.jsonl"
@@ -256,11 +256,11 @@ def test_prepare_math_dataset_supports_aflow_package(monkeypatch, tmp_path) -> N
 
 def test_prepare_humaneval_dataset_supports_aflow_package(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        "dynaforge.benchmarks._prepare_aflow_public_benchmark_archive",
+        "agentcoop.benchmarks._prepare_aflow_public_benchmark_archive",
         lambda settings: tmp_path / "aflow.tar.gz",
     )
     monkeypatch.setattr(
-        "dynaforge.benchmarks._prepare_humaneval_upstream_assets",
+        "agentcoop.benchmarks._prepare_humaneval_upstream_assets",
         lambda settings, **kwargs: {
             "manifest_path": str(tmp_path / "humaneval_upstream_manifest.json"),
             "train_count": 0,
@@ -301,7 +301,7 @@ def test_prepare_humaneval_dataset_supports_aflow_package(monkeypatch, tmp_path)
         ],
     }
     monkeypatch.setattr(
-        "dynaforge.benchmarks._read_aflow_jsonl_records",
+        "agentcoop.benchmarks._read_aflow_jsonl_records",
         lambda archive_path, member_name: records_by_member[member_name],
     )
 
@@ -357,13 +357,13 @@ def test_run_humaneval_public_tests_falls_back_to_visible_test_string() -> None:
 
 
 def test_prepare_math_dataset_restores_upstream_train_and_test(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("dynaforge.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
+    monkeypatch.setattr("agentcoop.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
     monkeypatch.setattr(
-        "dynaforge.benchmarks._prepare_aflow_public_benchmark_archive",
+        "agentcoop.benchmarks._prepare_aflow_public_benchmark_archive",
         lambda settings: tmp_path / "aflow.tar.gz",
     )
     monkeypatch.setattr(
-        "dynaforge.benchmarks._read_aflow_jsonl_records",
+        "agentcoop.benchmarks._read_aflow_jsonl_records",
         lambda archive_path, member_name: (
             [{"problem": "v", "solution": "\\boxed{1}", "level": "Level 5", "type": "Prealgebra"}]
             if member_name == "math_validate.jsonl"
@@ -395,13 +395,13 @@ def test_prepare_math_dataset_restores_upstream_train_and_test(monkeypatch, tmp_
 
 
 def test_prepare_humaneval_dataset_handles_missing_train_split(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("dynaforge.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
+    monkeypatch.setattr("agentcoop.benchmarks._import_datasets_module", lambda: _FakeDatasetsModule())
     monkeypatch.setattr(
-        "dynaforge.benchmarks._prepare_aflow_public_benchmark_archive",
+        "agentcoop.benchmarks._prepare_aflow_public_benchmark_archive",
         lambda settings: tmp_path / "aflow.tar.gz",
     )
     monkeypatch.setattr(
-        "dynaforge.benchmarks._read_aflow_jsonl_records",
+        "agentcoop.benchmarks._read_aflow_jsonl_records",
         lambda archive_path, member_name: (
             [{
                 "task_id": "HumanEval/0",

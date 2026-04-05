@@ -8,7 +8,7 @@ import urllib.parse
 import venv
 from pathlib import Path
 
-from dynaforge.ir import (
+from agentcoop.ir import (
     BudgetSpec,
     MCPServerRef,
     ModelProvider,
@@ -24,14 +24,14 @@ from dynaforge.ir import (
     ToolRef,
     WorkflowBlueprint,
 )
-from dynaforge.integrations.web_search import BUILTIN_WEB_SEARCH_SERVER, DuckDuckGoWebSearchClient
-from dynaforge.integrations.sandbox import DockerSandboxRunner, LocalVenvSandboxRunner, SandboxError
-from dynaforge.integrations.tool_registry import ToolCandidate
-from dynaforge.runtime.executor import BlueprintExecutor
-from dynaforge.runtime.llm import LLMRouter
-from dynaforge.runtime.skills import SkillRegistry
-from dynaforge.runtime.tool_scout import ToolScout
-from dynaforge.runtime.validation import validate_json_payload
+from agentcoop.integrations.web_search import BUILTIN_WEB_SEARCH_SERVER, DuckDuckGoWebSearchClient
+from agentcoop.integrations.sandbox import DockerSandboxRunner, LocalVenvSandboxRunner, SandboxError
+from agentcoop.integrations.tool_registry import ToolCandidate
+from agentcoop.runtime.executor import BlueprintExecutor
+from agentcoop.runtime.llm import LLMRouter
+from agentcoop.runtime.skills import SkillRegistry
+from agentcoop.runtime.tool_scout import ToolScout
+from agentcoop.runtime.validation import validate_json_payload
 
 
 class StubLLMClient:
@@ -556,17 +556,17 @@ def test_docker_sandbox_runner_invokes_repo2run_and_docker(monkeypatch) -> None:
         stdout = "container-123\n" if list(cmd)[:3] == ["docker", "run", "-d"] else ""
         return types.SimpleNamespace(stdout=stdout, stderr="", returncode=0)
 
-    monkeypatch.setattr("dynaforge.integrations.sandbox.subprocess.run", fake_run)
+    monkeypatch.setattr("agentcoop.integrations.sandbox.subprocess.run", fake_run)
 
     runner = DockerSandboxRunner()
     sandbox = SandboxSpec(
         sandbox_id="bio",
-        image="dynaforge:bio",
+        image="agentcoop:bio",
         cmd=["python", "server.py"],
         repo2run=Repo2RunSpec(
             source="https://example.com/repo.git",
             build_cmd=["repo2run", "https://example.com/repo.git"],
-            image_tag="dynaforge:bio",
+            image_tag="agentcoop:bio",
         ),
     )
 
@@ -585,7 +585,7 @@ def test_docker_sandbox_runner_invokes_repo2run_and_docker(monkeypatch) -> None:
     assert calls[0]["cmd"] == ["repo2run", "https://example.com/repo.git"]
     assert calls[1]["cmd"][:3] == ["docker", "run", "-d"]
     assert calls[2]["cmd"][:2] == ["docker", "exec"]
-    assert server_ref.stdio_cmd[:4] == ["docker", "exec", "-i", "dynaforge-bio"]
+    assert server_ref.stdio_cmd[:4] == ["docker", "exec", "-i", "agentcoop-bio"]
 
 
 def test_local_venv_sandbox_runner_materializes_repo_and_executes(tmp_path) -> None:
@@ -710,7 +710,7 @@ def test_local_venv_sandbox_identifies_pip_like_commands() -> None:
     assert LocalVenvSandboxRunner._is_pip_like_command(["pip", "install", "mcp"]) is True
     assert LocalVenvSandboxRunner._is_pip_like_command(["/tmp/venv/bin/pip", "install", "mcp"]) is True
     assert LocalVenvSandboxRunner._is_pip_like_command(["python", "-m", "pip", "install", "mcp"]) is True
-    assert LocalVenvSandboxRunner._is_pip_like_command(["python", "-m", "dynaforge.case_studies.scanpy_paul15_job"]) is False
+    assert LocalVenvSandboxRunner._is_pip_like_command(["python", "-m", "agentcoop.case_studies.scanpy_paul15_job"]) is False
 
 
 def test_local_venv_sandbox_supports_explicit_python_env_runtime(tmp_path) -> None:

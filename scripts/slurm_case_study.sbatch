@@ -30,7 +30,7 @@ fi
 
 echo "Running case study experiment=${EXPERIMENT} model=${MODEL} base_dir=${BASE_DIR}"
 
-.venv/bin/python -m dynaforge.experiment_cli case-study \
+.venv/bin/python -m agentcoop.experiment_cli case-study \
   --experiment "${EXPERIMENT}" \
   --base-dir "${BASE_DIR}" \
   --model "${MODEL}"

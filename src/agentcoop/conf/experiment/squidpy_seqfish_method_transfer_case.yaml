@@ -1,0 +1,72 @@
+# @package _global_
+
+benchmark:
+  kind: case_study
+  case_id: squidpy_seqfish_method_transfer
+  title: Squidpy seqFISH method transfer
+  case_root: benchmarks/case_studies/squidpy_seqfish_transfer_v1
+  repo_root: external/case_studies/squidpy_spatial/repos
+  methods_excerpt: |
+    Transfer the Visium-style Squidpy neighborhood-enrichment workflow to the public seqFISH dataset.
+    Construct a spatial-neighbor graph, compute neighborhood enrichment across the official `celltype_mapped_refined` labels,
+    and produce both a seqFISH spatial scatter plot and a neighborhood-enrichment heatmap. Keep the execution faithful to the official Squidpy seqFISH example.
+  target_figure_description: |
+    Produce a PNG seqFISH spatial scatter plot colored by `celltype_mapped_refined` and a second PNG neighborhood-enrichment heatmap.
+    The outputs should expose a structured interaction summary and preserve the expected mesoderm / endothelial neighborhood structure from the official example.
+  candidate_repos:
+    - name: squidpy
+      url: https://github.com/scverse/squidpy.git
+    - name: scanpy
+      url: https://github.com/scverse/scanpy.git
+  planner_mode: fixed
+  analysis_config:
+    dataset_id: seqfish
+    cluster_key: celltype_mapped_refined
+    dpi: 150
+    compute_spatial_neighbors: true
+    compute_nhood_enrichment: true
+    nhood_top_n: 5
+    linkage_method: ward
+    cmap: coolwarm
+    seed: 0
+  enable_refinement_subgraph: false
+  refinement_threshold: 8.0
+  review_model: ${model}
+  sandbox:
+    sandbox_id: squidpy-seqfish-transfer-v1
+    backend: local_venv
+    image: python:3.11
+    workdir: .
+    env:
+      MCP_SERVER_NAME: squidpy-visium-interactions
+      MCP_TRANSPORT: stdio
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    safety:
+      allow_network: true
+      cpu_quota: 2.0
+      mem_limit_mb: 12288
+      timeout_s: 1800
+    repo2run:
+      source: external/case_studies/squidpy_spatial/repos/squidpy
+    bootstrap_cmds:
+      - [python, -m, pip, install, pillow, mcp]
+
+blueprint:
+  task:
+    task_id: squidpy_seqfish_transfer_case
+    title: Squidpy seqFISH method transfer
+    description: Transfer a Squidpy neighborhood-enrichment workflow to seqFISH using a sandboxed external repo.
+  budget:
+    max_total_usd: 12.0
+    max_total_tokens: 24000
+    max_wall_time_s: 3600
+    max_tool_calls: 4
+    max_container_starts: 3
+
+executor:
+  artifact_root: .agentcoop_artifacts
+  allow_offline_fallback: false
+  repair_enabled: false

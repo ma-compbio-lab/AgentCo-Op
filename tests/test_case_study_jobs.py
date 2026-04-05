@@ -72,7 +72,7 @@ def test_scanpy_paul15_job_load_dataset_supports_transfer_targets() -> None:
             return data
 
     fake_scanpy = types.SimpleNamespace(datasets=_FakeDatasets())
-    module = importlib.import_module("dynaforge.case_studies.scanpy_paul15_job")
+    module = importlib.import_module("agentcoop.case_studies.scanpy_paul15_job")
 
     paul15_data, paul15_meta = module._load_dataset(fake_scanpy, "paul15")
     moignard_data, moignard_meta = module._load_dataset(fake_scanpy, "moignard15")
@@ -102,8 +102,8 @@ def test_spatial_job_loaders_support_seqfish_dataset() -> None:
             return data
 
     fake_squidpy = types.SimpleNamespace(datasets=_FakeDatasets())
-    cluster_module = importlib.import_module("dynaforge.case_studies.scanpy_visium_cluster_job")
-    interaction_module = importlib.import_module("dynaforge.case_studies.squidpy_visium_interactions_job")
+    cluster_module = importlib.import_module("agentcoop.case_studies.scanpy_visium_cluster_job")
+    interaction_module = importlib.import_module("agentcoop.case_studies.squidpy_visium_interactions_job")
 
     _, cluster_meta = cluster_module._load_dataset(fake_squidpy, "seqfish")
     _, interaction_meta = interaction_module._load_dataset(fake_squidpy, "seqfish")
@@ -116,7 +116,7 @@ def test_spatial_job_loaders_support_seqfish_dataset() -> None:
 
 
 def test_scanpy_paul15_job_stringifies_uns_keys() -> None:
-    module = importlib.import_module("dynaforge.case_studies.scanpy_paul15_job")
+    module = importlib.import_module("agentcoop.case_studies.scanpy_paul15_job")
 
     sanitized = module._stringify_uns_keys({"highlights": {0: {"gene": "Gata1"}}, "meta": [1, {2: "x"}]})
 
@@ -127,7 +127,7 @@ def test_scanpy_paul15_job_stringifies_uns_keys() -> None:
 
 
 def test_spatial_interaction_job_can_render_manual_seqfish_layout(tmp_path: Path) -> None:
-    module = importlib.import_module("dynaforge.case_studies.squidpy_visium_interactions_job")
+    module = importlib.import_module("agentcoop.case_studies.squidpy_visium_interactions_job")
     adata = _FakeAnnData()
     adata.obs["cluster"] = pd.Categorical(["A", "A", "B", "B"])
     adata.obsm["spatial"] = np.array([[0.0, 0.0], [1.0, 0.2], [0.3, 1.4], [1.1, 1.2]], dtype=float)
@@ -148,7 +148,7 @@ def test_spatial_interaction_job_can_render_manual_seqfish_layout(tmp_path: Path
 
 
 def test_spatial_panel_common_prefers_symbol_column_and_alias_matches(monkeypatch) -> None:
-    module = importlib.import_module("dynaforge.case_studies.spatial_panel_common")
+    module = importlib.import_module("agentcoop.case_studies.spatial_panel_common")
     fake_scipy = types.ModuleType("scipy")
     fake_sparse = types.ModuleType("scipy.sparse")
     fake_sparse.issparse = lambda _: False
@@ -244,7 +244,7 @@ def test_spatial_panel_common_prefers_symbol_column_and_alias_matches(monkeypatc
 
 
 def test_cell2location_reference_signature_extractor_supports_regression_mod() -> None:
-    module = importlib.import_module("dynaforge.case_studies.cell2location_transfer_job")
+    module = importlib.import_module("agentcoop.case_studies.cell2location_transfer_job")
 
     class _FakeReference:
         def __init__(self) -> None:
@@ -279,7 +279,7 @@ def test_cell2location_reference_signature_extractor_supports_regression_mod() -
 
 
 def test_cell2location_alignment_can_use_spatial_gene_ids() -> None:
-    module = importlib.import_module("dynaforge.case_studies.cell2location_transfer_job")
+    module = importlib.import_module("agentcoop.case_studies.cell2location_transfer_job")
 
     class _FakeSpatial:
         def __init__(self) -> None:
@@ -325,7 +325,7 @@ def test_cell2location_alignment_can_use_spatial_gene_ids() -> None:
 
 
 def test_cell2location_train_and_export_helpers_retry_without_use_gpu() -> None:
-    module = importlib.import_module("dynaforge.case_studies.cell2location_transfer_job")
+    module = importlib.import_module("agentcoop.case_studies.cell2location_transfer_job")
 
     class _FakeModel:
         def __init__(self) -> None:
@@ -369,21 +369,21 @@ def test_cell2location_train_and_export_helpers_retry_without_use_gpu() -> None:
 
 
 def test_spatialagent_context_job_normalizes_supported_objectives() -> None:
-    module = importlib.import_module("dynaforge.case_studies.spatialagent_context_job")
+    module = importlib.import_module("agentcoop.case_studies.spatialagent_context_job")
 
     assert module._normalize_objective("Steinhart") == "Steinhart_crispra_GD2_D22"
     assert module._normalize_objective("IFNG") == "IFNG"
 
 
 def test_biodiscovery_job_normalizes_supported_objectives() -> None:
-    module = importlib.import_module("dynaforge.case_studies.biodiscovery_perturbation_job")
+    module = importlib.import_module("agentcoop.case_studies.biodiscovery_perturbation_job")
 
     assert module._normalize_objective("Steinhart") == "Steinhart_crispra_GD2_D22"
     assert module._normalize_objective("Carnevale22_Adenosine") == "Carnevale22_Adenosine"
 
 
 def test_cell2location_render_figures_backfills_total_counts(monkeypatch, tmp_path: Path) -> None:
-    module = importlib.import_module("dynaforge.case_studies.cell2location_transfer_job")
+    module = importlib.import_module("agentcoop.case_studies.cell2location_transfer_job")
 
     class _FakeAbundance(pd.DataFrame):
         @property
@@ -436,7 +436,7 @@ def test_cell2location_render_figures_backfills_total_counts(monkeypatch, tmp_pa
 
 
 def test_biodiscovery_job_writes_runtime_shims(tmp_path: Path) -> None:
-    module = importlib.import_module("dynaforge.case_studies.biodiscovery_perturbation_job")
+    module = importlib.import_module("agentcoop.case_studies.biodiscovery_perturbation_job")
     created = module._write_runtime_shims(tmp_path)
 
     assert (tmp_path / "anthropic.py").exists()
@@ -515,7 +515,7 @@ def test_scanpy_visium_cluster_job_bootstraps_missing_raw_data(monkeypatch, tmp_
     monkeypatch.setitem(sys.modules, "scipy.sparse", fake_sparse)
     monkeypatch.setattr("importlib.metadata.version", lambda name: f"fake-{name}")
 
-    module = importlib.import_module("dynaforge.case_studies.scanpy_visium_cluster_job")
+    module = importlib.import_module("agentcoop.case_studies.scanpy_visium_cluster_job")
 
     output_dir = tmp_path / "out"
     raw_data_path = tmp_path / "data" / "visium_raw.h5ad"

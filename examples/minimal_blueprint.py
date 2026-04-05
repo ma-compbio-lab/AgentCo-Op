@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dynaforge import BlueprintExecutor
-from dynaforge.ir import (
+from agentcoop import BlueprintExecutor
+from agentcoop.ir import (
     BudgetSpec,
     EdgeSpec,
     GateSpec,
