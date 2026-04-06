@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -29,6 +29,17 @@ app.include_router(skills.router)
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.post("/api/chat")
+async def chat_endpoint(payload: dict = Body(...)):
+    task_description = payload.get("task", "")
+    if not task_description:
+        return {"error": "No task provided"}
+    return {
+        "summary": f"Chat execution is not yet connected to the workflow engine. Task received: {task_description}",
+        "status": "placeholder",
+    }
 
 
 def main() -> int:
