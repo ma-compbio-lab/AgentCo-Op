@@ -2060,7 +2060,7 @@ def _normalize_math_expression(value: str) -> str:
     stripped = stripped.replace("\\!", "")
     stripped = _replace_frac_commands(stripped)
     stripped = _replace_sqrt_commands(stripped)
-    stripped = re.sub(r"\\text\{[^{}]*\}", "", stripped)
+    stripped = re.sub(r"\\text\{([^{}]*)\}", r"\1", stripped)
     stripped = stripped.replace("\\%", "%")
     stripped = stripped.replace("\\pi", "pi").replace("π", "pi")
     stripped = stripped.replace("\\cdot", "*").replace("\\times", "*")
@@ -2113,7 +2113,7 @@ def _math_equal(prediction: Any, reference: Any) -> bool:
 def _parse_numeric_math_values(value: str) -> list[float]:
     cleaned = value.replace(",", "")
     cleaned = cleaned.replace("\\$", "").replace("$", "")
-    cleaned = re.sub(r"(degrees?|squareunits?|units?)$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(degrees?|squareunits?|units?|minutes?|hours?|seconds?|feet|inches|meters?|cm|mm|km)$", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip()
     if cleaned.endswith("%"):
         cleaned = cleaned[:-1]
