@@ -119,6 +119,18 @@ workflow_design:
 
 The compiler tries skill-driven assembly first (BM25 search over meta-skills, then per-role agent-skill assignment), falling back to the existing pattern/synthesis path if no suitable meta-skill is found.
 
+## Dashboard
+
+AgentCo-Op includes a web dashboard for visualizing workflow topology, execution logs, and benchmark metrics.
+
+```bash
+pip install -e ".[dashboard]"
+agentcoop-dashboard
+# Open http://localhost:3000
+```
+
+Features: interactive topology graph (React Flow), filterable execution logs, metric cards, skill library browser, chat interface for interactive workflow execution.
+
 ## Benchmark setup
 
 The repository now includes reproducible helpers for the active benchmark tracks.

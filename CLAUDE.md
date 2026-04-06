@@ -34,6 +34,10 @@ agentcoop-run model=openai_gpt41 experiment=minimal_repair executor.repair_enabl
 # Bootstrap meta-skills from existing patterns
 agentcoop-bootstrap-skills
 
+# Start the web dashboard
+pip install -e ".[dashboard]"
+agentcoop-dashboard
+
 # Run benchmarks
 agentcoop-exp math run --model openai_gpt41_mini
 agentcoop-exp humaneval run --model openai_gpt41_mini
