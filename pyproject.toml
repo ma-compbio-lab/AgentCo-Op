@@ -19,6 +19,7 @@ dependencies = [
 agentcoop-run = "agentcoop.cli:main"
 agentcoop-exp = "agentcoop.experiment_cli:main"
 agentcoop-bootstrap-skills = "agentcoop.bootstrap_cli:main"
+agentcoop-dashboard = "dashboard.backend.server:main"
 
 [project.optional-dependencies]
 dev = [
@@ -34,12 +35,18 @@ benchmarks = [
 mcp = [
   "mcp[cli]>=1.0.0",
 ]
+dashboard = [
+  "fastapi>=0.110,<1",
+  "uvicorn>=0.29,<1",
+  "websockets>=12,<14",
+]
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"" = "src", "dashboard" = "dashboard"}
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["agentcoop*", "dashboard*"]
 
 [tool.setuptools.package-data]
 agentcoop = ["conf/**/*.yaml", "skills/**/*.md"]
