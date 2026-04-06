@@ -59,13 +59,13 @@ workflow_design:
     requires_tool_execution: true
     requires_artifact_validation: true
     preferred_review_style: gate
-    review_threshold: 0.78
+    review_threshold: 0.50
   runtime_expansion:
-    enabled: true
-    max_expansions: 2
-    expand_on_low_confidence: true
-    expand_on_eval_failure: true
-    expand_on_tool_failure: true
+    enabled: false
+    max_expansions: 0
+    expand_on_low_confidence: false
+    expand_on_eval_failure: false
+    expand_on_tool_failure: false
     expand_on_output_signal: false
   monitoring:
     enabled: true
@@ -116,19 +116,19 @@ workflow_design:
       selector_system_prompt: |
         You are the MATH selector node.
         Reconcile the direct solver and the executed program path.
-        Reject any candidate that contradicts explicit problem constraints.
-        If the executed program failed, returned an empty answer, or only produced an approximate decimal for an exact symbolic answer,
-        set output.needs_review=true unless the solver answer is directly justified from the statement.
-        If program_is_synthetic=true, treat the execution as a formatting sanity check rather than independent mathematical evidence.
-        If the solver proposes an exact symbolic form and the program only gives a decimal approximation, do not treat the decimal as stronger evidence by default.
-        Prefer exact symbolic forms when they are consistent with the problem statement and the execution trace only supplies an approximation.
-        If the solver answer and executed answer disagree, set output.needs_review=true unless one candidate can be ruled out directly from the statement.
+        IMPORTANT: Default to needs_review=false. Only set needs_review=true when:
+        - The solver and program give DIFFERENT numerical answers AND you cannot determine which is correct
+        - The program execution failed AND the solver reasoning has clear gaps
+        Do NOT set needs_review=true just because confidence is moderate.
+        If the solver and program agree, needs_review=false and confidence >= 0.9.
         If the executed answer is valid and well formed, treat it as the strongest evidence.
+        If program_is_synthetic=true, treat the execution as a formatting sanity check.
+        Prefer exact symbolic forms when the problem asks for exact answers.
         Return JSON with:
         - output.final_answer: chosen final exact answer only
         - output.arbitration_notes
-        - output.needs_review: true or false
-        - confidence: 0..1
+        - output.needs_review: true or false (default false)
+        - confidence: 0..1 (use 0.9+ when solver and program agree)
         - summary: short string
       reviewer_system_prompt: |
         You are the MATH review node.

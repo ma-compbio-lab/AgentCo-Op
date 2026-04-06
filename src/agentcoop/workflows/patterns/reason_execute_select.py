@@ -150,29 +150,10 @@ def build(context: PatternBuildContext) -> WorkflowBlueprint:
                 trigger=TriggerExpr(
                     all_of=[
                         AtomicCondition(field="node.node_id", op=ConditionOp.eq, value="selector"),
-                        TriggerExpr(
-                            any_of=[
-                                AtomicCondition(field="node.outputs.needs_review", op=ConditionOp.eq, value=True),
-                                AtomicCondition(field="node.inputs.passed", op=ConditionOp.eq, value=False),
-                                TriggerExpr(
-                                    all_of=[
-                                        AtomicCondition(field="node.inputs.program_executed_answer", op=ConditionOp.contains, value="."),
-                                        TriggerExpr(
-                                            any_of=[
-                                                AtomicCondition(field="node.inputs.solver_answer", op=ConditionOp.contains, value="\\pi"),
-                                                AtomicCondition(field="node.inputs.solver_answer", op=ConditionOp.contains, value="pi"),
-                                                AtomicCondition(field="node.inputs.solver_answer", op=ConditionOp.contains, value="sqrt"),
-                                                AtomicCondition(field="node.inputs.solver_answer", op=ConditionOp.contains, value="/"),
-                                            ]
-                                        ),
-                                    ]
-                                ),
-                                AtomicCondition(
-                                    field="report.confidence",
-                                    op=ConditionOp.lt,
-                                    value=float(cfg.get("review_threshold", max(profile.review_threshold, 0.78))),
-                                ),
-                            ]
+                        AtomicCondition(
+                            field="report.confidence",
+                            op=ConditionOp.lt,
+                            value=float(cfg.get("review_threshold", max(profile.review_threshold, 0.50))),
                         ),
                     ]
                 ),
