@@ -224,6 +224,20 @@ archive/
 .hf_cache/
 runs-current-benchmark-aggregated/
 data/
+runs-*/
 runs-*/.worktrees/
 /.worktrees/
 runs-*/.superpowers/
+
+# AgentCo-Op local artifacts and caches
+.agentcoop_artifacts/
+.dynaforge_artifacts/
+.agentcoop_sandboxes/
+.pytest_cache/
+
+# Local scratch / logs
+*.log
+*.log.gz
+
+# Superpowers session state
+.superpowers/
