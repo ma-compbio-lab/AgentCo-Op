@@ -203,3 +203,47 @@ def test_subgraph_edges_may_reference_base_nodes() -> None:
     )
 
     assert blueprint.subgraph_map()["sg_review"].edges[0].src == "planner"
+
+
+from agentcoop.ir.schema import ReviewPolicy, RetryPolicy, SubgraphSpec
+
+
+def test_review_policy_defaults_to_verify_then_correct() -> None:
+    sg = SubgraphSpec(
+        subgraph_id="sg_test",
+        purpose="test",
+        nodes=[NodeSpec(node_id="n1", kind=NodeKind.cache, role="R")],
+        edges=[],
+        entry_nodes=["n1"],
+        exit_nodes=["n1"],
+    )
+    assert sg.review_policy == ReviewPolicy.verify_then_correct
+
+
+def test_retry_policy_defaults_to_retry_then_escalate() -> None:
+    sg = SubgraphSpec(
+        subgraph_id="sg_test",
+        purpose="test",
+        nodes=[NodeSpec(node_id="n1", kind=NodeKind.cache, role="R")],
+        edges=[],
+        entry_nodes=["n1"],
+        exit_nodes=["n1"],
+    )
+    assert sg.retry_policy == RetryPolicy.retry_then_escalate
+
+
+def test_subgraph_accepts_explicit_policies() -> None:
+    sg = SubgraphSpec(
+        subgraph_id="sg_test",
+        purpose="test",
+        nodes=[NodeSpec(node_id="n1", kind=NodeKind.cache, role="R")],
+        edges=[],
+        entry_nodes=["n1"],
+        exit_nodes=["n1"],
+        review_policy=ReviewPolicy.re_solve,
+        retry_policy=RetryPolicy.escalate_immediately,
+        max_retries=2,
+    )
+    assert sg.review_policy == ReviewPolicy.re_solve
+    assert sg.retry_policy == RetryPolicy.escalate_immediately
+    assert sg.max_retries == 2

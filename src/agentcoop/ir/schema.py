@@ -62,6 +62,16 @@ class SkillPromptMode(str, Enum):
     summary = "summary"
 
 
+class ReviewPolicy(str, Enum):
+    verify_then_correct = "verify_then_correct"
+    re_solve = "re_solve"
+
+
+class RetryPolicy(str, Enum):
+    retry_then_escalate = "retry_then_escalate"
+    escalate_immediately = "escalate_immediately"
+
+
 class ArtifactRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -316,6 +326,9 @@ class SubgraphSpec(BaseModel):
     entry_nodes: List[str]
     exit_nodes: List[str]
     default_enabled: bool = False
+    review_policy: ReviewPolicy = Field(default=ReviewPolicy.verify_then_correct)
+    retry_policy: RetryPolicy = Field(default=RetryPolicy.retry_then_escalate)
+    max_retries: int = Field(default=1, ge=0)
 
     @field_validator("nodes")
     @classmethod
