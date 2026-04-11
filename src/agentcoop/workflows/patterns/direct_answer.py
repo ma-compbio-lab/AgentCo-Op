@@ -11,6 +11,7 @@ from agentcoop.ir.schema import (
     IOContract,
     NodeKind,
     NodeSpec,
+    ReviewPolicy,
     SubgraphSpec,
     TriggerExpr,
     WorkflowBlueprint,
@@ -73,6 +74,7 @@ def build(context: PatternBuildContext) -> WorkflowBlueprint:
             SubgraphSpec(
                 subgraph_id="sg_review",
                 purpose="Optional answer verification for low-confidence or flagged cases.",
+                review_policy=ReviewPolicy.verify_then_correct,
                 nodes=[reviewer, reviser],
                 edges=[
                     EdgeSpec(edge_id="edge_solver_to_reviewer", src="solver", dst="reviewer"),

@@ -11,6 +11,7 @@ from agentcoop.ir.schema import (
     IOContract,
     NodeKind,
     NodeSpec,
+    ReviewPolicy,
     SubgraphSpec,
     TriggerExpr,
     WorkflowBlueprint,
@@ -217,10 +218,16 @@ def _reason_execute_review_subgraph(context: PatternBuildContext, cfg: Mapping[s
         model=context.review_model,
         system_prompt=cfg.get("reviewer_system_prompt")
         or (
-            "You are reviewing an exact-answer solution. Re-evaluate the task using the solver answer, programmer answer, "
-            "execution result, and selector notes. Return JSON with output.corrected_answer, output.review_notes, confidence, and summary."
+            "You are verifying a proposed answer for an exact-answer task. "
+            "You receive the selector's proposed final_answer plus all solver, programmer, and execution evidence. "
+            "First, check if the proposed answer is correct by cross-referencing the evidence. "
+            "Return JSON with: "
+            "output.verdict: 'accept' if the answer looks correct, 'reject' if you found an error; "
+            "output.correction: if rejecting, your corrected answer (omit if accepting); "
+            "output.reason: brief explanation of your decision; "
+            "confidence: 0..1; summary: short string."
         ),
-        io=IOContract(output_schema={"type": "object", "required": ["corrected_answer"]}),
+        io=IOContract(output_schema={"type": "object", "required": ["verdict"]}),
         meta={
             "output_backfills": [
                 {"target": "corrected_answer", "sources": ["outputs.final_answer", "outputs.answer", "outputs.result"]},
@@ -235,14 +242,16 @@ def _reason_execute_review_subgraph(context: PatternBuildContext, cfg: Mapping[s
         model=context.review_model,
         system_prompt=cfg.get("reviser_system_prompt")
         or (
-            "You are the final revision node for an exact-answer task. Use the reviewer and selector outputs and return JSON with "
-            "output.final_answer, output.solution_outline, confidence, and summary."
+            "You are the final revision node. The reviewer rejected the proposed answer and provided a correction. "
+            "Use the reviewer's correction and reason, plus all available evidence, to emit the final corrected answer. "
+            "Return JSON with output.final_answer, output.solution_outline, confidence, and summary."
         ),
         io=IOContract(output_schema={"type": "object", "required": ["final_answer"]}),
     )
     return SubgraphSpec(
         subgraph_id="sg_review",
         purpose="Review disagreements between reasoning and execution paths.",
+        review_policy=ReviewPolicy.verify_then_correct,
         nodes=[reviewer, reviser],
         edges=[
             EdgeSpec(edge_id="edge_solver_to_reviewer", src="solver", dst="reviewer", mapping={"solver_answer": "final_answer"}),

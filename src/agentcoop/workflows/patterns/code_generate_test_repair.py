@@ -88,6 +88,7 @@ def build(context: PatternBuildContext) -> WorkflowBlueprint:
         system_prompt=cfg.get("rewriter_system_prompt") or _default_code_rewriter_prompt(),
         io=IOContract(output_schema={"type": "object", "required": ["completion"]}),
         meta={
+            "include_prior_attempts": True,
             "output_change_guard": {
                 "output_path": "completion",
                 "compare_against": ["inputs.candidate_code"],
