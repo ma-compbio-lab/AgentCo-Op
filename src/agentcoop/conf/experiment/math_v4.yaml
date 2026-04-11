@@ -1,0 +1,188 @@
+# @package _global_
+# math_v4: Optimized from v3 based on full-test analysis.
+# Key changes:
+#   1. Re-enabled review gate with review_threshold: 0.30
+#   2. Set preferred_review_style: gate
+#   3. Reviser re-added to preferred_answer_nodes (acts as targeted corrector)
+#   4. Verification-style reviewer and correction-style reviser prompts
+#   5. Kept improved programmer and selector prompts from v3
+
+defaults:
+  - override /model: openai_gpt4o_mini
+
+benchmark:
+  kind: math
+  dataset_id: EleutherAI/hendrycks_math
+  data_source: aflow_package
+  config_names:
+    - counting_and_probability
+    - number_theory
+    - prealgebra
+    - precalculus
+  selected_types:
+    - Counting & Probability
+    - Number Theory
+    - Prealgebra
+    - Precalculus
+  source_split: test
+  split_seed: 42
+  validation_fraction: 0.2
+  level_filter: Level 5
+  smoke_count: 20
+  processed_dir: benchmarks/math/processed
+  upstream_dir: benchmarks/math/upstream_full
+  train_sample_count: 1000
+  train_sample_seed: 42
+  aflow_cache_dir: benchmarks/aflow_public
+  metric: solve_rate
+  workflow_variant: aflow_v4
+  reporting_protocol: aflow_3run_average
+  paper_alignment:
+    source: AFlow
+    base_model: gpt-4o-mini
+    split: 20/80 validation-test
+    seed: 42
+    subset: MATH level-5 four-type slice
+    operators:
+      - Custom
+      - ScEnsemble
+      - Programmer
+  preferred_answer_nodes:
+    - reviser
+    - selector
+    - solver
+
+executor:
+  allow_offline_fallback: false
+
+workflow_design:
+  enabled: true
+  mode: pattern_then_synthesize
+  preferred_pattern: reason_execute_select
+  task_profile:
+    domain: math
+    answer_mode: exact_answer
+    complexity: high
+    requires_tool_execution: true
+    requires_artifact_validation: true
+    preferred_review_style: gate
+    review_threshold: 0.30
+  runtime_expansion:
+    enabled: false
+    max_expansions: 0
+    expand_on_low_confidence: false
+    expand_on_eval_failure: false
+    expand_on_tool_failure: false
+    expand_on_output_signal: false
+  monitoring:
+    enabled: true
+    record_compile_trace: true
+    record_runtime_events: true
+    record_graph_candidates: true
+  pattern_overrides:
+    reason_execute_select:
+      enable_challenger_solver: false
+      allow_program_backfill: false
+      programmer_system_prompt: |
+        You are the MATH programmer node.
+        Write compact Python verification code for the task in task.description.
+        You must return JSON with:
+        - output.program: executable Python code that prints FINAL_ANSWER at the end
+        - output.final_answer: the answer implied by that code
+        - output.notes: short note about assumptions or symbolic handling
+        - confidence: 0..1
+        - summary: short string
+        Use Python stdlib, SymPy, and NumPy.
+
+        IMPORTANT guidelines by topic:
+        - Counting/combinatorics: encode literal constraints directly; enumerate when feasible.
+        - Precalculus/trig: use sympy.simplify and sympy.trigsimp for trig identities;
+          use sympy.Matrix for vector/matrix operations;
+          convert angles between degrees and radians explicitly.
+        - Number theory: use sympy.factorint, sympy.isprime, sympy.mod_inverse.
+        - Keep exact symbolic forms (fractions, radicals, pi); do NOT collapse to decimal
+          unless the problem explicitly asks for a decimal approximation.
+        - Always assign the final result to a variable called FINAL_ANSWER.
+        Do not omit output.program.
+      tool_nodes:
+        program_exec:
+          tools:
+            - server: direct
+              tool: math_program_exec
+          sandbox:
+            sandbox_id: math-program-exec-v4
+            backend: local_venv
+            image: python:3.11
+            workdir: .
+            safety:
+              allow_network: false
+              cpu_quota: 1.0
+              mem_limit_mb: 2048
+              timeout_s: 60
+            bootstrap_cmds:
+              - [python, -m, pip, install, sympy]
+              - [python, -m, pip, install, numpy]
+          io:
+            output_schema:
+              type: object
+              required: [passed, executed_answer]
+          meta:
+            direct_sandbox_handler: true
+      selector_system_prompt: |
+        You are the MATH selector node.
+        Reconcile the direct solver answer and the executed program answer.
+
+        Decision rules (in priority order):
+        1. If the program executed successfully and produced a valid answer, PREFER the executed answer.
+           Execution is the strongest evidence — it was verified by running actual code.
+        2. If solver and program agree, use the executed answer with confidence >= 0.95.
+        3. If they disagree, use the executed answer UNLESS:
+           - The program output looks like an error/garbage (e.g. "None", empty, traceback), OR
+           - The executed answer is clearly a decimal approximation but the problem asks for exact form
+             AND the solver has an exact symbolic answer.
+        4. If the program failed entirely, use the solver answer.
+
+        Set needs_review=true only when you are genuinely uncertain (confidence < 0.30).
+
+        Return JSON with:
+        - output.final_answer: chosen final exact answer only
+        - output.arbitration_notes: brief explanation of choice
+        - output.needs_review: true or false
+        - confidence: 0..1
+        - summary: short string
+      reviewer_system_prompt: |
+        You are verifying a proposed answer for a MATH competition problem.
+        You receive the selector's proposed final_answer plus solver reasoning and program execution evidence.
+        Check if the proposed answer is correct:
+        - Cross-reference the answer against the execution result and solver reasoning
+        - Verify the answer format matches what the problem asks for (exact form, integer, fraction, etc.)
+        - If both solver and program agree with the proposed answer, verdict should be "accept"
+        Return JSON with:
+        - output.verdict: "accept" or "reject"
+        - output.correction: your corrected answer (only if rejecting)
+        - output.reason: brief explanation
+        - confidence: 0..1
+        - summary: short string
+      reviser_system_prompt: |
+        You are the final MATH revision node.
+        The reviewer rejected the proposed answer and provided a specific correction with reasoning.
+        Use the reviewer's correction and reason to emit the final corrected answer.
+        Preserve exact symbolic form whenever the task asks for it.
+        Return JSON with:
+        - output.final_answer
+        - output.solution_outline
+        - confidence: 0..1
+        - summary: short string
+
+blueprint:
+  task:
+    task_id: math
+    title: MATH
+    description: Solve competition mathematics problems and return the final exact answer.
+  budget:
+    max_total_usd: 6.0
+    max_total_tokens: 36000
+  meta:
+    benchmark: math
+    dataset_id: ${benchmark.dataset_id}
+    aflow_alignment: ${benchmark.paper_alignment}
