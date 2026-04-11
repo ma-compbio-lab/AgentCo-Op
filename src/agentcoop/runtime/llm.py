@@ -619,10 +619,42 @@ class LLMRouter:
         try:
             parsed = json.loads(raw_content)
         except json.JSONDecodeError:
-            parsed = {"output": {"text": raw_content}, "confidence": 0.5, "summary": "Non-JSON model response"}
+            # Try to recover JSON from code fences or partial responses
+            parsed = LLMRouter._try_recover_json(raw_content)
         if not isinstance(parsed, dict):
             return {"output": {"value": parsed}, "confidence": 0.5, "summary": "Non-object JSON model response"}
         return parsed
+
+    @staticmethod
+    def _try_recover_json(raw_content: str) -> Dict[str, Any]:
+        """Attempt to extract valid JSON from malformed or wrapped model responses."""
+        import re
+
+        # Strip markdown code fences
+        stripped = re.sub(r"^```(?:json)?\s*\n?", "", raw_content.strip())
+        stripped = re.sub(r"\n?```\s*$", "", stripped)
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        # Find the outermost { ... } in the text
+        first_brace = raw_content.find("{")
+        if first_brace >= 0:
+            # Walk from the end to find the matching closing brace
+            last_brace = raw_content.rfind("}")
+            if last_brace > first_brace:
+                candidate = raw_content[first_brace : last_brace + 1]
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+
+        return {"output": {"text": raw_content}, "confidence": 0.5, "summary": "Non-JSON model response"}
 
     @staticmethod
     def _normalize_output(payload: Mapping[str, Any]) -> Dict[str, Any]:

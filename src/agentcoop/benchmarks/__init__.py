@@ -2093,19 +2093,62 @@ def _math_equal(prediction: Any, reference: Any) -> bool:
                 return True
 
     try:
-        from sympy import N, simplify
-        from sympy.parsing.sympy_parser import (
-            implicit_multiplication_application,
-            parse_expr,
-            standard_transformations,
-        )
+        return _sympy_numeric_equal(predicted, expected)
+    except Exception:
+        return False
 
-        transformations = standard_transformations + (implicit_multiplication_application,)
-        parsed_prediction = parse_expr(predicted, transformations=transformations)
-        parsed_reference = parse_expr(expected, transformations=transformations)
-        if simplify(parsed_prediction - parsed_reference) == 0:
-            return True
-        return abs(float(N(parsed_prediction)) - float(N(parsed_reference))) <= 1e-3
+
+def _sympy_numeric_equal(predicted: str, expected: str, timeout: int = 5) -> bool:
+    """Compare two math expressions via SymPy numerical evaluation.
+
+    Runs in a child process to guard against SymPy infinite recursion bugs
+    (parse_expr and simplify can both hang on certain expressions).
+    """
+    import multiprocessing as mp
+
+    def _worker(pred: str, exp: str, result_queue: "mp.Queue[bool]") -> None:
+        try:
+            import sys
+
+            from sympy import N
+            from sympy.parsing.sympy_parser import (
+                implicit_multiplication_application,
+                parse_expr,
+                standard_transformations,
+            )
+
+            transformations = standard_transformations + (implicit_multiplication_application,)
+            # Limit recursion to prevent SymPy infinite loops
+            old_limit = sys.getrecursionlimit()
+            sys.setrecursionlimit(500)
+            try:
+                parsed_prediction = parse_expr(pred, transformations=transformations)
+                parsed_reference = parse_expr(exp, transformations=transformations)
+                # Try direct symbolic comparison (fast for simple cases)
+                diff = parsed_prediction - parsed_reference
+                if diff == 0:
+                    result_queue.put(True)
+                    return
+                # Fall back to numerical evaluation
+                result_queue.put(abs(float(N(parsed_prediction)) - float(N(parsed_reference))) <= 1e-3)
+            except RecursionError:
+                result_queue.put(False)
+            finally:
+                sys.setrecursionlimit(old_limit)
+        except Exception:
+            result_queue.put(False)
+
+    ctx = mp.get_context("fork")
+    result_queue: mp.Queue[bool] = ctx.Queue()
+    proc = ctx.Process(target=_worker, args=(predicted, expected, result_queue))
+    proc.start()
+    proc.join(timeout=timeout)
+    if proc.is_alive():
+        proc.kill()
+        proc.join(timeout=2)
+        return False
+    try:
+        return result_queue.get_nowait() if not result_queue.empty() else False
     except Exception:
         return False
 
