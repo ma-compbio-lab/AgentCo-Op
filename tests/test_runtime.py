@@ -10,6 +10,7 @@ from agentcoop.ir import (
     NodeSpec,
     PatchOp,
     PatchOpType,
+    ReviewPolicy,
     TaskSpec,
     TriggerExpr,
     WorkflowBlueprint,
@@ -675,3 +676,180 @@ def test_executor_output_change_guard_marks_noop_repairs_and_skips_conditioned_e
     reviser_outputs = report.node_results["reviser"].outputs
     assert reviser_outputs["repair_changed"] is False
     assert "matched guarded reference" in reviser_outputs["repair_change_reason"]
+
+
+def _make_review_blueprint(review_policy: ReviewPolicy) -> WorkflowBlueprint:
+    """Helper to build a blueprint with a solver -> gate -> reviewer + reviser subgraph."""
+    return WorkflowBlueprint(
+        task=TaskSpec(task_id="runtime-review-policy", title="Review", description="Desc"),
+        budget=BudgetSpec(max_total_usd=1.0),
+        base_nodes=[
+            NodeSpec(
+                node_id="solver",
+                kind=NodeKind.agent,
+                role="Solver",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+            ),
+        ],
+        base_edges=[],
+        subgraphs=[
+            {
+                "subgraph_id": "sg_review",
+                "purpose": "review",
+                "nodes": [
+                    NodeSpec(
+                        node_id="reviewer",
+                        kind=NodeKind.agent,
+                        role="Reviewer",
+                        model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                    ),
+                    NodeSpec(
+                        node_id="reviser",
+                        kind=NodeKind.agent,
+                        role="Reviser",
+                        model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                    ),
+                ],
+                "edges": [
+                    EdgeSpec(edge_id="e_solver_to_reviewer", src="solver", dst="reviewer"),
+                    EdgeSpec(edge_id="e_reviewer_to_reviser", src="reviewer", dst="reviser"),
+                ],
+                "entry_nodes": ["reviewer"],
+                "exit_nodes": ["reviser"],
+                "default_enabled": False,
+                "review_policy": review_policy.value,
+            },
+        ],
+        gates=[
+            GateSpec(
+                gate_id="gate_review",
+                trigger=TriggerExpr(
+                    all_of=[{"field": "node.node_id", "op": "==", "value": "solver"}]
+                ),
+                enable_subgraphs=["sg_review"],
+            ),
+        ],
+    )
+
+
+def test_review_policy_verify_then_correct_accept() -> None:
+    """When reviewer returns verdict=accept, the reviser should be skipped."""
+
+    class ReviewerAcceptClient:
+        def complete(self, model, messages, *, response_format=None):
+            content = messages[-1]["content"]
+            if "Node ID: reviewer" in content:
+                return {
+                    "content": '{"output":{"verdict":"accept","reason":"looks good"},"confidence":0.95,"summary":"accepted"}',
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                }
+            # Default for other nodes (solver, etc.)
+            node_id = "stub"
+            for line in content.splitlines():
+                if line.startswith("Node ID: "):
+                    node_id = line.split("Node ID: ", 1)[1].strip()
+                    break
+            return {
+                "content": '{"output":{"result":{"node_id":"%s"}},"confidence":0.9,"summary":"ok"}' % node_id,
+                "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+            }
+
+    blueprint = _make_review_blueprint(ReviewPolicy.verify_then_correct)
+    executor = BlueprintExecutor(
+        llm_router=LLMRouter(client=ReviewerAcceptClient(), allow_offline_fallback=False),
+        allow_offline_fallback=False,
+    )
+    report = executor.execute_blueprint(blueprint)
+
+    assert report.success
+    reviser_trace = [t for t in report.traces if t.node_id == "reviser"]
+    assert len(reviser_trace) == 1
+    assert reviser_trace[0].status == "skipped"
+    assert reviser_trace[0].trace.get("skipped_by_review_policy") == "reviewer_accepted"
+
+
+def test_review_policy_verify_then_correct_reject() -> None:
+    """When reviewer returns verdict=reject, the reviser should run normally."""
+
+    class ReviewerRejectClient:
+        def complete(self, model, messages, *, response_format=None):
+            content = messages[-1]["content"]
+            if "Node ID: reviewer" in content:
+                return {
+                    "content": '{"output":{"verdict":"reject","reason":"needs work"},"confidence":0.5,"summary":"rejected"}',
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                }
+            if "Node ID: reviser" in content:
+                return {
+                    "content": '{"output":{"result":{"node_id":"reviser","fixed":true}},"confidence":0.85,"summary":"revised"}',
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                }
+            # Default for other nodes (solver, etc.)
+            node_id = "stub"
+            for line in content.splitlines():
+                if line.startswith("Node ID: "):
+                    node_id = line.split("Node ID: ", 1)[1].strip()
+                    break
+            return {
+                "content": '{"output":{"result":{"node_id":"%s"}},"confidence":0.9,"summary":"ok"}' % node_id,
+                "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+            }
+
+    blueprint = _make_review_blueprint(ReviewPolicy.verify_then_correct)
+    executor = BlueprintExecutor(
+        llm_router=LLMRouter(client=ReviewerRejectClient(), allow_offline_fallback=False),
+        allow_offline_fallback=False,
+    )
+    report = executor.execute_blueprint(blueprint)
+
+    assert report.success
+    reviser_trace = [t for t in report.traces if t.node_id == "reviser"]
+    assert len(reviser_trace) == 1
+    assert reviser_trace[0].status == "success"
+
+
+def test_assemble_inputs_includes_prior_attempts() -> None:
+    """Node with include_prior_attempts meta should receive prior_attempts in inputs."""
+    seen_inputs: dict = {}
+
+    def handler(node, inputs, context):
+        seen_inputs[node.node_id] = inputs
+        return NodeExecutionResult(
+            outputs={"result": {"node_id": node.node_id}},
+            confidence=0.9,
+        )
+
+    blueprint = WorkflowBlueprint(
+        task=TaskSpec(task_id="runtime-prior-attempts", title="Runtime", description="Desc"),
+        base_nodes=[
+            NodeSpec(
+                node_id="solver",
+                kind=NodeKind.agent,
+                role="Solver",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+            ),
+            NodeSpec(
+                node_id="aggregator",
+                kind=NodeKind.agent,
+                role="Aggregator",
+                model=ModelSpec(provider=ModelProvider.openai, name="gpt-4.1-mini"),
+                meta={"include_prior_attempts": True},
+            ),
+        ],
+        base_edges=[EdgeSpec(edge_id="e1", src="solver", dst="aggregator")],
+    )
+
+    report = BlueprintExecutor().execute_blueprint(blueprint, handlers={
+        "solver": handler,
+        "aggregator": handler,
+    })
+
+    assert report.success
+    aggregator_inputs = seen_inputs["aggregator"]
+    assert "prior_attempts" in aggregator_inputs
+    prior = aggregator_inputs["prior_attempts"]
+    assert len(prior) == 1
+    assert prior[0]["node_id"] == "solver"
+    assert prior[0]["outputs"] == {"result": {"node_id": "solver"}}
+    assert prior[0]["confidence"] == 0.9
+    assert prior[0]["failure_type"] == "none"

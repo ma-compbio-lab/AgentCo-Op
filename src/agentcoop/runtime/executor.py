@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set
 
-from agentcoop.ir.schema import FailureType, NodeKind, NodeSpec, PatchPlan, TraceAssertion, WorkflowBlueprint
+from agentcoop.ir.schema import FailureType, NodeKind, NodeSpec, PatchPlan, ReviewPolicy, TraceAssertion, WorkflowBlueprint
 from agentcoop.integrations.mcp_client import MCPClientManager
 from agentcoop.integrations.sandbox import CompositeSandboxRunner, SandboxError, SandboxRunner
 from agentcoop.integrations.tool_registry import ToolRegistry
@@ -196,6 +196,57 @@ class BlueprintExecutor:
                         }
                     )
                     continue
+                if self._should_skip_for_review_policy(node_id, blueprint, active_subgraphs, node_results):
+                    # Find the reviewer's outputs to forward
+                    reviewer_outputs: JsonDict = {}
+                    for sg in blueprint.subgraphs:
+                        if sg.subgraph_id not in active_subgraphs:
+                            continue
+                        if sg.review_policy != ReviewPolicy.verify_then_correct:
+                            continue
+                        if node_id in sg.exit_nodes and node_id not in sg.entry_nodes:
+                            for entry_id in sg.entry_nodes:
+                                entry_result = node_results.get(entry_id)
+                                if entry_result is not None:
+                                    reviewer_outputs = dict(entry_result.outputs)
+                                    break
+                            break
+                    result = NodeExecutionResult(
+                        outputs=reviewer_outputs,
+                        trace={"skipped_by_review_policy": "reviewer_accepted"},
+                        confidence=1.0,
+                    )
+                    ledger.consume(result.cost)
+                    node_results[node_id] = result
+                    executed.add(node_id)
+                    traces.append(
+                        NodeTrace(
+                            node_id=node.node_id,
+                            role=node.role,
+                            status="skipped",
+                            inputs=inputs,
+                            outputs=result.outputs,
+                            artifacts=result.artifacts,
+                            trace=result.trace,
+                            cost=result.cost,
+                            confidence=result.confidence,
+                            failure_type=result.failure_type,
+                            error=result.error,
+                        )
+                    )
+                    events.append(
+                        {
+                            "type": "node_executed",
+                            "node_id": node.node_id,
+                            "role": node.role,
+                            "status": "skipped",
+                            "failure_type": result.failure_type.value,
+                            "confidence": result.confidence,
+                            "cost": result.cost.model_dump(),
+                            "output_keys": sorted(result.outputs.keys()),
+                        }
+                    )
+                    continue
                 input_violations = self._validate_input_contract(node, inputs)
                 if input_violations:
                     contract_violations.extend(input_violations)
@@ -250,12 +301,21 @@ class BlueprintExecutor:
                 if result.failure_type == FailureType.none:
                     output_violations = self._validate_output_contract(node, inputs, result.outputs)
                     contract_violations.extend(output_violations)
-                if input_violations and failure_type == FailureType.none:
-                    failure_type = FailureType.output_contract_violation
-                    summary = f"Input contract validation failed at node {node_id}."
-                elif output_violations and failure_type == FailureType.none:
-                    failure_type = FailureType.output_contract_violation
-                    summary = f"Output contract validation failed at node {node_id}."
+                if output_violations and node.io.output_schema:
+                    from agentcoop.runtime.validation import extract_partial_outputs
+                    enriched = extract_partial_outputs(result.outputs, node.io.output_schema)
+                    if enriched is not result.outputs:
+                        result = result.model_copy(update={"outputs": enriched})
+                        node_results[node_id] = result
+                # Note: output contract violations are recorded but do NOT halt
+                # execution.  Downstream nodes can still consume whatever outputs
+                # the violating node produced (the fields that *are* present).
+                # The overall report will still be marked as failed at the end
+                # via the post-loop check (line ~313).
+
+                if any(isinstance(v, Mapping) and v.get("_degraded") for v in inputs.values()):
+                    result = result.model_copy(update={"confidence": (result.confidence or 1.0) * 0.8})
+                    node_results[node_id] = result
 
                 if result.failure_type != FailureType.none:
                     failure_type = result.failure_type
@@ -427,6 +487,20 @@ class BlueprintExecutor:
                     payload[parent] = upstream.outputs
         for key, value in self._initial_task_payload(blueprint).items():
             payload.setdefault(key, value)
+        node_spec = blueprint.node_map().get(node_id)
+        if node_spec and node_spec.meta.get("include_prior_attempts"):
+            prior_attempts = []
+            for prev_id, prev_result in node_results.items():
+                if prev_id == node_id:
+                    continue
+                prior_attempts.append({
+                    "node_id": prev_id,
+                    "outputs": dict(prev_result.outputs) if prev_result.outputs else {},
+                    "confidence": prev_result.confidence,
+                    "failure_type": prev_result.failure_type.value if prev_result.failure_type else "none",
+                })
+            if prior_attempts:
+                payload["prior_attempts"] = prior_attempts
         return payload
 
     @staticmethod
@@ -445,6 +519,39 @@ class BlueprintExecutor:
             },
             default_on_error=False,
         )
+
+    @staticmethod
+    def _should_skip_for_review_policy(
+        node_id: str,
+        blueprint: WorkflowBlueprint,
+        active_subgraphs: Set[str],
+        node_results: Mapping[str, NodeExecutionResult],
+    ) -> bool:
+        """Return True if node should be skipped because a reviewer accepted."""
+        for subgraph in blueprint.subgraphs:
+            if subgraph.subgraph_id not in active_subgraphs:
+                continue
+            if subgraph.review_policy != ReviewPolicy.verify_then_correct:
+                continue
+            if node_id not in subgraph.exit_nodes:
+                continue
+            if node_id in subgraph.entry_nodes:
+                continue
+            # node_id is an exit-only node (reviser) in a verify_then_correct subgraph
+            for entry_id in subgraph.entry_nodes:
+                entry_result = node_results.get(entry_id)
+                if entry_result is None:
+                    continue
+                verdict = None
+                if isinstance(entry_result.outputs, Mapping):
+                    verdict = entry_result.outputs.get("verdict")
+                    if verdict is None:
+                        result_inner = entry_result.outputs.get("result")
+                        if isinstance(result_inner, Mapping):
+                            verdict = result_inner.get("verdict")
+                if verdict == "accept":
+                    return True
+        return False
 
     @staticmethod
     def _initial_task_payload(blueprint: WorkflowBlueprint) -> JsonDict:
