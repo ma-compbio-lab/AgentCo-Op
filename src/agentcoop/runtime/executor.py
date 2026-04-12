@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set
 
@@ -151,6 +152,11 @@ class BlueprintExecutor:
                     summary = f"Execution deadlocked waiting on nodes: {sorted(remaining)}"
                 break
 
+            # ---- Classify ready nodes into skip-able vs executable ----
+            to_skip: list[tuple[str, NodeSpec, JsonDict, str]] = []
+            to_execute: list[tuple[str, NodeSpec, JsonDict]] = []
+            to_input_fail: list[tuple[str, NodeSpec, JsonDict, list[ContractViolation]]] = []
+
             for node_id in ready:
                 if ledger.exceeds_budget():
                     failure_type = FailureType.budget_exceeded
@@ -159,45 +165,21 @@ class BlueprintExecutor:
 
                 node = node_map[node_id]
                 inputs = self._assemble_inputs(blueprint, node_id, parent_map, active_edges, node_results)
+
                 if self._should_skip_node(node, inputs):
-                    result = NodeExecutionResult(
-                        outputs={"skipped": True},
-                        trace={"skipped_by_condition": str(node.meta.get("execution_condition", "") or "")},
-                        confidence=1.0,
-                    )
-                    ledger.consume(result.cost)
-                    node_results[node_id] = result
-                    executed.add(node_id)
-                    traces.append(
-                        NodeTrace(
-                            node_id=node.node_id,
-                            role=node.role,
-                            status="skipped",
-                            inputs=inputs,
-                            outputs=result.outputs,
-                            artifacts=result.artifacts,
-                            trace=result.trace,
-                            cost=result.cost,
-                            confidence=result.confidence,
-                            failure_type=result.failure_type,
-                            error=result.error,
-                        )
-                    )
-                    events.append(
-                        {
-                            "type": "node_executed",
-                            "node_id": node.node_id,
-                            "role": node.role,
-                            "status": "skipped",
-                            "failure_type": result.failure_type.value,
-                            "confidence": result.confidence,
-                            "cost": result.cost.model_dump(),
-                            "output_keys": sorted(result.outputs.keys()),
-                        }
-                    )
-                    continue
-                if self._should_skip_for_review_policy(node_id, blueprint, active_subgraphs, node_results):
-                    # Find the reviewer's outputs to forward
+                    to_skip.append((node_id, node, inputs, "condition"))
+                elif self._should_skip_for_review_policy(node_id, blueprint, active_subgraphs, node_results):
+                    to_skip.append((node_id, node, inputs, "review_policy"))
+                else:
+                    input_violations = self._validate_input_contract(node, inputs)
+                    if input_violations:
+                        to_input_fail.append((node_id, node, inputs, input_violations))
+                    else:
+                        to_execute.append((node_id, node, inputs))
+
+            # ---- Process skipped nodes (no concurrency needed) ----
+            for node_id, node, inputs, skip_reason in to_skip:
+                if skip_reason == "review_policy":
                     reviewer_outputs: JsonDict = {}
                     for sg in blueprint.subgraphs:
                         if sg.subgraph_id not in active_subgraphs:
@@ -216,54 +198,87 @@ class BlueprintExecutor:
                         trace={"skipped_by_review_policy": "reviewer_accepted"},
                         confidence=1.0,
                     )
-                    ledger.consume(result.cost)
-                    node_results[node_id] = result
-                    executed.add(node_id)
-                    traces.append(
-                        NodeTrace(
-                            node_id=node.node_id,
-                            role=node.role,
-                            status="skipped",
-                            inputs=inputs,
-                            outputs=result.outputs,
-                            artifacts=result.artifacts,
-                            trace=result.trace,
-                            cost=result.cost,
-                            confidence=result.confidence,
-                            failure_type=result.failure_type,
-                            error=result.error,
-                        )
-                    )
-                    events.append(
-                        {
-                            "type": "node_executed",
-                            "node_id": node.node_id,
-                            "role": node.role,
-                            "status": "skipped",
-                            "failure_type": result.failure_type.value,
-                            "confidence": result.confidence,
-                            "cost": result.cost.model_dump(),
-                            "output_keys": sorted(result.outputs.keys()),
-                        }
-                    )
-                    continue
-                input_violations = self._validate_input_contract(node, inputs)
-                if input_violations:
-                    contract_violations.extend(input_violations)
-                    result = NodeExecutionResult(
-                        failure_type=FailureType.output_contract_violation,
-                        error=f"Input contract validation failed at node {node_id}.",
-                    )
                 else:
-                    result = self._run_node(
-                        node,
-                        inputs,
-                        blueprint,
-                        handlers,
-                        node_results,
-                        active_subgraphs,
-                        ledger.snapshot().model_dump(),
+                    result = NodeExecutionResult(
+                        outputs={"skipped": True},
+                        trace={"skipped_by_condition": str(node.meta.get("execution_condition", "") or "")},
+                        confidence=1.0,
                     )
+                ledger.consume(result.cost)
+                node_results[node_id] = result
+                executed.add(node_id)
+                traces.append(
+                    NodeTrace(
+                        node_id=node.node_id,
+                        role=node.role,
+                        status="skipped",
+                        inputs=inputs,
+                        outputs=result.outputs,
+                        artifacts=result.artifacts,
+                        trace=result.trace,
+                        cost=result.cost,
+                        confidence=result.confidence,
+                        failure_type=result.failure_type,
+                        error=result.error,
+                    )
+                )
+                events.append(
+                    {
+                        "type": "node_executed",
+                        "node_id": node.node_id,
+                        "role": node.role,
+                        "status": "skipped",
+                        "failure_type": result.failure_type.value,
+                        "confidence": result.confidence,
+                        "cost": result.cost.model_dump(),
+                        "output_keys": sorted(result.outputs.keys()),
+                    }
+                )
+
+            # ---- Dispatch executable nodes (concurrently when >1) ----
+            # Collect (node_id, node, inputs, result) tuples; the LLM call
+            # inside _run_node is I/O-bound and thread-safe.
+            executed_results: list[tuple[str, NodeSpec, JsonDict, NodeExecutionResult]] = []
+
+            # Nodes that failed input validation are handled without an LLM call
+            for node_id, node, inputs, violations in to_input_fail:
+                contract_violations.extend(violations)
+                result = NodeExecutionResult(
+                    failure_type=FailureType.output_contract_violation,
+                    error=f"Input contract validation failed at node {node_id}.",
+                )
+                executed_results.append((node_id, node, inputs, result))
+
+            if len(to_execute) > 1:
+                # Multiple independent ready nodes — run LLM calls concurrently
+                budget_snapshot = ledger.snapshot().model_dump()
+                with ThreadPoolExecutor(max_workers=min(len(to_execute), 4)) as pool:
+                    future_map = {}
+                    for node_id, node, inputs in to_execute:
+                        fut = pool.submit(
+                            self._run_node, node, inputs, blueprint, handlers,
+                            node_results, active_subgraphs, budget_snapshot,
+                        )
+                        future_map[fut] = (node_id, node, inputs)
+
+                    for fut in as_completed(future_map):
+                        nid, nd, inp = future_map[fut]
+                        executed_results.append((nid, nd, inp, fut.result()))
+            elif len(to_execute) == 1:
+                # Single ready node — run directly (no thread overhead)
+                node_id, node, inputs = to_execute[0]
+                result = self._run_node(
+                    node, inputs, blueprint, handlers,
+                    node_results, active_subgraphs,
+                    ledger.snapshot().model_dump(),
+                )
+                executed_results.append((node_id, node, inputs, result))
+
+            # Sort by node_id for deterministic post-processing order
+            executed_results.sort(key=lambda x: x[0])
+
+            # ---- Sequential post-processing of all executed results ----
+            for node_id, node, inputs, result in executed_results:
                 ledger.consume(result.cost)
                 node_results[node_id] = result
                 executed.add(node_id)
@@ -311,7 +326,7 @@ class BlueprintExecutor:
                 # execution.  Downstream nodes can still consume whatever outputs
                 # the violating node produced (the fields that *are* present).
                 # The overall report will still be marked as failed at the end
-                # via the post-loop check (line ~313).
+                # via the post-loop check.
 
                 if any(isinstance(v, Mapping) and v.get("_degraded") for v in inputs.values()):
                     result = result.model_copy(update={"confidence": (result.confidence or 1.0) * 0.8})
