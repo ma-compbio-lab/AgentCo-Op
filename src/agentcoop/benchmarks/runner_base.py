@@ -3,7 +3,9 @@ from __future__ import annotations
 import abc
 import gzip
 import json
+import logging
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,7 +57,11 @@ def _run_one_sample(
     handlers = runner.build_task_handlers(resolved, task_blueprint, sample)
     executor = build_executor_from_config(resolved, artifact_root=artifact_root)
 
+    logger = logging.getLogger("agentcoop.benchmark")
+    t0 = time.perf_counter()
     _, report = _run_blueprint(resolved, task_blueprint, executor, handlers=handlers)
+    elapsed = time.perf_counter() - t0
+
     sample_id = str(sample["id"])
     report_path = Path(trace_dir) / f"{sample_id}.report.json.gz"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +76,21 @@ def _run_one_sample(
         report=report,
         report_path=report_path,
         preferred_nodes=preferred_nodes,
+    )
+
+    # Detailed per-task log
+    nodes_run = [t.node_id for t in report.traces if t.status != "skipped"]
+    total_tokens = report.cost.input_tokens + report.cost.output_tokens
+    correct_flag = task_result.get("correct", task_result.get("passed", "?"))
+    logger.info(
+        "[%s] #%d %s | %s | %.1fs | %d tok | nodes=%s",
+        runner_cls.benchmark_name.fget(runner),
+        order,
+        sample_id,
+        "PASS" if correct_flag else "FAIL",
+        elapsed,
+        total_tokens,
+        "->".join(nodes_run),
     )
     return sample_id, task_result
 
@@ -145,6 +166,11 @@ class BenchmarkRunner(abc.ABC):
         resume_run_dir: Optional[str | Path] = None,
     ) -> Dict[str, Any]:
         load_local_secrets()
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(message)s",
+            datefmt="%H:%M:%S",
+        )
         resolved = resolve_hydra_config(config)
         if num_shards < 1:
             raise BenchmarkSetupError("num_shards must be >= 1")
