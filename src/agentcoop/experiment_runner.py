@@ -1171,7 +1171,55 @@ def _math_program_exec_handler(node: NodeSpec, inputs: Mapping[str, Any], contex
         )
 
     python_executable = _sandbox_python_executable(node, context)
-    execution = _execute_math_program(program=program, python_executable=python_executable)
+
+    # Retry loop: execute program, and on failure, ask the LLM to fix it
+    # (Evidence: AFlow paper — programmer retry with error feedback is the
+    # single most impactful technique for MATH benchmark, up to 3 attempts)
+    max_retries = int(node.meta.get("max_program_retries", 2))
+    total_tool_calls = 0
+    retry_trace: list[dict[str, Any]] = []
+
+    for attempt in range(1 + max_retries):
+        execution = _execute_math_program(program=program, python_executable=python_executable)
+        total_tool_calls += 1
+        passed = bool(execution.get("passed", False))
+        error = str(execution.get("execution_error", "") or "").strip()
+
+        retry_trace.append({
+            "attempt": attempt + 1,
+            "passed": passed,
+            "error": error[:200] if error else "",
+            "program_chars": len(program),
+        })
+
+        if passed or attempt >= max_retries:
+            break
+
+        # Ask the LLM to fix the program based on the error
+        if not error or not hasattr(context, "llm_router"):
+            break
+
+        fix_prompt = (
+            f"Your Python program failed with this error:\n{error}\n\n"
+            f"Original program:\n```python\n{program}\n```\n\n"
+            "Fix the bug and return the corrected program. "
+            "Return JSON with output.program (the fixed Python code) and output.notes."
+        )
+        try:
+            fix_response = context.llm_router.client.complete(
+                model=node.model.name if node.model else "gpt-4o-mini",
+                messages=[{"role": "user", "content": fix_prompt}],
+                response_format={"type": "json_object"},
+            )
+            fix_content = fix_response.get("content", "")
+            fix_parsed = json.loads(fix_content) if fix_content else {}
+            fix_output = fix_parsed.get("output", fix_parsed)
+            fixed_program = str(fix_output.get("program", "") or "").strip()
+            if fixed_program:
+                program = fixed_program
+        except Exception:
+            break  # LLM fix failed, use last execution result
+
     synthetic_program = "DYNaforge synthetic program fallback" in program
     outputs = {
         "passed": bool(execution.get("passed", False)),
@@ -1189,8 +1237,10 @@ def _math_program_exec_handler(node: NodeSpec, inputs: Mapping[str, Any], contex
             "sandbox_python": python_executable,
             "program_chars": len(program),
             "synthetic_program": synthetic_program,
+            "retry_attempts": retry_trace,
+            "total_attempts": len(retry_trace),
         },
-        cost=ExecutionCost(tool_calls=1),
+        cost=ExecutionCost(tool_calls=total_tool_calls),
         confidence=0.35 if synthetic_program and outputs["passed"] else (0.92 if outputs["passed"] else 0.25),
     )
 

@@ -66,6 +66,14 @@ class ToolScout:
             if node.role.lower() in " ".join(descriptor_tokens):
                 score += 0.5
                 reasons.append("role token match")
+            # Boost tools whose description mentions node skill tags
+            if hasattr(node, "skills") and node.skills:
+                for skill_ref in node.skills:
+                    skill_name_tokens = self._tokenize(skill_ref.name or "")
+                    skill_overlap = skill_name_tokens & descriptor_tokens
+                    if skill_overlap:
+                        score += 1.0
+                        reasons.append(f"skill-name match={len(skill_overlap)}")
             if score > 0:
                 ranked.append(
                     RankedToolCandidate(

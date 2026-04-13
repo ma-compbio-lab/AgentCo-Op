@@ -1,0 +1,188 @@
+# @package _global_
+# math_v6: Builds on v5 ScEnsemble with programmer retry + enhanced skills.
+# Evidence-based changes from v5:
+#   1. Programmer retry with error feedback (AFlow: most impactful MATH technique,
+#      our data: 83/486 programs failed with no retry)
+#   2. math-reasoning-discipline skill applied to solver nodes
+#   3. Increased budget for retry LLM calls
+#   4. Improved programmer prompt with explicit error handling guidance
+# What we keep from v5 (proven to work):
+#   - Challenger solver (ScEnsemble 3-path)
+#   - CoT-first solver prompt
+#   - Review loop disabled
+#   - Concurrent execution
+
+defaults:
+  - override /model: openai_gpt4o_mini
+
+benchmark:
+  kind: math
+  dataset_id: EleutherAI/hendrycks_math
+  data_source: aflow_package
+  config_names:
+    - counting_and_probability
+    - number_theory
+    - prealgebra
+    - precalculus
+  selected_types:
+    - Counting & Probability
+    - Number Theory
+    - Prealgebra
+    - Precalculus
+  source_split: test
+  split_seed: 42
+  validation_fraction: 0.2
+  level_filter: Level 5
+  smoke_count: 20
+  processed_dir: benchmarks/math/processed
+  upstream_dir: benchmarks/math/upstream_full
+  train_sample_count: 1000
+  train_sample_seed: 42
+  aflow_cache_dir: benchmarks/aflow_public
+  metric: solve_rate
+  workflow_variant: aflow_v6
+  reporting_protocol: aflow_3run_average
+  paper_alignment:
+    source: AFlow
+    base_model: gpt-4o-mini
+    split: 20/80 validation-test
+    seed: 42
+    subset: MATH level-5 four-type slice
+    operators:
+      - Custom
+      - ScEnsemble
+      - Programmer
+      - ProgrammerRetry
+  preferred_answer_nodes:
+    - selector
+    - solver
+
+executor:
+  allow_offline_fallback: false
+
+workflow_design:
+  enabled: true
+  mode: pattern_then_synthesize
+  preferred_pattern: reason_execute_select
+  task_profile:
+    domain: math
+    answer_mode: exact_answer
+    complexity: high
+    requires_tool_execution: true
+    requires_artifact_validation: true
+    preferred_review_style: none
+    review_threshold: 0.0
+  runtime_expansion:
+    enabled: false
+    max_expansions: 0
+    expand_on_low_confidence: false
+    expand_on_eval_failure: false
+    expand_on_tool_failure: false
+    expand_on_output_signal: false
+  monitoring:
+    enabled: true
+    record_compile_trace: true
+    record_runtime_events: true
+    record_graph_candidates: true
+  pattern_overrides:
+    reason_execute_select:
+      enable_challenger_solver: true
+      allow_program_backfill: false
+      solver_system_prompt: |
+        You are a MATH competition solver.
+        Think through the problem step by step. Show ALL your work and reasoning.
+        IMPORTANT: Work through each step of your solution completely BEFORE stating the final answer.
+        Do not skip steps or jump to conclusions.
+        For counting problems, enumerate cases systematically.
+        For algebra, show each manipulation.
+        For number theory, state divisibility arguments explicitly.
+        Return JSON with:
+        - output.reasoning_steps: array of strings, each step of your work
+        - output.final_answer: the exact final answer AFTER completing all reasoning
+        - output.notes: any assumptions made
+        - confidence: 0..1
+        - summary: short string
+      programmer_system_prompt: |
+        You are the MATH programmer node.
+        Write executable Python code that computes the answer to the problem.
+        The code MUST:
+        1. Assign the final result to a variable called FINAL_ANSWER
+        2. Use Python stdlib, SymPy, and/or NumPy
+        3. Handle edge cases (division by zero, empty sets, etc.)
+        4. Keep exact symbolic forms — do NOT use float() on fractions or radicals
+
+        Guidelines by problem type:
+        - Counting/combinatorics: enumerate directly or use math.comb, itertools
+        - Number theory: use sympy.factorint, sympy.isprime, sympy.mod_inverse
+        - Precalculus/trig: use sympy.simplify, sympy.trigsimp, convert degrees/radians explicitly
+        - Algebra: use sympy.solve, sympy.Eq for equation solving
+
+        If your code previously failed with an error, fix the specific bug.
+        Return JSON with:
+        - output.program: executable Python code
+        - output.final_answer: the answer implied by that code
+        - output.notes: brief notes on approach
+        - confidence: 0..1
+        - summary: short string
+        Do not omit output.program.
+      tool_nodes:
+        program_exec:
+          tools:
+            - server: direct
+              tool: math_program_exec
+          sandbox:
+            sandbox_id: math-program-exec-v6
+            backend: local_venv
+            image: python:3.11
+            workdir: .
+            safety:
+              allow_network: false
+              cpu_quota: 1.0
+              mem_limit_mb: 2048
+              timeout_s: 60
+            bootstrap_cmds:
+              - [python, -m, pip, install, sympy]
+              - [python, -m, pip, install, numpy]
+          io:
+            output_schema:
+              type: object
+              required: [passed, executed_answer]
+          meta:
+            direct_sandbox_handler: true
+            max_program_retries: 2
+      selector_system_prompt: |
+        You are the MATH answer selector using self-consistency ensemble.
+        You receive multiple candidate answers from different reasoning paths:
+        - solver_answer: from direct reasoning (path A)
+        - challenger_answer: from independent reasoning (path B, if available)
+        - executed_answer: from code execution (path C, may have been retried on errors)
+
+        Your job is to select the BEST answer by comparing all candidates:
+        1. If 2 or more candidates agree on the same answer, that answer is almost certainly correct — select it with confidence >= 0.95.
+        2. If all candidates disagree, prefer the executed answer if the program ran successfully.
+        3. If the executed answer is empty, None, or a decimal for an exact-form question, prefer the reasoning-based answers that agree.
+        4. When comparing, treat numerically equivalent forms as agreeing (e.g., 1/2 == 0.5, but prefer the exact form 1/2).
+
+        NEVER set needs_review=true. The review loop is disabled.
+
+        Return JSON with:
+        - output.final_answer: chosen final exact answer only
+        - output.arbitration_notes: which candidates you compared and why you chose this one
+        - output.needs_review: false
+        - confidence: 0..1
+        - summary: short string
+      reviewer_system_prompt: ""
+      reviser_system_prompt: ""
+
+blueprint:
+  task:
+    task_id: math
+    title: MATH
+    description: Solve competition mathematics problems and return the final exact answer.
+  budget:
+    max_total_usd: 10.0
+    max_total_tokens: 50000
+  meta:
+    benchmark: math
+    dataset_id: ${benchmark.dataset_id}
+    aflow_alignment: ${benchmark.paper_alignment}
