@@ -24,8 +24,10 @@ executor:
 
 workflow_design:
   enabled: true
-  mode: pattern_then_synthesize
+  mode: pattern_library
   preferred_pattern: direct_answer
+  synthesis:
+    enabled: false
   task_profile:
     domain: generic
     answer_mode: exact_answer
