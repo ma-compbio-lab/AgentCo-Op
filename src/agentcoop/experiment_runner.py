@@ -6480,15 +6480,28 @@ def _build_mbpp_task_result(
     report_path: Path,
     preferred_nodes: Sequence[str],
 ) -> dict[str, Any]:
-    """Build task result for MBPP — same pattern as HumanEval."""
-    return _build_humaneval_task_result(
-        sample=sample,
-        sample_index=sample_index,
-        order=order,
-        report=report,
-        report_path=report_path,
-        preferred_nodes=preferred_nodes,
-    )
+    """Build task result for MBPP — uses MBPP-specific grading (check() with no args)."""
+    from agentcoop.benchmarks import grade_mbpp_prediction
+    answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
+    grading = grade_mbpp_prediction(answer_payload, sample)
+    public_test_outputs = report.node_results.get("public_test_runner", NodeExecutionResult()).outputs
+    return {
+        "order": order,
+        "sample_index": sample_index,
+        "task_id": sample["id"],
+        "question": sample["question"][:200],
+        "metadata": {"entry_point": sample.get("entry_point", "")},
+        "prediction_node": answer_node,
+        **grading,
+        "public_test_passed": bool(public_test_outputs.get("passed", False))
+        if isinstance(public_test_outputs, Mapping) else False,
+        "workflow_signature": _workflow_signature(report),
+        "activated_node_count": sum(1 for t in report.traces if t.status in {"success", "cached"}),
+        "failure_type": report.failure_type.value if report.failure_type.value != "none" else ("incorrect_answer" if not grading["correct"] else "none"),
+        "confidence": report.confidence,
+        "report_path": str(report_path),
+        "cost": report.cost.model_dump(),
+    }
 
 
 def _compute_f1(prediction: str, reference: str) -> float:

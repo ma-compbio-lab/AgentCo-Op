@@ -2404,6 +2404,84 @@ def _prepare_generic_aflow_benchmark(
     return manifest
 
 
+def grade_mbpp_prediction(
+    raw_prediction: Any,
+    sample: Mapping[str, Any],
+    *,
+    python_executable: str | None = None,
+    timeout_s: int = 15,
+) -> dict[str, Any]:
+    """Grade an MBPP prediction by executing the check() function (no arguments)."""
+    completion = extract_humaneval_completion(raw_prediction)
+    if not completion:
+        return {
+            "prediction_code": "",
+            "passed": False,
+            "result": "empty_completion",
+            "correct": False,
+        }
+
+    test_code = str(sample.get("test", ""))
+    if not test_code.strip():
+        # Fall back to test_list assertions
+        test_list = sample.get("test_list", [])
+        if test_list:
+            test_code = "def check():\n" + "\n".join(f"    {t}" for t in test_list)
+
+    status, detail = _execute_mbpp_check(
+        completion=completion,
+        test=test_code,
+        entry_point=str(sample.get("entry_point", "")),
+        python_executable=python_executable or sys.executable,
+        timeout_s=timeout_s,
+    )
+    return {
+        "prediction_code": completion,
+        "passed": status == "passed",
+        "result": detail,
+        "correct": status == "passed",
+    }
+
+
+def _execute_mbpp_check(
+    *,
+    completion: str,
+    test: str,
+    entry_point: str,
+    python_executable: str,
+    timeout_s: int,
+) -> tuple[str, str]:
+    """Execute MBPP check — calls check() with NO arguments (unlike HumanEval)."""
+    harness = (
+        "import math\n"
+        "import re\n"
+        "import sys\n"
+        "import collections\n"
+        "from itertools import *\n"
+        "from typing import Any, Dict, List, Optional, Tuple\n\n"
+        f"{completion.strip()}\n\n"
+        f"{test.strip()}\n\n"
+        f"check()\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="agentcoop_mbpp_") as tmp_dir:
+        script_path = Path(tmp_dir) / "check.py"
+        script_path.write_text(harness, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [python_executable, str(script_path)],
+                text=True,
+                capture_output=True,
+                timeout=timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "timeout", "execution timed out"
+    if completed.returncode == 0:
+        return "passed", "passed"
+    detail = completed.stderr.strip() or completed.stdout.strip() or f"returncode={completed.returncode}"
+    return "failed", detail
+
+
 def prepare_gsm8k_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
     return _prepare_generic_aflow_benchmark(
         config, kind="gsm8k", default_processed_dir="benchmarks/gsm8k/processed", metric="accuracy"
