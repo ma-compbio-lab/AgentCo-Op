@@ -84,7 +84,7 @@ def _run_one_sample(
     correct_flag = task_result.get("correct", task_result.get("passed", "?"))
     logger.info(
         "[%s] #%d %s | %s | %.1fs | %d tok | nodes=%s",
-        runner_cls.benchmark_name.fget(runner),
+        runner.benchmark_name,
         order,
         sample_id,
         "PASS" if correct_flag else "FAIL",
