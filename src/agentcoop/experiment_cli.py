@@ -66,6 +66,25 @@ def main(argv: list[str] | None = None) -> int:
     humaneval.add_argument("--model", default="openai_gpt4o_mini")
     humaneval.add_argument("overrides", nargs="*")
 
+    # New AFlow-aligned benchmarks
+    for bench_name, bench_default_exp in [
+        ("gsm8k", "gsm8k"),
+        ("mbpp", "mbpp"),
+        ("hotpotqa", "hotpotqa"),
+        ("drop", "drop"),
+    ]:
+        bench_parser = subparsers.add_parser(bench_name)
+        bench_parser.add_argument("--experiment", default=bench_default_exp)
+        bench_parser.add_argument("--subset", choices=("smoke", "validation", "test"), default="validation")
+        bench_parser.add_argument("--limit", type=int, default=None)
+        bench_parser.add_argument("--task-ids", default="")
+        bench_parser.add_argument("--num-shards", type=int, default=1)
+        bench_parser.add_argument("--shard-index", type=int, default=0)
+        bench_parser.add_argument("--resume-run-dir", default="")
+        bench_parser.add_argument("--base-dir", default="runs")
+        bench_parser.add_argument("--model", default="openai_gpt4o_mini")
+        bench_parser.add_argument("overrides", nargs="*")
+
     case_study = subparsers.add_parser("case-study")
     case_study.add_argument("--experiment", default="scanpy_pbmc3k_case")
     case_study.add_argument("--base-dir", default="runs")
@@ -130,6 +149,34 @@ def main(argv: list[str] | None = None) -> int:
             subset=args.subset,
             limit=args.limit,
             task_ids=task_ids,
+            num_shards=args.num_shards,
+            shard_index=args.shard_index,
+            base_dir=args.base_dir,
+            resume_run_dir=args.resume_run_dir or None,
+        )
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
+        return 0 if summary.get("task_count", 0) > 0 else 1
+
+    # Handle new AFlow-aligned benchmarks via runner classes
+    _RUNNER_MAP = {
+        "gsm8k": ("agentcoop.benchmarks.gsm8k_runner", "GSM8KRunner"),
+        "mbpp": ("agentcoop.benchmarks.mbpp_runner", "MBPPRunner"),
+        "hotpotqa": ("agentcoop.benchmarks.hotpotqa_runner", "HotpotQARunner"),
+        "drop": ("agentcoop.benchmarks.drop_runner", "DROPRunner"),
+    }
+    if args.command in _RUNNER_MAP:
+        import importlib
+        module_path, class_name = _RUNNER_MAP[args.command]
+        mod = importlib.import_module(module_path)
+        runner_cls = getattr(mod, class_name)
+        cfg = load_hydra_config(overrides=[f"experiment={args.experiment}", f"model={args.model}", *args.overrides])
+        task_ids = [item.strip() for item in args.task_ids.split(",") if item.strip()]
+        runner = runner_cls()
+        summary = runner.run(
+            cfg,
+            subset=args.subset,
+            limit=args.limit,
+            task_ids=task_ids or None,
             num_shards=args.num_shards,
             shard_index=args.shard_index,
             base_dir=args.base_dir,

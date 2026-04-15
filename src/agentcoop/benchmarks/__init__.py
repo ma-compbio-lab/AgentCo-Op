@@ -2344,4 +2344,85 @@ def __getattr__(name: str):  # type: ignore[override]
         from agentcoop.benchmarks.humaneval_runner import HumanEvalRunner
         globals()["HumanEvalRunner"] = HumanEvalRunner
         return HumanEvalRunner
+    if name == "GSM8KRunner":
+        from agentcoop.benchmarks.gsm8k_runner import GSM8KRunner
+        globals()["GSM8KRunner"] = GSM8KRunner
+        return GSM8KRunner
+    if name == "MBPPRunner":
+        from agentcoop.benchmarks.mbpp_runner import MBPPRunner
+        globals()["MBPPRunner"] = MBPPRunner
+        return MBPPRunner
+    if name == "HotpotQARunner":
+        from agentcoop.benchmarks.hotpotqa_runner import HotpotQARunner
+        globals()["HotpotQARunner"] = HotpotQARunner
+        return HotpotQARunner
+    if name == "DROPRunner":
+        from agentcoop.benchmarks.drop_runner import DROPRunner
+        globals()["DROPRunner"] = DROPRunner
+        return DROPRunner
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# ---------------------------------------------------------------------------
+# Dataset preparation for GSM8K, MBPP, HotpotQA, DROP
+# ---------------------------------------------------------------------------
+
+
+def _prepare_generic_aflow_benchmark(
+    config: Mapping[str, Any],
+    *,
+    kind: str,
+    default_processed_dir: str,
+    metric: str,
+) -> dict[str, Any]:
+    """Generic dataset preparation for benchmarks that use pre-processed AFlow data.
+
+    The datasets are already split and processed in the benchmarks/<kind>/processed/
+    directory. This function just loads and returns the manifest.
+    """
+    settings = get_benchmark_settings(config)
+    if settings.get("kind") != kind:
+        raise BenchmarkSetupError(f"Benchmark config kind must be '{kind}'")
+
+    processed_dir = Path(str(settings.get("processed_dir", default_processed_dir))).resolve()
+    metadata_path = processed_dir / "dataset_manifest.json"
+
+    if not metadata_path.exists():
+        raise BenchmarkSetupError(
+            f"{kind} dataset not found at {metadata_path}. "
+            f"Run the dataset processing script first to extract from aflow_data.tar.gz."
+        )
+
+    manifest = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    # Validate required paths exist
+    for path_key in ("records_path", "smoke_indices_path", "validation_indices_path", "test_indices_path"):
+        path_val = manifest.get(path_key, "")
+        if not Path(str(path_val)).exists():
+            raise BenchmarkSetupError(f"{kind} dataset missing {path_key}: {path_val}")
+
+    return manifest
+
+
+def prepare_gsm8k_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
+    return _prepare_generic_aflow_benchmark(
+        config, kind="gsm8k", default_processed_dir="benchmarks/gsm8k/processed", metric="accuracy"
+    )
+
+
+def prepare_mbpp_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
+    return _prepare_generic_aflow_benchmark(
+        config, kind="mbpp", default_processed_dir="benchmarks/mbpp/processed", metric="pass@1"
+    )
+
+
+def prepare_hotpotqa_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
+    return _prepare_generic_aflow_benchmark(
+        config, kind="hotpotqa", default_processed_dir="benchmarks/hotpotqa/processed", metric="f1"
+    )
+
+
+def prepare_drop_dataset(config: Mapping[str, Any]) -> dict[str, Any]:
+    return _prepare_generic_aflow_benchmark(
+        config, kind="drop", default_processed_dir="benchmarks/drop/processed", metric="f1"
+    )
