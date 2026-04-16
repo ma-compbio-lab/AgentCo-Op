@@ -1,0 +1,161 @@
+# @package _global_
+# DROP v2: Upgrade from direct_answer to reason_execute_select pattern
+# Evidence: DROP requires discrete numerical reasoning (counting, arithmetic,
+# date calculations) which pure LLM reasoning handles poorly. AFlow achieves
+# 80.6% vs our 31.5%/39% F1 because they use code execution (Programmer operator).
+# Research: Program-of-Thoughts (Chen 2022) and ToRA (Gou 2023) show +10-20pp
+# on DROP-style numerical reading comprehension.
+#
+# Key changes from drop.yaml:
+#   1. Use reason_execute_select pattern (same as MATH v5) for ScEnsemble + code
+#   2. Challenger solver for reasoning diversity
+#   3. Programmer path for numerical computation from context
+#   4. Selector arbitrates between reasoning and code paths
+#   5. Keep verbosity stripping + SQuAD-style F1 (inherited from framework)
+
+defaults:
+  - override /model: openai_gpt4o_mini
+
+benchmark:
+  kind: drop
+  dataset_id: drop
+  data_source: aflow_package
+  source_split: test
+  split_seed: 42
+  validation_fraction: 0.2
+  smoke_count: 20
+  processed_dir: benchmarks/drop/processed
+  aflow_cache_dir: benchmarks/aflow_public
+  metric: f1
+  preferred_answer_nodes:
+    - selector
+    - solver
+
+executor:
+  allow_offline_fallback: false
+
+workflow_design:
+  enabled: true
+  mode: pattern_library
+  preferred_pattern: reason_execute_select
+  synthesis:
+    enabled: false
+  task_profile:
+    domain: generic
+    answer_mode: exact_answer
+    complexity: high
+    requires_tool_execution: true
+    requires_artifact_validation: false
+    preferred_review_style: none
+    review_threshold: 0.0
+  runtime_expansion:
+    enabled: false
+  monitoring:
+    enabled: true
+    record_compile_trace: true
+    record_runtime_events: true
+  pattern_overrides:
+    reason_execute_select:
+      enable_challenger_solver: true
+      allow_program_backfill: false
+      solver_system_prompt: |
+        You are answering a DROP reading comprehension question requiring
+        discrete reasoning (counting, arithmetic, date calculations, etc.).
+
+        CRITICAL ANSWER FORMAT RULES:
+        1. Determine the answer TYPE first:
+           - Number: output just the number (e.g., "83", not "83 years")
+           - Date: output "MM/DD/YYYY" or "YYYY" format
+           - Span: output the exact text span (no extra words)
+        2. For ARITHMETIC (add/subtract/count), compute carefully:
+           - Identify all relevant numbers in the passage
+           - State the operation explicitly in reasoning
+           - Double-check by restating the result
+        3. For COUNTING, enumerate the items.
+        4. NEVER include units (%, years, dollars) in final_answer.
+        5. NEVER wrap the answer in a sentence.
+
+        Return JSON with:
+        - output.final_answer: just the answer value
+        - output.answer_type: "number", "date", or "span"
+        - output.reasoning_steps: array of derivation steps
+        - confidence: 0..1
+        - summary: short string
+      programmer_system_prompt: |
+        You are the DROP programmer. Write Python code to compute the answer
+        from the passage in task.description.
+
+        STRATEGY:
+        1. Extract all relevant numbers/dates/entities from the passage into variables
+        2. Perform the required operations (sum, difference, count, sort, etc.)
+        3. Assign the final scalar result to FINAL_ANSWER and print it
+
+        IMPORTANT:
+        - Use integer arithmetic when possible (avoid floating-point artifacts)
+        - For "how many X", count items explicitly (use len() on a filtered list)
+        - For "difference between X and Y", compute abs(X - Y) or directed difference as asked
+        - For span answers (names, entities), return the exact string
+
+        Return JSON with:
+        - output.program: executable Python code
+        - output.final_answer: the answer the code computes
+        - output.notes: what the code does
+        - confidence: 0..1
+        - summary: short string
+      tool_nodes:
+        program_exec:
+          tools:
+            - server: direct
+              tool: math_program_exec
+          sandbox:
+            sandbox_id: drop-program-exec
+            backend: local_venv
+            image: python:3.11
+            workdir: .
+            safety:
+              allow_network: false
+              cpu_quota: 1.0
+              mem_limit_mb: 2048
+              timeout_s: 30
+            bootstrap_cmds:
+              - [python, -m, pip, install, sympy]
+          io:
+            output_schema:
+              type: object
+              required: [passed, executed_answer]
+          meta:
+            direct_sandbox_handler: true
+      selector_system_prompt: |
+        You are the DROP answer selector.
+        You receive candidate answers from multiple paths:
+        - solver_answer: from careful reading + manual reasoning
+        - challenger_answer: from independent reasoning
+        - executed_answer: from Python computation
+
+        Selection rules (in priority order):
+        1. If 2+ candidates agree on the same answer, select that with confidence >= 0.95
+        2. For NUMERIC answers: if executed_answer is a clean number and solver agrees, use executed.
+        3. For SPAN answers: prefer the solver's reading over program output (programs rarely produce good spans).
+        4. If executed_answer is "None" or empty, prefer solver_answer.
+        5. When all disagree: prefer the shortest, most direct answer (DROP grading uses F1; shorter = less penalty).
+
+        NEVER set needs_review=true. Review loop disabled.
+
+        Return JSON with:
+        - output.final_answer: just the value (no units, no sentence)
+        - output.needs_review: false
+        - confidence: 0..1
+        - summary: short string
+      reviewer_system_prompt: ""
+      reviser_system_prompt: ""
+
+blueprint:
+  task:
+    task_id: drop
+    title: DROP
+    description: Answer reading comprehension questions requiring discrete reasoning.
+  budget:
+    max_total_usd: 4.0
+    max_total_tokens: 24000
+  meta:
+    benchmark: drop
