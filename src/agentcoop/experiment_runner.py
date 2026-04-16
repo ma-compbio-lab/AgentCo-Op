@@ -1912,7 +1912,17 @@ def _summarize_generic_task_results(
         total_activated_nodes += int(result.get("activated_node_count", 0) or 0)
         total_activated_subgraphs += int(result.get("activated_subgraph_count", 0) or 0)
 
-    metric_value = _safe_ratio(sum(1 for result in task_results if _is_generic_result_correct(benchmark, result)), len(task_results))
+    # For F1-metric benchmarks (HotpotQA, DROP), use average F1 as primary metric
+    # (matching AFlow's reporting convention)
+    if metric_name == "f1":
+        f1_values = [float(r.get("f1", 0.0) or 0.0) for r in task_results]
+        metric_value = _safe_ratio(sum(f1_values), len(task_results)) if task_results else 0.0
+        em_rate = _safe_ratio(sum(1 for r in task_results if r.get("exact_match")), len(task_results))
+        correct_rate = _safe_ratio(sum(1 for r in task_results if _is_generic_result_correct(benchmark, r)), len(task_results))
+    else:
+        metric_value = _safe_ratio(sum(1 for result in task_results if _is_generic_result_correct(benchmark, result)), len(task_results))
+        em_rate = metric_value
+        correct_rate = metric_value
     return {
         "benchmark": benchmark,
         "subset": subset,
@@ -1922,6 +1932,8 @@ def _summarize_generic_task_results(
         "task_count": len(task_results),
         metric_name: metric_value,
         "accuracy": metric_value,
+        "exact_match_rate": em_rate,
+        "correct_rate": correct_rate,
         "average_usd": _safe_ratio(total_usd, len(task_results)),
         "average_input_tokens": _safe_ratio(total_input_tokens, len(task_results)),
         "average_output_tokens": _safe_ratio(total_output_tokens, len(task_results)),
@@ -6411,10 +6423,11 @@ def _build_hotpotqa_task_result(
     preferred_nodes: Sequence[str],
 ) -> dict[str, Any]:
     answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
-    prediction = str(answer_payload.get("final_answer", answer_payload.get("result", "")) or "").strip()
+    raw_prediction = str(answer_payload.get("final_answer", answer_payload.get("result", "")) or "").strip()
+    prediction = _strip_answer_verbosity(raw_prediction)
     gold = str(sample.get("gold_answer", "")).strip()
     f1 = _compute_f1(prediction, gold)
-    em = prediction.lower().strip() == gold.lower().strip()
+    em = _compute_exact_match(prediction, gold)
     return {
         "order": order,
         "sample_index": sample_index,
@@ -6446,10 +6459,11 @@ def _build_drop_task_result(
     preferred_nodes: Sequence[str],
 ) -> dict[str, Any]:
     answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
-    prediction = str(answer_payload.get("final_answer", answer_payload.get("result", "")) or "").strip()
+    raw_prediction = str(answer_payload.get("final_answer", answer_payload.get("result", "")) or "").strip()
+    prediction = _strip_answer_verbosity(raw_prediction)
     gold = str(sample.get("gold_answer", "")).strip()
     f1 = _compute_f1(prediction, gold)
-    em = prediction.lower().strip() == gold.lower().strip()
+    em = _compute_exact_match(prediction, gold)
     return {
         "order": order,
         "sample_index": sample_index,
@@ -6504,18 +6518,79 @@ def _build_mbpp_task_result(
     }
 
 
+def _strip_answer_verbosity(answer: str) -> str:
+    """Post-process an LLM answer to remove common verbosity patterns.
+
+    This is a general-purpose cleanup applied before grading for QA-style
+    benchmarks (HotpotQA, DROP). It strips:
+    - Leading "The answer is" / "Answer:" prefixes
+    - Trailing periods
+    - Surrounding quotes
+    - Common unit suffixes when the answer is clearly numeric
+    """
+    if not answer:
+        return ""
+    s = answer.strip()
+    # Strip common prefixes
+    for prefix in [
+        "The answer is ", "Answer: ", "Answer is ", "The final answer is ",
+        "Final answer: ", "answer: ", "answer is ", "It is ", "It's ",
+    ]:
+        if s.lower().startswith(prefix.lower()):
+            s = s[len(prefix):]
+    # Strip surrounding quotes
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        s = s[1:-1]
+    # Strip trailing period (but keep if part of abbreviation like "Dr.")
+    if s.endswith(".") and len(s) > 2 and s[-3] not in " ":
+        pass  # likely abbreviation
+    elif s.endswith("."):
+        s = s[:-1]
+    # Strip common unit suffixes for numeric answers
+    import re as _re
+    num_match = _re.match(r"^(-?\d+(?:\.\d+)?)\s*(%|percent|years?|days?|hours?|minutes?|dollars?|\$)$", s.strip(), _re.IGNORECASE)
+    if num_match:
+        s = num_match.group(1)
+    return s.strip()
+
+
+def _squad_normalize(s: str) -> str:
+    """SQuAD-style answer normalization: lowercase, strip articles, strip punctuation, fix whitespace."""
+    import string
+    s = s.lower()
+    # Remove articles
+    s = re.sub(r"\b(a|an|the)\b", " ", s)
+    # Remove punctuation (including quotes)
+    exclude = set(string.punctuation)
+    s = "".join(ch for ch in s if ch not in exclude)
+    # Fix whitespace
+    s = " ".join(s.split())
+    return s
+
+
 def _compute_f1(prediction: str, reference: str) -> float:
-    """Token-level F1 score between prediction and reference."""
-    pred_tokens = set(prediction.lower().split())
-    ref_tokens = set(reference.lower().split())
+    """SQuAD-style token-level F1 score (with normalization, multiset counting)."""
+    from collections import Counter as _Counter
+    pred_norm = _squad_normalize(prediction)
+    ref_norm = _squad_normalize(reference)
+    pred_tokens = pred_norm.split()
+    ref_tokens = ref_norm.split()
     if not pred_tokens or not ref_tokens:
         return 1.0 if pred_tokens == ref_tokens else 0.0
-    common = pred_tokens & ref_tokens
-    if not common:
+    # Use multiset intersection (accounts for repeated tokens like in DROP)
+    common = _Counter(pred_tokens) & _Counter(ref_tokens)
+    num_same = sum(common.values())
+    if num_same == 0:
         return 0.0
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(ref_tokens)
+    precision = num_same / len(pred_tokens)
+    recall = num_same / len(ref_tokens)
     return 2 * precision * recall / (precision + recall)
+
+
+def _compute_exact_match(prediction: str, reference: str) -> bool:
+    """SQuAD-style exact match after normalization."""
+    return _squad_normalize(prediction) == _squad_normalize(reference)
 
 
 def _run_quiet(cmd: Sequence[str]) -> str:

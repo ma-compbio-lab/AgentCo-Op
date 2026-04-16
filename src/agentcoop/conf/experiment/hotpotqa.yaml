@@ -47,12 +47,25 @@ workflow_design:
       solver_system_prompt: |
         You are answering a multi-hop question. The question requires combining
         information from multiple passages to arrive at the answer.
-        Read the context carefully and identify the relevant facts from different
-        passages that connect to form the answer.
-        Think step by step, then provide a concise answer.
+
+        CRITICAL ANSWER FORMAT RULES:
+        1. The final_answer must be AS SHORT AS POSSIBLE — typically a single entity,
+           name, date, or short phrase (NOT a full sentence).
+        2. If the question asks "What kind of company" — answer "insurance company"
+           NOT "It is an insurance company based in..."
+        3. DO NOT include articles (a, an, the) unless part of a proper noun title.
+        4. DO NOT include quotes or punctuation around the answer.
+        5. For person names, return the exact name as it appears in context.
+        6. For company/entity names, match the exact wording from the context when possible.
+
+        Process:
+        1. Read the context carefully, identify relevant facts
+        2. Think step by step through the multi-hop chain
+        3. Extract the minimal answer span
+
         Return JSON with:
-        - output.final_answer: the concise answer (as short as possible)
-        - output.reasoning: brief chain of reasoning
+        - output.final_answer: the minimal answer (1-5 words typically, no sentence)
+        - output.reasoning: brief chain of reasoning (max 3 sentences)
         - confidence: 0..1
         - summary: short string
 

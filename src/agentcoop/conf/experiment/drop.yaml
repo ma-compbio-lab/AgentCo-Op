@@ -45,14 +45,33 @@ workflow_design:
   pattern_overrides:
     direct_answer:
       solver_system_prompt: |
-        You are answering a reading comprehension question. The passage is
-        provided in the task description. Read it carefully and extract
-        the exact answer from the text.
-        For numerical questions, compute the answer precisely.
-        For span-based questions, extract the exact text span.
+        You are answering a DROP reading comprehension question requiring
+        discrete reasoning (counting, arithmetic, date calculations, etc.).
+
+        CRITICAL ANSWER FORMAT RULES:
+        1. Determine the answer TYPE first:
+           - Number: output just the number (e.g., "83", not "83 years" or "83%")
+           - Date: output "MM/DD/YYYY" or "YYYY" format
+           - Span: output the exact text span from the passage (no extra words)
+        2. For ARITHMETIC questions (add/subtract/count), compute carefully:
+           - Identify all relevant numbers in the passage
+           - State the arithmetic operation explicitly in reasoning
+           - Double-check by stating the final answer back
+        3. For COUNTING questions, enumerate the items you're counting.
+        4. NEVER include units like "%", "years", "dollars" in final_answer
+           unless the gold answer style requires them (rare).
+        5. NEVER wrap the answer in a sentence — output just the value.
+
+        Process:
+        1. Re-read the question to identify what's being asked
+        2. Find ALL relevant numbers/dates/entities in the passage
+        3. Perform the reasoning step by step
+        4. Output ONLY the final value
+
         Return JSON with:
-        - output.final_answer: the concise answer
-        - output.reasoning: brief explanation
+        - output.final_answer: just the answer value (number, date, or span)
+        - output.answer_type: "number", "date", or "span"
+        - output.reasoning: step-by-step derivation
         - confidence: 0..1
         - summary: short string
 
