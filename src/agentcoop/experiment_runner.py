@@ -57,6 +57,32 @@ from agentcoop.ir.schema import AtomicCondition, ConditionOp, FailureType, GateS
 from agentcoop.runtime.llm import LLMClientError, OpenAICompatibleLLMClient
 from agentcoop.secrets import load_local_secrets
 
+import string as _string
+
+# Shared node IDs (referenced by both HumanEval and MBPP code_generate_test_repair patterns).
+_PUBLIC_TEST_NODE = "public_test_runner"
+
+# Pre-compiled regexes and constant sets for hot-path benchmark scoring.
+_GSM8K_NUMBER_RE = re.compile(r"-?\d+\.?\d*")
+_UNIT_SUFFIX_RE = re.compile(
+    r"^(-?\d+(?:\.\d+)?)\s*(%|percent|years?|days?|hours?|minutes?|dollars?|\$)$",
+    re.IGNORECASE,
+)
+_ARTICLES_RE = re.compile(r"\b(a|an|the)\b")
+_PUNCT_SET = frozenset(_string.punctuation)
+
+_VERBOSITY_PREFIXES: tuple[str, ...] = (
+    "The answer is ",
+    "Answer: ",
+    "Answer is ",
+    "The final answer is ",
+    "Final answer: ",
+    "answer: ",
+    "answer is ",
+    "It is ",
+    "It's ",
+)
+
 
 @dataclass
 class RunRecorder:
@@ -1787,7 +1813,7 @@ def _build_humaneval_task_result(
 ) -> dict[str, Any]:
     answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
     grading = grade_humaneval_prediction(answer_payload, sample)
-    public_test_outputs = report.node_results.get("public_test_runner", NodeExecutionResult()).outputs
+    public_test_outputs = report.node_results.get(_PUBLIC_TEST_NODE, NodeExecutionResult()).outputs
     retest_outputs = report.node_results.get("retest_runner", NodeExecutionResult()).outputs
     rewrite_test_outputs = report.node_results.get("rewrite_test_runner", NodeExecutionResult()).outputs
     reviser_outputs = report.node_results.get("reviser", NodeExecutionResult()).outputs
@@ -6241,56 +6267,61 @@ def _slugify(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_gsm8k_task_blueprint(
-    base_blueprint: WorkflowBlueprint, sample: Mapping[str, Any]
+def _apply_sample_to_blueprint(
+    base_blueprint: WorkflowBlueprint,
+    sample: Mapping[str, Any],
+    *,
+    description: str,
+    hint_updates: Mapping[str, Any],
+    meta_updates: Mapping[str, Any] | None = None,
 ) -> WorkflowBlueprint:
+    """Shared blueprint copy + task/meta update used by per-sample builders."""
     task_hints = dict(base_blueprint.task.hints)
-    task_hints["benchmark"] = "gsm8k"
+    task_hints.update(hint_updates)
     updated_task = base_blueprint.task.model_copy(
         update={
             "task_id": f"{base_blueprint.task.task_id}:{sample['id']}",
-            "description": sample["prompt"],
+            "description": description,
             "hints": task_hints,
         }
     )
     updated_meta = dict(base_blueprint.meta)
     updated_meta["sample_id"] = sample["id"]
+    if meta_updates:
+        updated_meta.update(meta_updates)
     return base_blueprint.model_copy(update={"task": updated_task, "meta": updated_meta}, deep=True)
+
+
+def build_gsm8k_task_blueprint(
+    base_blueprint: WorkflowBlueprint, sample: Mapping[str, Any]
+) -> WorkflowBlueprint:
+    return _apply_sample_to_blueprint(
+        base_blueprint,
+        sample,
+        description=sample["prompt"],
+        hint_updates={"benchmark": "gsm8k"},
+    )
 
 
 def build_mbpp_task_blueprint(
     base_blueprint: WorkflowBlueprint, sample: Mapping[str, Any]
 ) -> WorkflowBlueprint:
-    task_hints = dict(base_blueprint.task.hints)
-    task_hints.update({
-        "benchmark": "mbpp",
-        "entry_point": sample.get("entry_point", ""),
-    })
+    entry_point = sample.get("entry_point", "")
     prompt_text = sample.get("prompt", "")
     if sample.get("test_list"):
         prompt_text += "\n\nExample tests:\n" + "\n".join(sample["test_list"][:3])
-    updated_task = base_blueprint.task.model_copy(
-        update={
-            "task_id": f"{base_blueprint.task.task_id}:{sample['id']}",
-            "description": prompt_text,
-            "hints": task_hints,
-        }
+    return _apply_sample_to_blueprint(
+        base_blueprint,
+        sample,
+        description=prompt_text,
+        hint_updates={"benchmark": "mbpp", "entry_point": entry_point},
+        meta_updates={"entry_point": entry_point},
     )
-    updated_meta = dict(base_blueprint.meta)
-    updated_meta.update({"sample_id": sample["id"], "entry_point": sample.get("entry_point", "")})
-    return base_blueprint.model_copy(update={"task": updated_task, "meta": updated_meta}, deep=True)
 
 
 def build_hotpotqa_task_blueprint(
     base_blueprint: WorkflowBlueprint, sample: Mapping[str, Any]
 ) -> WorkflowBlueprint:
-    task_hints = dict(base_blueprint.task.hints)
-    task_hints.update({
-        "benchmark": "hotpotqa",
-        "question_type": sample.get("type", ""),
-        "difficulty_level": sample.get("level", ""),
-    })
-    # Include context paragraphs in the prompt
     context_text = ""
     raw_context = sample.get("context", [])
     if isinstance(raw_context, list):
@@ -6299,35 +6330,31 @@ def build_hotpotqa_task_blueprint(
                 title = ctx_item[0]
                 sentences = ctx_item[1] if isinstance(ctx_item[1], list) else [ctx_item[1]]
                 context_text += f"\n{title}: {''.join(str(s) for s in sentences)}"
-    prompt = f"Answer the following question based on the provided context.\n\nContext:{context_text}\n\nQuestion: {sample['question']}\n\nProvide the answer only."
-    updated_task = base_blueprint.task.model_copy(
-        update={
-            "task_id": f"{base_blueprint.task.task_id}:{sample['id']}",
-            "description": prompt,
-            "hints": task_hints,
-        }
+    prompt = (
+        f"Answer the following question based on the provided context.\n\n"
+        f"Context:{context_text}\n\nQuestion: {sample['question']}\n\nProvide the answer only."
     )
-    updated_meta = dict(base_blueprint.meta)
-    updated_meta["sample_id"] = sample["id"]
-    return base_blueprint.model_copy(update={"task": updated_task, "meta": updated_meta}, deep=True)
+    return _apply_sample_to_blueprint(
+        base_blueprint,
+        sample,
+        description=prompt,
+        hint_updates={
+            "benchmark": "hotpotqa",
+            "question_type": sample.get("type", ""),
+            "difficulty_level": sample.get("level", ""),
+        },
+    )
 
 
 def build_drop_task_blueprint(
     base_blueprint: WorkflowBlueprint, sample: Mapping[str, Any]
 ) -> WorkflowBlueprint:
-    task_hints = dict(base_blueprint.task.hints)
-    task_hints["benchmark"] = "drop"
-    prompt = f"{sample['question']}\n\nProvide the answer only."
-    updated_task = base_blueprint.task.model_copy(
-        update={
-            "task_id": f"{base_blueprint.task.task_id}:{sample['id']}",
-            "description": prompt,
-            "hints": task_hints,
-        }
+    return _apply_sample_to_blueprint(
+        base_blueprint,
+        sample,
+        description=f"{sample['question']}\n\nProvide the answer only.",
+        hint_updates={"benchmark": "drop"},
     )
-    updated_meta = dict(base_blueprint.meta)
-    updated_meta["sample_id"] = sample["id"]
-    return base_blueprint.model_copy(update={"task": updated_task, "meta": updated_meta}, deep=True)
 
 
 def _build_gsm8k_task_handlers(
@@ -6398,19 +6425,56 @@ def _gsm8k_equal(prediction: str, reference: str) -> bool:
 def _extract_gsm8k_number(text: str) -> float | None:
     """Extract the final number from a GSM8K answer string."""
     text = text.strip().replace(",", "").replace("$", "").replace("%", "")
-    # Try direct float parse
     try:
         return float(text)
     except ValueError:
         pass
-    # Extract last number from text
-    numbers = re.findall(r"-?\d+\.?\d*", text)
+    numbers = _GSM8K_NUMBER_RE.findall(text)
     if numbers:
         try:
             return float(numbers[-1])
         except ValueError:
             pass
     return None
+
+
+def _build_qa_task_result(
+    *,
+    sample: Mapping[str, Any],
+    sample_index: int,
+    order: int,
+    report: ExecutionReport,
+    report_path: Path,
+    preferred_nodes: Sequence[str],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Shared F1-grading result builder for QA benchmarks (HotpotQA, DROP)."""
+    answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
+    raw_prediction = str(answer_payload.get("final_answer", answer_payload.get("result", "")) or "").strip()
+    prediction = _strip_answer_verbosity(raw_prediction)
+    gold = str(sample.get("gold_answer", "")).strip()
+    f1 = _compute_f1(prediction, gold)
+    em = _compute_exact_match(prediction, gold)
+    return {
+        "order": order,
+        "sample_index": sample_index,
+        "task_id": sample["id"],
+        "question": sample["question"][:200],
+        "metadata": dict(metadata),
+        "prediction_node": answer_node,
+        "prediction_answer": prediction,
+        "gold_answer": gold,
+        "correct": em or f1 >= 0.8,
+        "f1": f1,
+        "exact_match": em,
+        "workflow_signature": _workflow_signature(report),
+        "activated_node_count": sum(1 for t in report.traces if t.status in {"success", "cached"}),
+        "failure_type": report.failure_type.value if report.failure_type.value != "none"
+        else ("incorrect_answer" if f1 < 0.5 else "none"),
+        "confidence": report.confidence,
+        "report_path": str(report_path),
+        "cost": report.cost.model_dump(),
+    }
 
 
 def _build_hotpotqa_task_result(
@@ -6422,31 +6486,15 @@ def _build_hotpotqa_task_result(
     report_path: Path,
     preferred_nodes: Sequence[str],
 ) -> dict[str, Any]:
-    answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
-    raw_prediction = str(answer_payload.get("final_answer", answer_payload.get("result", "")) or "").strip()
-    prediction = _strip_answer_verbosity(raw_prediction)
-    gold = str(sample.get("gold_answer", "")).strip()
-    f1 = _compute_f1(prediction, gold)
-    em = _compute_exact_match(prediction, gold)
-    return {
-        "order": order,
-        "sample_index": sample_index,
-        "task_id": sample["id"],
-        "question": sample["question"][:200],
-        "metadata": {"type": sample.get("type", ""), "level": sample.get("level", "")},
-        "prediction_node": answer_node,
-        "prediction_answer": prediction,
-        "gold_answer": gold,
-        "correct": em or f1 >= 0.8,
-        "f1": f1,
-        "exact_match": em,
-        "workflow_signature": _workflow_signature(report),
-        "activated_node_count": sum(1 for t in report.traces if t.status in {"success", "cached"}),
-        "failure_type": report.failure_type.value if report.failure_type.value != "none" else ("incorrect_answer" if f1 < 0.5 else "none"),
-        "confidence": report.confidence,
-        "report_path": str(report_path),
-        "cost": report.cost.model_dump(),
-    }
+    return _build_qa_task_result(
+        sample=sample,
+        sample_index=sample_index,
+        order=order,
+        report=report,
+        report_path=report_path,
+        preferred_nodes=preferred_nodes,
+        metadata={"type": sample.get("type", ""), "level": sample.get("level", "")},
+    )
 
 
 def _build_drop_task_result(
@@ -6458,31 +6506,15 @@ def _build_drop_task_result(
     report_path: Path,
     preferred_nodes: Sequence[str],
 ) -> dict[str, Any]:
-    answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
-    raw_prediction = str(answer_payload.get("final_answer", answer_payload.get("result", "")) or "").strip()
-    prediction = _strip_answer_verbosity(raw_prediction)
-    gold = str(sample.get("gold_answer", "")).strip()
-    f1 = _compute_f1(prediction, gold)
-    em = _compute_exact_match(prediction, gold)
-    return {
-        "order": order,
-        "sample_index": sample_index,
-        "task_id": sample["id"],
-        "question": sample["question"][:200],
-        "metadata": {},
-        "prediction_node": answer_node,
-        "prediction_answer": prediction,
-        "gold_answer": gold,
-        "correct": em or f1 >= 0.8,
-        "f1": f1,
-        "exact_match": em,
-        "workflow_signature": _workflow_signature(report),
-        "activated_node_count": sum(1 for t in report.traces if t.status in {"success", "cached"}),
-        "failure_type": report.failure_type.value if report.failure_type.value != "none" else ("incorrect_answer" if f1 < 0.5 else "none"),
-        "confidence": report.confidence,
-        "report_path": str(report_path),
-        "cost": report.cost.model_dump(),
-    }
+    return _build_qa_task_result(
+        sample=sample,
+        sample_index=sample_index,
+        order=order,
+        report=report,
+        report_path=report_path,
+        preferred_nodes=preferred_nodes,
+        metadata={},
+    )
 
 
 def _build_mbpp_task_result(
@@ -6498,7 +6530,7 @@ def _build_mbpp_task_result(
     from agentcoop.benchmarks import grade_mbpp_prediction
     answer_payload, answer_node = extract_answer_payload(report, preferred_nodes=preferred_nodes)
     grading = grade_mbpp_prediction(answer_payload, sample)
-    public_test_outputs = report.node_results.get("public_test_runner", NodeExecutionResult()).outputs
+    public_test_outputs = report.node_results.get(_PUBLIC_TEST_NODE, NodeExecutionResult()).outputs
     return {
         "order": order,
         "sample_index": sample_index,
@@ -6531,25 +6563,18 @@ def _strip_answer_verbosity(answer: str) -> str:
     if not answer:
         return ""
     s = answer.strip()
-    # Strip common prefixes
-    for prefix in [
-        "The answer is ", "Answer: ", "Answer is ", "The final answer is ",
-        "Final answer: ", "answer: ", "answer is ", "It is ", "It's ",
-    ]:
-        if s.lower().startswith(prefix.lower()):
+    lower = s.lower()
+    for prefix in _VERBOSITY_PREFIXES:
+        if lower.startswith(prefix.lower()):
             s = s[len(prefix):]
-    # Strip surrounding quotes
+            break
     s = s.strip()
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
         s = s[1:-1]
-    # Strip trailing period (but keep if part of abbreviation like "Dr.")
-    if s.endswith(".") and len(s) > 2 and s[-3] not in " ":
-        pass  # likely abbreviation
-    elif s.endswith("."):
+    # Keep trailing period when part of an abbreviation (e.g. "Dr."), drop it otherwise.
+    if s.endswith(".") and not (len(s) > 2 and s[-3] not in " "):
         s = s[:-1]
-    # Strip common unit suffixes for numeric answers
-    import re as _re
-    num_match = _re.match(r"^(-?\d+(?:\.\d+)?)\s*(%|percent|years?|days?|hours?|minutes?|dollars?|\$)$", s.strip(), _re.IGNORECASE)
+    num_match = _UNIT_SUFFIX_RE.match(s.strip())
     if num_match:
         s = num_match.group(1)
     return s.strip()
@@ -6557,29 +6582,18 @@ def _strip_answer_verbosity(answer: str) -> str:
 
 def _squad_normalize(s: str) -> str:
     """SQuAD-style answer normalization: lowercase, strip articles, strip punctuation, fix whitespace."""
-    import string
-    s = s.lower()
-    # Remove articles
-    s = re.sub(r"\b(a|an|the)\b", " ", s)
-    # Remove punctuation (including quotes)
-    exclude = set(string.punctuation)
-    s = "".join(ch for ch in s if ch not in exclude)
-    # Fix whitespace
-    s = " ".join(s.split())
-    return s
+    s = _ARTICLES_RE.sub(" ", s.lower())
+    s = "".join(ch for ch in s if ch not in _PUNCT_SET)
+    return " ".join(s.split())
 
 
 def _compute_f1(prediction: str, reference: str) -> float:
     """SQuAD-style token-level F1 score (with normalization, multiset counting)."""
-    from collections import Counter as _Counter
-    pred_norm = _squad_normalize(prediction)
-    ref_norm = _squad_normalize(reference)
-    pred_tokens = pred_norm.split()
-    ref_tokens = ref_norm.split()
+    pred_tokens = _squad_normalize(prediction).split()
+    ref_tokens = _squad_normalize(reference).split()
     if not pred_tokens or not ref_tokens:
         return 1.0 if pred_tokens == ref_tokens else 0.0
-    # Use multiset intersection (accounts for repeated tokens like in DROP)
-    common = _Counter(pred_tokens) & _Counter(ref_tokens)
+    common = Counter(pred_tokens) & Counter(ref_tokens)
     num_same = sum(common.values())
     if num_same == 0:
         return 0.0
