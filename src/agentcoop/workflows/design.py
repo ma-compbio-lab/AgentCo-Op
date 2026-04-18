@@ -103,9 +103,23 @@ class BlueprintCompilerConfig(BaseModel):
     monitoring: MonitoringSpec = Field(default_factory=MonitoringSpec)
     skill_driven: SkillDrivenSpec = Field(default_factory=SkillDrivenSpec)
     pattern_overrides: JsonDict = Field(default_factory=dict)
+    meta_skill_hint: Optional[str] = None
+    node_skills: Dict[str, List[str]] = Field(default_factory=dict)
 
     def pattern_override(self, pattern_id: str) -> JsonDict:
         specific = self.pattern_overrides.get(pattern_id)
         if isinstance(specific, dict):
             return dict(specific)
         return dict(self.pattern_overrides)
+
+    def skills_for_node(self, node_id: str, role: Optional[str] = None) -> List[str]:
+        """Return skill names configured for a node_id, with role-name fallback.
+
+        Lookup is case-insensitive and checks node_id first, then role.
+        """
+        lookup = {k.casefold(): v for k, v in self.node_skills.items()}
+        for key in filter(None, (node_id, role)):
+            result = lookup.get(key.casefold())
+            if result is not None:
+                return list(result)
+        return []

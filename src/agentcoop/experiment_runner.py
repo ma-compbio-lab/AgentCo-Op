@@ -6375,6 +6375,18 @@ def _build_mbpp_task_handlers(
     return _build_humaneval_task_handlers(config, blueprint, sample)
 
 
+def _build_drop_task_handlers(
+    config: Mapping[str, Any],
+    blueprint: WorkflowBlueprint,
+    sample: Mapping[str, Any],
+) -> dict[str, Any]:
+    # reason_execute_select uses the same program_exec + selector handlers as MATH.
+    # Without this delegation the program_exec node falls through to the default
+    # direct-sandbox path which requires job_module/command_template and fails on
+    # every task (observed 2026-04-16, effectively disabling the programmer path).
+    return _build_math_task_handlers(config, blueprint, sample)
+
+
 def _build_gsm8k_task_result(
     *,
     sample: Mapping[str, Any],
@@ -6587,8 +6599,17 @@ def _squad_normalize(s: str) -> str:
     return " ".join(s.split())
 
 
-def _compute_f1(prediction: str, reference: str) -> float:
-    """SQuAD-style token-level F1 score (with normalization, multiset counting)."""
+def _iter_reference_alternatives(reference: str) -> List[str]:
+    # DROP stores multi-gold as 'a|b'; treat each as independently acceptable.
+    # _squad_normalize would strip '|' as punctuation and collapse them into one
+    # literal token, so we must split before normalizing.
+    if "|" not in reference:
+        return [reference]
+    alts = [alt.strip() for alt in reference.split("|")]
+    return [alt for alt in alts if alt] or [reference]
+
+
+def _f1_against_single(prediction: str, reference: str) -> float:
     pred_tokens = _squad_normalize(prediction).split()
     ref_tokens = _squad_normalize(reference).split()
     if not pred_tokens or not ref_tokens:
@@ -6602,9 +6623,19 @@ def _compute_f1(prediction: str, reference: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+def _compute_f1(prediction: str, reference: str) -> float:
+    return max(
+        _f1_against_single(prediction, alt)
+        for alt in _iter_reference_alternatives(reference)
+    )
+
+
 def _compute_exact_match(prediction: str, reference: str) -> bool:
-    """SQuAD-style exact match after normalization."""
-    return _squad_normalize(prediction) == _squad_normalize(reference)
+    pred_norm = _squad_normalize(prediction)
+    return any(
+        pred_norm == _squad_normalize(alt)
+        for alt in _iter_reference_alternatives(reference)
+    )
 
 
 def _run_quiet(cmd: Sequence[str]) -> str:

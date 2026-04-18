@@ -1062,6 +1062,30 @@ def test_squidpy_case_summary_includes_interaction_artifacts() -> None:
     assert summary["tool_output"]["summary"]["has_nhood_enrichment"] is True
 
 
+def test_compute_f1_single_reference_behaves_like_squad() -> None:
+    from agentcoop.experiment_runner import _compute_f1, _compute_exact_match
+
+    assert _compute_f1("Mike Mills", "Mike Mills") == 1.0
+    assert _compute_exact_match("Mike Mills", "Mike Mills") is True
+    assert _compute_exact_match("The Beatles", "Beatles") is True
+    assert 0 < _compute_f1("Mike Mills guitarist", "Mike Mills") < 1
+
+
+def test_compute_f1_pipe_gold_takes_max_over_alternatives() -> None:
+    """DROP stores multi-answer gold as 'a|b|c'; the grader should treat each
+    alternative as independently acceptable, not as one literal string."""
+    from agentcoop.experiment_runner import _compute_f1, _compute_exact_match
+
+    assert _compute_f1("3", "3|4") == 1.0
+    assert _compute_f1("4", "3|4") == 1.0
+    assert _compute_exact_match("3", "3|4") is True
+    assert _compute_exact_match("4", "3|4") is True
+    assert _compute_exact_match("5", "3|4") is False
+    assert _compute_f1("Jay Feely", "Jay Feely|53") == 1.0
+    assert _compute_f1("53", "Jay Feely|53") == 1.0
+    assert _compute_f1("4", "3 | 4") == 1.0
+
+
 def test_math_selector_prefers_executed_answer_on_clean_disagreement() -> None:
     result = _math_selector_handler(
         None,

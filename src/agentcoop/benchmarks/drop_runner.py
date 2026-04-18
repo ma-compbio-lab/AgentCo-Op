@@ -28,7 +28,8 @@ class DROPRunner(BenchmarkRunner):
         blueprint: WorkflowBlueprint,
         sample: Dict[str, Any],
     ) -> Dict[str, Any]:
-        return {}  # No custom handlers for DROP; uses default LLM routing
+        from agentcoop.experiment_runner import _build_drop_task_handlers
+        return _build_drop_task_handlers(resolved, blueprint, sample)
 
     def build_task_result(
         self,

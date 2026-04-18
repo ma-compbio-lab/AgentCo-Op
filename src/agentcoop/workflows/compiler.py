@@ -130,19 +130,33 @@ class WorkflowCompiler:
         blueprint.meta.update({"compile_trace": compile_trace})
         return blueprint, compile_trace
 
-    @staticmethod
-    def _attach_default_skills(blueprint: WorkflowBlueprint) -> None:
+    def _attach_default_skills(self, blueprint: WorkflowBlueprint) -> None:
+        applied_map: Dict[str, List[str]] = {}
         for node in blueprint.all_nodes():
             if node.kind not in {NodeKind.agent, NodeKind.evaluator, NodeKind.router}:
                 continue
-            if node.skills:
-                continue
-            node.skills.append(
-                SkillRef(
-                    name="structured-json-discipline",
-                    optional=True,
+
+            existing = {ref.name for ref in node.skills if ref.name}
+            extra_names = self.config.skills_for_node(node.node_id, node.role)
+            for name in extra_names:
+                if name and name not in existing:
+                    node.skills.append(SkillRef(name=name, optional=True))
+                    existing.add(name)
+
+            if "structured-json-discipline" not in existing:
+                node.skills.append(
+                    SkillRef(name="structured-json-discipline", optional=True)
                 )
-            )
+                existing.add("structured-json-discipline")
+
+            if existing:
+                applied_map[node.node_id] = sorted(existing)
+
+        if applied_map or self.config.meta_skill_hint:
+            blueprint.meta["skill_bindings"] = {
+                "meta_skill_hint": self.config.meta_skill_hint,
+                "node_skills": applied_map,
+            }
 
     def _try_skill_driven(
         self,
