@@ -27,6 +27,12 @@ workflow_design:
   enabled: true
   mode: pattern_then_synthesize
   preferred_pattern: code_generate_test_repair
+  meta_skill_hint: code-test-repair-workflow
+  node_skills:
+    coder: [edge-case-enumeration, spec-example-cross-check]
+    reviewer: [test-driven-repair]
+    reviser: [test-driven-repair, return-shape-contract]
+    rewriter: [test-driven-repair, edge-case-enumeration, signature-fidelity-guard, spec-example-cross-check]
   task_profile:
     domain: coding
     answer_mode: code

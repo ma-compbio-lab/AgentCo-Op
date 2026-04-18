@@ -341,6 +341,111 @@ from agentcoop.workflows.design import BlueprintCompilerConfig, TaskProfile, Ski
 from agentcoop.ir.schema import TaskSpec, BudgetSpec, ModelSpec
 
 
+def test_compiler_node_skills_attaches_configured_skills_by_node_id():
+    cfg = BlueprintCompilerConfig(
+        enabled=True,
+        mode="pattern_library",
+        preferred_pattern="reason_execute_select",
+        task_profile=TaskProfile(
+            domain="math",
+            answer_mode="exact_answer",
+            requires_tool_execution=True,
+        ),
+        meta_skill_hint="math-scensemble-workflow",
+        node_skills={
+            "solver": ["math-reasoning-discipline", "algebra-tactics"],
+            "programmer": ["python-sympy-programmer"],
+            "selector": ["ensemble-arbitration"],
+        },
+        pattern_overrides={
+            "reason_execute_select": {
+                "enable_challenger_solver": True,
+                "tool_nodes": {
+                    "program_exec": {
+                        "meta": {"direct_sandbox_handler": True},
+                        "sandbox": {"sandbox_id": "probe", "image": "python:3.11-slim"},
+                    }
+                },
+            }
+        },
+    )
+    compiler = WorkflowCompiler(cfg)
+    blueprint, _trace = compiler.compile(
+        task=TaskSpec(task_id="t", title="t", description="solve the math problem"),
+        budget=BudgetSpec(),
+        meta={},
+        model=ModelSpec(provider="openai", name="gpt-4o-mini"),
+        review_model=None,
+        resolved_config={},
+    )
+    nodes = {n.node_id: n for n in blueprint.base_nodes}
+    solver_skills = {s.name for s in nodes["solver"].skills}
+    assert "math-reasoning-discipline" in solver_skills
+    assert "algebra-tactics" in solver_skills
+    assert "structured-json-discipline" in solver_skills  # default still applied
+    programmer_skills = {s.name for s in nodes["programmer"].skills}
+    assert "python-sympy-programmer" in programmer_skills
+    selector_skills = {s.name for s in nodes["selector"].skills}
+    assert "ensemble-arbitration" in selector_skills
+    bindings = blueprint.meta["skill_bindings"]
+    assert bindings["meta_skill_hint"] == "math-scensemble-workflow"
+    assert "math-reasoning-discipline" in bindings["node_skills"]["solver"]
+
+
+def test_skills_for_node_falls_back_to_role():
+    cfg = BlueprintCompilerConfig(node_skills={"Solver": ["algebra-tactics"]})
+    assert cfg.skills_for_node(node_id="different_id", role="Solver") == ["algebra-tactics"]
+    assert cfg.skills_for_node(node_id="different_id", role="solver") == ["algebra-tactics"]
+    assert cfg.skills_for_node(node_id="unknown", role=None) == []
+
+
+def test_bundled_two_level_skills_are_indexed():
+    """Smoke test: the bundled meta- and agent-skills must be resolvable by the SkillRegistry."""
+    from agentcoop.runtime.skills import SkillRegistry
+
+    registry = SkillRegistry()
+    registry._ensure_index()
+    names = set(registry._paths_by_name.keys())
+    expected_meta = {
+        "qa-multihop-workflow",
+        "qa-extractive-workflow",
+        "math-scensemble-workflow",
+        "code-test-repair-workflow",
+        "numerical-rc-workflow",
+    }
+    expected_agent = {
+        "algebra-tactics",
+        "calculus-tactics",
+        "number-theory-tactics",
+        "combinatorics-tactics",
+        "squad-answer-extraction",
+        "bridging-inference",
+        "test-driven-repair",
+        "edge-case-enumeration",
+        "date-arithmetic",
+        "count-sort-aggregate",
+        "ensemble-arbitration",
+        "python-sympy-programmer",
+        # Failure-distilled skills (from benchmark log analysis)
+        "answer-form-faithful",
+        "sympy-type-hygiene",
+        "numeric-sanity-guard",
+        "executed-answer-sanity-gate",
+        "constraint-quantifier-scan",
+        "ceiling-floor-discipline",
+        "spec-example-cross-check",
+        "return-shape-contract",
+        "signature-fidelity-guard",
+        "entity-type-gate",
+        "drop-answer-type-protocol",
+        "asymptote-figure-reader",
+    }
+    missing_meta = expected_meta - names
+    missing_agent = expected_agent - names
+    assert not missing_meta, f"Missing meta-skills: {missing_meta}"
+    assert not missing_agent, f"Missing agent-skills: {missing_agent}"
+
+
 def test_compiler_skill_driven_path(tmp_path):
     _write_skill(tmp_path, "my-pipeline", """
         ---

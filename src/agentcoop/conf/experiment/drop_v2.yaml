@@ -40,6 +40,12 @@ workflow_design:
   preferred_pattern: reason_execute_select
   synthesis:
     enabled: false
+  meta_skill_hint: numerical-rc-workflow
+  node_skills:
+    solver: [squad-answer-extraction, count-sort-aggregate, date-arithmetic, entity-type-gate, drop-answer-type-protocol]
+    solver_challenger: [squad-answer-extraction, count-sort-aggregate, drop-answer-type-protocol]
+    programmer: [python-sympy-programmer, count-sort-aggregate, date-arithmetic, numeric-sanity-guard]
+    selector: [ensemble-arbitration, executed-answer-sanity-gate]
   task_profile:
     domain: generic
     answer_mode: exact_answer

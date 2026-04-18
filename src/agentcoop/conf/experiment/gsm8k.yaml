@@ -26,6 +26,12 @@ workflow_design:
   enabled: true
   mode: pattern_then_synthesize
   preferred_pattern: reason_execute_select
+  meta_skill_hint: math-scensemble-workflow
+  node_skills:
+    solver: [math-reasoning-discipline, algebra-tactics, constraint-quantifier-scan, ceiling-floor-discipline]
+    solver_challenger: [math-reasoning-discipline, algebra-tactics, constraint-quantifier-scan]
+    programmer: [python-sympy-programmer, math-reasoning-discipline, numeric-sanity-guard, ceiling-floor-discipline]
+    selector: [ensemble-arbitration, executed-answer-sanity-gate]
   task_profile:
     domain: math
     answer_mode: exact_answer

@@ -28,6 +28,9 @@ workflow_design:
   preferred_pattern: direct_answer
   synthesis:
     enabled: false
+  meta_skill_hint: qa-multihop-workflow
+  node_skills:
+    solver: [bridging-inference, squad-answer-extraction, entity-type-gate]
   task_profile:
     domain: generic
     answer_mode: exact_answer
