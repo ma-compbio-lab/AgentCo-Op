@@ -60,6 +60,23 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+
+## 5. Real world based tests.
+
+Testing must be conducted using real-world data; you are expected to independently identify, locate, download, and process appropriate real-world test datasets. While you may use self-generated "toy data" for preliminary testing, you must *never* rely on such synthetic data for final validation. The code ultimately delivered must be fully tested and verified against real-world datasets.
+
+
+## 6. Evidence-Based Repair
+
+When code doesn't work:
+- Don't guess. Check logs, add print statements, inspect intermediate outputs.
+- Identify the specific failure point and error message.
+- Formulate a hypothesis: "I think it's because X is None, which shouldn't be."
+- Test the hypothesis with a targeted change. Verify if it fixes the issue. If not, repeat the process. Avoid making multiple simultaneous changes without verification.
+- Every change should be motivated by a specific observed failure, not a vague intuition.
+
+---
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

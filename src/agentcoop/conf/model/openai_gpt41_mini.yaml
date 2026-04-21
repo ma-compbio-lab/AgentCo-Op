@@ -1,8 +1,0 @@
-provider: openai
-name: gpt-4.1-mini
-temperature: 0.2
-max_output_tokens: 512
-usd_per_1k_input: 0.0
-usd_per_1k_output: 0.0
-meta: {}
-

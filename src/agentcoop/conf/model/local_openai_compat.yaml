@@ -1,8 +1,0 @@
-provider: local
-name: local-openai-compat
-temperature: 0.1
-max_output_tokens: 512
-meta:
-  base_url: http://127.0.0.1:8000/v1
-  allow_unauthenticated: true
-
