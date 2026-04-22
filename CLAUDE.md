@@ -23,6 +23,7 @@ Before implementing:
 - No "flexibility" or "configurability" that wasn't requested.
 - No error handling for impossible scenarios.
 - If you write 200 lines and it could be 50, rewrite it.
+- Reusing Code: If a library or existing code can solve the problem, use it instead of writing new code. Don't reinvent the wheel.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
