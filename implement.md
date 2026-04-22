@@ -154,3 +154,129 @@ Tests cover schema round-trip, memory permissions, cost ledger, registry loading
 4. Pin SpatialAgent / BioDiscoveryAgent commits and Docker-build the real wrappers.
 5. Fill `configs/benchmarks/*.yaml`.
 6. Wire `RepoSandboxBackend.execute_live=True` behind an opt-in flag + image-digest check.
+
+---
+
+## Session 2 — Experiments configured (2026-04-22)
+
+The framework is now paired with a fully-wired experimental harness,
+modulo a live LLM client. Nothing has been launched yet because no API
+key has been provided; every piece works in dry-run mode with `MockLLM`.
+
+### External repos (cloned, pinned, gitignored)
+
+`configs/external_commits.yaml` records the pinned HEAD of each clone.
+`.gitignore` excludes `external/` so the tree stays lean.
+
+| Repo | URL | Commit |
+|---|---|---|
+| AFlow | https://github.com/FoundationAgents/AFlow | `3f457218fc716093fe53f6df8a5d5e6379d66346` |
+| BioDiscoveryAgent | https://github.com/snap-stanford/BioDiscoveryAgent | `19673c7371c542cfa155ffaa9047c53525f9fe2e` |
+| SpatialAgent | https://github.com/Genentech/SpatialAgent | `e51ec0f6b1e5c8ddbc52dae846031fbc04d3c9d6` |
+| human-eval | https://github.com/openai/human-eval | `6d43fb980f9fee3c892a914eda09951f772ad10d` |
+| SpatialBench | https://github.com/Genentech/SpatialBench | `NOT_PUBLIC` — gated access as of 2026-04-22 |
+
+### Datasets
+
+`scripts/download_datasets.py` pulls the six AFlow-aligned datasets via
+HuggingFace `datasets` (HumanEval from the local clone). Hashes are
+recorded in `data/data_hashes.json` so a later re-download can detect
+drift.
+
+| Dataset | HF id / source | Raw rows | Notes |
+|---|---|---|---|
+| GSM8K | `gsm8k` (main) | 8,792 (train+test) | final-number reference after `####` |
+| MATH | `EleutherAI/hendrycks_math` × 7 subjects | 12,500 (train+test) | level-5 × 4-category filter yields 605 (AFlow paper: 617; 12-row drift documented) |
+| MBPP | `mbpp` (sanitized) | 427 | sanitized variant; test/val/train/prompt splits kept |
+| HotpotQA | `hotpot_qa` (distractor) | 97,852 | validation pool capped at 1000 per AFlow |
+| DROP | `drop` / `ucinlp/drop` | 86,935 | numeric-aware F1/EM grader |
+| HumanEval | local `external/human-eval/data/HumanEval.jsonl.gz` | 164 | no official train/test split; seed=42 carved 20% val |
+
+### AFlow-aligned splits
+
+`agentcoop/benchmarks/aflow_splits.py` writes
+`data/aflow_aligned/<dataset>/{validation,test}.jsonl` from the raw
+files. Seed=42 + 20/80 val/test split, HotpotQA + DROP capped at 1000,
+MATH filtered to level-5 × 4 categories. Records per AFlow §2.1.
+
+### Benchmark code
+
+- `agentcoop/benchmarks/common.py` — `BenchmarkTask` dataclass, JSONL
+  iterator, path resolvers.
+- `agentcoop/benchmarks/{gsm8k,math,humaneval,mbpp,hotpotqa,drop}.py` —
+  per-dataset `load(split, limit, aflow=True)` returning
+  `list[BenchmarkTask]`.
+- `agentcoop/benchmarks/graders.py` — deterministic graders:
+  - GSM8K: last-number extractor + float equivalence.
+  - MATH: `\boxed{}` extraction + canonicalization + optional
+    `sympy.parsing.latex` equivalence fallback.
+  - HumanEval / MBPP: subprocess pytest-style harness with timeout.
+  - HotpotQA: SQuAD-style token F1.
+  - DROP: multi-span numeric-aware F1 / EM.
+- `agentcoop/benchmarks/runner.py` — compile→execute→grade loop. Emits
+  `predictions.csv` + `metrics.json` per run. Honors
+  `AGENTCOOP_MODE=dry_run` and auto-dry-runs when no
+  `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` is present.
+
+### Benchmark configs (`configs/benchmarks/`)
+
+- `_base.yaml` — defaults for model, budgets, 8 named variants
+  (AC-Direct, AC-Compiled, AC-Gated, AC-NoMeta, AC-NoSkillMemory,
+  AC-ForcedMulti, AC-NoSandbox, AC-NoReviewer) and safety policy.
+- Per-dataset overlays: `gsm8k.yaml`, `math.yaml`, `humaneval.yaml`,
+  `mbpp.yaml`, `hotpotqa.yaml`, `drop.yaml` — each declares dataset,
+  grader, budget, model, and the subset of variants that apply.
+- `aflow_aligned.yaml` — top-level sweep (6 datasets × 4 variants × 3
+  repeats).
+- `biodiscovery.yaml` — 5 datasets × 7 variants with `repo.manifest`
+  pointing at the sandbox manifest.
+- `spatialbench.yaml` — two tiers (S2-small = public canonical examples
+  shipped with SpatialAgent; S2-full gated on access).
+- `cross_specialist_pilot.yaml` — exploratory Spatial→Bio pilot, marked
+  `status: exploratory`.
+
+YAML loading supports `extends: <name>` → deep-merge with `_base`.
+
+### Repo wrapping pipeline
+
+- Manifests: `agentcoop/wrappers/{biodiscovery,spatialagent}/manifest.yaml`
+  now carry the pinned commit SHAs (same values as
+  `configs/external_commits.yaml`).
+- Adapters: `agentcoop/wrappers/<name>/adapter.py` read
+  `/inputs/request.json`, return `/outputs/result.json` per §6.4 of
+  instructions.md. Framework-phase stubs — real repo calls are wired in
+  the experiment-execution phase.
+- `scripts/build_repo_images.sh` — assembles a clean build context from
+  `external/<repo>` + the wrapper adapter + Dockerfile, verifies the
+  pinned SHA, and runs `docker build`. Script-syntax OK; actual build
+  deferred until the Docker daemon is running.
+- `scripts/smoke_repo_wrappers.py` — offline dry-run: emits the exact
+  `docker run` command and verifies each adapter parses a valid request.
+
+### Running the benchmark harness
+
+```bash
+# 1) one-time: download data + build AFlow splits
+python scripts/download_datasets.py
+python -m agentcoop.benchmarks.aflow_splits
+
+# 2) dry-run a benchmark (MockLLM — offline)
+python -m agentcoop.cli benchmark --dataset gsm8k --limit 3 \
+  -v AC-Direct -v AC-Gated --dry-run
+
+# 3) live run (requires OPENAI_API_KEY / ANTHROPIC_API_KEY + a real
+#    LLMClient shim in agentcoop/backends/llm.py — not wired yet)
+export OPENAI_API_KEY=...
+python -m agentcoop.cli benchmark --dataset gsm8k --limit 10 -v AC-Gated
+```
+
+### Remaining work before experiments can run live
+
+1. Implement a real `LLMClient` (OpenAI / Anthropic / LiteLLM) in
+   `agentcoop/backends/llm.py`. The contract is already defined and the
+   runner auto-detects dry-run when no key is set.
+2. Start Docker Desktop and run `./scripts/build_repo_images.sh` for
+   both wrappers; then flip `RepoSandboxBackend.execute_live=True`.
+3. Acquire SpatialBench full-set access to run S2-full; otherwise
+   S2-small (public canonical examples in `external/SpatialAgent/resource/`)
+   is the default tier.

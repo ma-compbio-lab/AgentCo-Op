@@ -80,6 +80,55 @@ Dockerfile templates, `adapter.py` stub that conforms to §6.4 request/result co
 Consolidate unit tests under `tests/unit/`, run full `pytest`, update `implement.md` with a module map, contracts, and known limitations.
 **Verify:** all unit tests pass; `implement.md` has one section per module.
 
+### Phase 15: Git commit + push — status: complete
+Split the framework into 3 commits (scaffold / feat / tests+docs) and push `clean-dev`.
+
+---
+
+## Session 2 phases — Experiment configuration
+
+Per `experiments.md`. Docker daemon isn't running; GitHub + HuggingFace reachable. No OpenAI key provided, so we configure but do not launch.
+
+### Phase 16: External repo clones — status: pending
+Create `external/` dir. Clone AFlow, BioDiscoveryAgent, SpatialAgent, SpatialBench, OpenAI human-eval. Pin commit SHAs into `configs/external_commits.yaml`.
+**Verify:** each repo's HEAD commit recorded; directory sizes reasonable; `.gitignore` excludes `external/**`.
+
+### Phase 17: Dataset downloads — status: pending
+Download HotpotQA, DROP, GSM8K, MBPP, MATH via HuggingFace `datasets`; HumanEval via the openai human-eval repo. Write to `data/raw/` and `data/processed/`. Store file hashes in `data/data_hashes.json`.
+**Verify:** each dataset has ≥ expected sample count (HotpotQA distractor ~7400 train / 7405 dev; DROP ~77k; MATH level-5 subset = 617 across 4 categories).
+
+### Phase 18: AFlow split importer + unified JSONL converter — status: pending
+Implement `agentcoop/benchmarks/aflow_splits.py` with seed=42, 20/80 val/test split, HotpotQA+DROP 1000-sample cap. Emit `data/aflow_aligned/<dataset>/{validation,test}.jsonl` with `{dataset, split, task_id, prompt, reference, metadata}`.
+**Verify:** sample counts match `experiments.md` §2.1; re-running with same seed gives byte-identical files.
+
+### Phase 19: Per-dataset loaders + `BenchmarkTask` protocol — status: pending
+Implement `agentcoop/benchmarks/{common,gsm8k,math,humaneval,mbpp,hotpotqa,drop}.py`. Each exposes `load(split, limit) -> list[BenchmarkTask]`.
+**Verify:** unit tests load 3 samples from each dataset without API access.
+
+### Phase 20: Deterministic graders — status: pending
+GSM8K numeric extractor + normalization; MATH boxed-answer + sympy-based equivalence; HumanEval/MBPP run `check(fn)` in the python sandbox; HotpotQA token F1 (SQuAD-style); DROP EM/F1 (official normalization).
+**Verify:** unit tests on canonical gold pairs; HumanEval grader returns `pass` on reference solutions.
+
+### Phase 21: Benchmark YAML configs — status: pending
+`configs/benchmarks/{gsm8k,math,humaneval,mbpp,hotpotqa,drop,aflow_aligned,spatialbench,biodiscovery}.yaml` with variants AC-Direct, AC-Compiled, AC-Gated, AC-ForcedMulti, plus per-dataset budgets from §7.3.
+**Verify:** `yaml.safe_load` accepts all files; each config declares `model`, `variant`, `budget`, `dataset`, and `grader`.
+
+### Phase 22: Benchmark runner CLI — status: pending
+Wire `agentcoop benchmark --dataset X --split Y --config Z --limit N --out dir` to load tasks, compile a blueprint per task, run (or `--dry-run` if no API key), grade, and emit `predictions.csv` + `metrics.json`. Support `AGENTCOOP_MODE=dry_run` env-var fallback.
+**Verify:** `agentcoop benchmark --dataset gsm8k --limit 3 --dry-run` produces well-formed output with MockLLM.
+
+### Phase 23: Repo wrapper Docker build scripts — status: pending
+`scripts/build_repo_images.sh`, pin commit SHAs, copy `external/<repo>/` into each wrapper's build context, enforce non-root, `--network` default off. Daemon not running → document how to run later.
+**Verify:** scripts parse; Dockerfiles lint; `repo smoke --manifest ...` dry-run emits the expected command with the pinned digest placeholder.
+
+### Phase 24: Reproducibility + implement.md update — status: pending
+Add `configs/external_commits.yaml`, `data/data_hashes.json` schema, and update `implement.md` with the experiment-config map. Update `.gitignore` for `external/**`, `data/raw/**`, `data/processed/**`, `data/aflow_aligned/**`.
+**Verify:** `implement.md` has a "Session 2 — Experiments configured" section; repo remains small after ignore rules applied.
+
+### Phase 25: Test + commit + push — status: pending
+Run pytest; split the new work into logical commits (data loaders / graders / configs / docs); push `clean-dev`.
+**Verify:** remote ref advances cleanly.
+
 ---
 
 ## Error Log

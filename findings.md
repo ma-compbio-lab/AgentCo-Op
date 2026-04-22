@@ -53,3 +53,27 @@ For framework-only phase, we can defer `datasets`, `evaluate`, `docker`, `gitpyt
 - `tests/unit/`: schema round-trip, registry load, compiler output shape for GSM8K/HumanEval/HotpotQA/DROP profiles, gate trigger matrix, runtime DAG walk, memory scoping.
 - `tests/integration/`: run a hand-written blueprint with MockLLM through the orchestrator; verify events.jsonl shape.
 - Real-data tests deferred to experiment phase.
+
+---
+
+## Session 2 — Experiment config findings
+
+### External repos
+- AFlow, BioDiscoveryAgent, SpatialAgent, human-eval cloned successfully; pinned SHAs in `configs/external_commits.yaml`.
+- **SpatialBench** (`Genentech/SpatialBench`) is not publicly accessible (HTTP 404 via `git clone`) as of 2026-04-22. Matches `experiments.md` §11.2. Public canonical examples live inside `external/SpatialAgent/resource/`; the `spatialbench.yaml` config exposes two tiers (S2-small from the public canonical examples, S2-full gated on access).
+
+### Dataset sourcing
+- HF `competition_math` and `hendrycks/competition_math` are both removed from the hub. `EleutherAI/hendrycks_math` (per-subject configs) is the live mirror. Downloader concatenates 7 subjects into single JSONL per split.
+- Level-5 × {Counting & Probability, Number Theory, Prealgebra, Precalculus} in `EleutherAI/hendrycks_math` yields 605 test examples, not 617 as the AFlow paper reports — 12 duplicates dropped upstream. Documented in `data/README.md`; metrics reporting will flag it.
+
+### Environment
+- Docker CLI 29.4.1 installed; daemon not running (Docker Desktop not launched). Image builds deferred.
+- `datasets` 3.6.0 available. No OpenAI / Anthropic API keys set, so the runner auto-dry-runs.
+
+### Benchmark config inheritance
+- Each per-dataset config uses `extends: _base` → deep-merge. Tests confirm the `extends` chain composes.
+- Eight AgentCo-Op variants cover all ablations listed in `experiments.md` §5.2.
+
+### Runner architecture choices
+- Dry-run registers MockLLM canned responses keyed by role + node_id. Each task compiles its own blueprint (per-task routing), so `metrics.json → route_distribution` is populated even in dry-run.
+- `force_topology_level` is applied post-compile as a provenance annotation; a future full recompile-with-level-filter is a nice-to-have but not blocking.
