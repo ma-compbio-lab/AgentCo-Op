@@ -1,0 +1,18 @@
+name: math_number_theory_solver
+kind: agent_skill
+backend_type: llm
+capabilities:
+  - modular_arithmetic
+  - divisibility
+  - diophantine
+  - olympiad_style
+prompt_file: prompts/math_number_theory.md
+input_contract:
+  problem: str
+output_contract:
+  final_answer: str
+  solution_summary: str
+  confidence: float
+cost_class: low
+risk_level: low
+applicable_tags: [math, number-theory]

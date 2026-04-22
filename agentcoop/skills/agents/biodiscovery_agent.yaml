@@ -1,0 +1,35 @@
+name: biodiscovery_agent
+kind: agent_skill
+backend_type: sandbox_repo
+capabilities:
+  - perturbation_design
+  - closed_loop_screen
+  - gene_ranking
+  - lit_review
+source:
+  repo: https://github.com/snap-stanford/BioDiscoveryAgent
+  commit: PINNED_COMMIT_SHA
+requirements:
+  docker_image: agentcoop/biodiscovery
+  cpus: 4
+  memory_gb: 16
+  gpu: false
+  network: allowlist
+  secrets:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+input_contract:
+  command: str
+  params: dict
+output_contract:
+  ok: bool
+  ranked_genes: list
+  per_round_metrics: list
+  artifacts: list
+  logs_summary: str
+risk:
+  code_execution: true
+  data_exfiltration: medium
+cost_class: high
+risk_level: medium
+applicable_tags: [bio, perturbation, genetics, repo]

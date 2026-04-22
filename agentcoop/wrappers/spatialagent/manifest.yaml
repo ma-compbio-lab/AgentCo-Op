@@ -1,0 +1,36 @@
+name: spatial_agent
+backend_type: sandbox_repo
+source:
+  repo: https://github.com/Genentech/SpatialAgent
+  commit: PINNED_COMMIT_SHA
+build:
+  dockerfile: Dockerfile.agentcoop
+  context: .
+run:
+  entrypoint: python /workspace/adapter.py
+  args_schema:
+    command: str
+    params:
+      dataset_dir: str
+      question: str
+      output_dir: str
+resources:
+  cpus: 8
+  memory_gb: 32
+  gpu: optional
+  pids_limit: 512
+  timeout_s: 7200
+security:
+  network: allowlist
+  non_root: true
+  mounts:
+    - input: read_only
+    - output: read_write
+  secrets:
+    - OPENAI_API_KEY
+    - ANTHROPIC_API_KEY
+outputs:
+  result_json: /outputs/result.json
+  logs: /outputs/logs.txt
+notes:
+  - "Adapter is framework-only; real repo call requires pinned commit + Docker build."

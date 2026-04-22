@@ -1,0 +1,18 @@
+name: math_algebra_solver
+kind: agent_skill
+backend_type: llm
+capabilities:
+  - linear_equation
+  - polynomial
+  - inequalities
+  - word_problem_arithmetic
+prompt_file: prompts/math_algebra.md
+input_contract:
+  problem: str
+output_contract:
+  final_answer: str
+  solution_summary: str
+  confidence: float
+cost_class: low
+risk_level: low
+applicable_tags: [math, algebra]
