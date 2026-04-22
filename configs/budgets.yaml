@@ -1,0 +1,11 @@
+default:
+  max_tokens: 20000
+  max_cost_usd: 1.0
+  max_wall_time_s: 600
+  max_iterations: 3
+
+large:
+  max_tokens: 100000
+  max_cost_usd: 5.0
+  max_wall_time_s: 1800
+  max_iterations: 5
