@@ -105,23 +105,29 @@ def run(
 
 @app.command()
 def benchmark(
-    dataset: str = typer.Option(..., "--dataset"),
-    split: str = typer.Option("validation", "--split"),
-    limit: int = typer.Option(10, "--limit"),
+    dataset: Optional[str] = typer.Option(None, "--dataset"),
+    config: Optional[Path] = typer.Option(None, "--config"),
+    split: Optional[str] = typer.Option(None, "--split"),
+    limit: int = typer.Option(5, "--limit"),
+    variants: Optional[list[str]] = typer.Option(None, "--variant", "-v"),
+    out: Optional[Path] = typer.Option(None, "--out"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
-    """Benchmark runner — framework-only stub."""
-    typer.echo(
-        json.dumps(
-            {
-                "status": "not_wired",
-                "reason": "benchmark runner is disabled in framework-only mode",
-                "dataset": dataset,
-                "split": split,
-                "limit": limit,
-            },
-            indent=2,
+    """Run a benchmark config (compile → execute → grade). Dry-run uses MockLLM."""
+    from agentcoop.benchmarks.runner import run_benchmark, _resolve_config
+    import asyncio
+
+    cfg_path = _resolve_config(str(config) if config else None, dataset)
+    metrics = asyncio.run(
+        run_benchmark(
+            cfg_path,
+            limit=limit,
+            variants=list(variants) if variants else None,
+            out_dir=str(out) if out else None,
+            dry_run=True if dry_run else None,
         )
     )
+    typer.echo(json.dumps(metrics, indent=2))
 
 
 @repo_app.command("wrap")
