@@ -2,7 +2,7 @@ name: spatial_agent
 backend_type: sandbox_repo
 source:
   repo: https://github.com/Genentech/SpatialAgent
-  commit: PINNED_COMMIT_SHA
+  commit: e51ec0f6b1e5c8ddbc52dae846031fbc04d3c9d6
 build:
   dockerfile: Dockerfile.agentcoop
   context: .

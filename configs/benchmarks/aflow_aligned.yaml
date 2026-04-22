@@ -1,0 +1,28 @@
+# Top-level AFlow-aligned sweep. Points to per-dataset configs.
+# Usage:
+#   agentcoop benchmark --config configs/benchmarks/aflow_aligned.yaml --limit 10 --dry-run
+
+suite: aflow_aligned
+version: "0.1"
+seed: 42
+
+datasets:
+  - gsm8k
+  - math
+  - humaneval
+  - mbpp
+  - hotpotqa
+  - drop
+
+variants:
+  - AC-Direct
+  - AC-Compiled
+  - AC-Gated
+  - AC-ForcedMulti
+
+per_dataset_config_dir: configs/benchmarks
+repeats: 3
+report:
+  main_table: runs/aflow_aligned/main_table.csv
+  route_distribution: runs/aflow_aligned/route_distribution.csv
+  gate_analysis: runs/aflow_aligned/gate_analysis.csv

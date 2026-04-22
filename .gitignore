@@ -14,3 +14,8 @@ runs/*
 !runs/.gitkeep
 data/*
 !data/.gitkeep
+# Keep the dataset manifest for reproducibility even though the raw data is ignored.
+!data/data_hashes.json
+!data/README.md
+# External repos (cloned for reference / image builds; commit SHAs pinned in configs/external_commits.yaml)
+external/

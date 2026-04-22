@@ -8,7 +8,7 @@ capabilities:
   - lit_review
 source:
   repo: https://github.com/snap-stanford/BioDiscoveryAgent
-  commit: PINNED_COMMIT_SHA
+  commit: 19673c7371c542cfa155ffaa9047c53525f9fe2e
 requirements:
   docker_image: agentcoop/biodiscovery
   cpus: 4

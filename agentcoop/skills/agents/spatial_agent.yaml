@@ -9,7 +9,7 @@ capabilities:
   - hypothesis_generation
 source:
   repo: https://github.com/Genentech/SpatialAgent
-  commit: PINNED_COMMIT_SHA
+  commit: e51ec0f6b1e5c8ddbc52dae846031fbc04d3c9d6
 requirements:
   docker_image: agentcoop/spatialagent
   cpus: 8

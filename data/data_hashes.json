@@ -1,0 +1,37 @@
+{
+  "gsm8k.test": {
+    "count": 1319,
+    "path": "data/raw/gsm8k/test.jsonl",
+    "sha256": "351b4fb3854718cce37a2f77d90ace6ee22a4e85768644f69ccfea9937857913"
+  },
+  "gsm8k.train": {
+    "count": 7473,
+    "path": "data/raw/gsm8k/train.jsonl",
+    "sha256": "7891f17937ff65a286a9d07a85f85565c458d9e686c3ebaa7fa9d8d4bfd5290c"
+  },
+  "hotpotqa.train": {
+    "count": 90447,
+    "path": "data/raw/hotpotqa/train.jsonl",
+    "sha256": "e280372c89e7dbde860aa03235ec9788554d8900b3309b5007739f97139ec4b3"
+  },
+  "hotpotqa.validation": {
+    "count": 7405,
+    "path": "data/raw/hotpotqa/validation.jsonl",
+    "sha256": "376b00ec9d05691e3877c363fa83b01e3c82a723832471b635fc9262bcf2b4de"
+  },
+  "humaneval.test": {
+    "count": 164,
+    "path": "data/raw/humaneval/HumanEval.jsonl",
+    "sha256": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2"
+  },
+  "math.test": {
+    "count": 5000,
+    "path": "data/raw/math/test.jsonl",
+    "sha256": "db77699ba76f74fde0b307f02a6f1293ff1b26f78c87c6416c67dde918a2bbfe"
+  },
+  "math.train": {
+    "count": 7500,
+    "path": "data/raw/math/train.jsonl",
+    "sha256": "41f046ebe6157cc903dce398d983d584d22d5c04fe29df09e5f1e60184a94364"
+  }
+}

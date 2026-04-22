@@ -1,0 +1,63 @@
+# Shared benchmark defaults. Per-dataset configs inherit these via
+# `extends: _base` at load time.
+
+run:
+  seed: 42
+  repeats: 1
+  output_root: runs
+  persist_predictions: true
+
+model:
+  # Override per config. `mock-llm` keeps CI offline; real runs need
+  # OpenAI/Anthropic env vars.
+  provider: mock
+  name: mock-llm
+  temperature: 0.0
+  max_tokens: 4096
+
+variants:
+  # Each variant pins compile-time knobs so ablations stay honest.
+  AC-Direct:
+    force_topology_level: 0
+    description: "Force L0/L1 single-agent fallback (simplicity-first floor)"
+  AC-Compiled:
+    force_topology_level: null
+    disable_gates: true
+    description: "Base compiled graph without gated refinement"
+  AC-Gated:
+    force_topology_level: null
+    disable_gates: false
+    description: "Main method — compiled graph + gated local refinement"
+  AC-NoMeta:
+    force_topology_level: null
+    disable_gates: false
+    retrieval_bias: coarse_rules
+    description: "Skill retrieval uses only coarse rules"
+  AC-NoSkillMemory:
+    force_topology_level: null
+    use_skill_memory: false
+    description: "Skill memory not consulted at compile time"
+  AC-ForcedMulti:
+    force_topology_level: 4
+    description: "Force multi-specialist topology to expose negative returns"
+  AC-NoSandbox:
+    force_topology_level: null
+    disable_python_sandbox: true
+    description: "Remove sandbox execution; forces LLM-only code paths"
+  AC-NoReviewer:
+    force_topology_level: null
+    disable_reviewer: true
+    description: "Remove reviewer node; integrator only"
+
+budget:
+  max_tokens: 20000
+  max_cost_usd: 1.0
+  max_wall_time_s: 600
+  max_iterations: 3
+
+safety:
+  sandbox_network: none
+  require_approval_for:
+    - network_enable
+    - unknown_shell_command
+    - package_install_from_url
