@@ -74,6 +74,24 @@ When code doesn't work:
 - Formulate a hypothesis: "I think it's because X is None, which shouldn't be."
 - Test the hypothesis with a targeted change. Verify if it fixes the issue. If not, repeat the process. Avoid making multiple simultaneous changes without verification.
 - Every change should be motivated by a specific observed failure, not a vague intuition.
+- When fixing code, address existing bugs and issues within the codebase. Whenever possible, avoid merely applying patches, so as to prevent the code from becoming increasingly lengthy and complex.
+
+## 7. Maintainability
+
+- Code must maintain good maintainability and readability.
+- Use clear variable and function names.
+- Write concise, informative comments where necessary.
+- Follow consistent formatting and style guidelines.
+- Avoid complex one-liners that sacrifice readability for brevity.
+- Avoid having excessive code in a single file.
+
+## 8. Fallback
+
+- When writing code, avoid excessive use of fallback logic. Employ it only when absolutely necessary, and ensure that a clear notification is provided whenever a fallback is triggered.
+
+## 9. Implementation Record
+
+- When writing code, you must simultaneously update `implement.md` with implementation details, technical approaches, repository architecture, algorithm descriptions, summaries of key files, and your current progress. This facilitates future maintenance and allows for easy resumption of work. Before commencing any task, you must consult `implement.md` to verify the current status.
 
 ## SKILLS
 
