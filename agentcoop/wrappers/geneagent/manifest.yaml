@@ -1,0 +1,38 @@
+name: geneagent
+backend_type: sandbox_repo
+source:
+  repo: https://github.com/ncbi-nlp/GeneAgent
+  commit: TODO_PIN
+build:
+  dockerfile: Dockerfile.agentcoop
+  context: .
+run:
+  entrypoint: python /workspace/adapter.py
+  args_schema:
+    command: str
+    params:
+      gene_symbols: list
+      context: str
+      organism: str
+      direction: str
+resources:
+  cpus: 4
+  memory_gb: 16
+  gpu: false
+  pids_limit: 512
+  timeout_s: 3600
+security:
+  network: allowlist  # GeneAgent calls biological databases
+  non_root: true
+  mounts:
+    - input: read_only
+    - output: read_write
+  secrets:
+    - OPENAI_API_KEY
+    - ANTHROPIC_API_KEY
+outputs:
+  result_json: /outputs/result.json
+  logs: /outputs/logs.txt
+notes:
+  - "Adapter is a framework stub; real GeneAgent call requires the pinned repo commit + Docker build."
+  - "Use the restricted 'bio_db_online' sandbox profile."

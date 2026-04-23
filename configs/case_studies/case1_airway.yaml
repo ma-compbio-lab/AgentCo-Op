@@ -1,0 +1,89 @@
+# Case Study 1 — bulk RNA-seq differential expression → gene-set interpretation
+# Dataset: Bioconductor `airway` (dexamethasone vs untreated)
+# See case_study.md §2.
+
+case_study: case1_airway
+dataset: airway
+description: >
+  Upstream DESeq2 differential expression feeds an evidence-grounded
+  gene-set agent. Tests typed artifact exchange and biology-aware
+  integration.
+
+workflow:
+  - TaskProfiler
+  - DatasetLoader_R
+  - SampleMetadataInspector
+  - DesignMatrixPlanner
+  - DifferentialExpression_DESeq2
+  - DEMethodCrossCheck_optional
+  - MarkerSelector
+  - GeneSymbolNormalizer
+  - ORA_GSEA_Tool
+  - GeneAgentSandbox
+  - EvidenceVerifier
+  - IntegratorReviewer
+  - FinalBiologyReport
+
+data:
+  primary:
+    source: Bioconductor::airway
+    r_script: scripts/case1_airway_de.R
+    synthetic_stub: scripts/case1_synthetic_de.py
+    output_dir: artifacts/case1
+  optional:
+    - recount3
+    - GenoTEX
+    - TCGA-GTEx-bulk-subset
+
+gates_file: configs/gates/bio_gates.yaml
+
+budget:
+  max_tokens: 40000
+  max_cost_usd: 2.0
+  max_wall_time_s: 3600
+  max_iterations: 5
+
+model:
+  provider: anthropic
+  name: claude-3-5-sonnet-20240620
+  temperature: 0.0
+  max_tokens: 4096
+
+selection_defaults:
+  padj_max: 0.05
+  abs_log2fc_min: 1.0
+  top_k: 100
+
+enrichment_defaults:
+  background_size: 20000
+  databases:
+    - GO_Biological_Process
+    - MSigDB_Hallmark
+    - Reactome
+
+variants:
+  DE-only:
+    description: "Report top up/down genes, no functional synthesis"
+  DE+ORA:
+    description: "Static enrichment only"
+  DE+GenericLLM:
+    description: "Pass genes to a generic LLM with no DB verification"
+  DE+GeneAgent:
+    description: "Downstream GeneAgent only"
+  AC-BulkGeneSet:
+    description: "Full workflow: DE + enrichment + GeneAgent + verifier + integrator"
+  AC-BulkGeneSet-NoVerifier:
+    disable_reviewer: true
+    description: "Remove evidence verifier"
+  AC-BulkGeneSet-NoCrossCheck:
+    description: "Remove edgeR/limma cross-check"
+
+repos:
+  geneagent:
+    manifest: agentcoop/wrappers/geneagent/manifest.yaml
+    external: external/GeneAgent
+    commit_source: configs/external_commits.yaml
+
+sandbox_profiles:
+  r_bioc_offline: { network: none, gpu: false, cpus: 4, memory_gb: 16 }
+  bio_db_online:  { network: allowlist, gpu: false, cpus: 4, memory_gb: 16 }

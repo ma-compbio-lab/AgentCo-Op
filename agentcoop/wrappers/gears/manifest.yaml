@@ -1,0 +1,38 @@
+name: gears
+backend_type: sandbox_repo
+source:
+  repo: https://github.com/snap-stanford/GEARS
+  commit: TODO_PIN
+build:
+  dockerfile: Dockerfile.agentcoop
+  context: .
+run:
+  entrypoint: python /workspace/adapter.py
+  args_schema:
+    command: str
+    params:
+      dataset: str
+      perturbation: str
+      split: str
+      seed: int
+resources:
+  cpus: 8
+  memory_gb: 32
+  gpu: true
+  min_vram_gb: 16
+  pids_limit: 1024
+  timeout_s: 14400
+security:
+  network: none
+  non_root: true
+  mounts:
+    - input: read_only
+    - output: read_write
+  secrets: []
+outputs:
+  result_json: /outputs/result.json
+  logs: /outputs/logs.txt
+  checkpoint: /outputs/checkpoint/
+notes:
+  - "Requires CUDA base image; build with ./scripts/build_repo_images.sh gears."
+  - "Adapter is a framework stub until external/GEARS is cloned + pinned."

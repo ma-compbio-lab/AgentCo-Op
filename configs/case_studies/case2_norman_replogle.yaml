@@ -1,0 +1,106 @@
+# Case Study 2 — parallel single-cell foundation-model perturbation benchmark
+# See case_study.md §3.
+
+case_study: case2_perturb
+description: >
+  Run simple baselines + GEARS + scGPT + scFoundation (+ optional
+  Geneformer) in parallel, evaluate on perturbation-level splits,
+  ensemble, and write a high-level benchmark report.
+
+datasets:
+  - tier: debug
+    name: synthetic_norman
+    source: agentcoop.benchmarks.perturb:synthetic_dataset
+    notes: "Offline synthetic; enables dry-run tests with no network."
+  - tier: main
+    name: norman
+    source: pertpy
+    loader: pertpy.data.norman_2019_raw
+    adata_path: data/perturb/norman/norman.h5ad
+  - tier: main
+    name: replogle_k562_essential
+    source: figshare
+    figshare_id: "20029387"
+    adata_path: data/perturb/replogle_k562/replogle_k562_essential.h5ad
+  - tier: optional
+    name: adamson
+    source: gears
+    notes: "Label corrections required; report data provenance."
+
+split:
+  mode: perturbation_level
+  kinds: ["2-seen", "1-seen", "0-seen"]
+  seeds: [1, 2, 3]
+
+models:
+  - mean_baseline
+  - matching_mean
+  - crispr_informed_mean
+  - ridge
+  - GEARS
+  - scGPT
+  - scFoundation
+  - Geneformer_optional
+
+metrics:
+  - pearson_delta
+  - pearson_delta_top20
+  - rmse
+  - cosine
+  - precision_at_k
+
+ensemble_strategies:
+  - validation_winner
+  - rank_fusion
+  - weighted_average
+
+gates_file: configs/gates/perturb_gates.yaml
+
+budget:
+  max_tokens: 60000
+  max_cost_usd: 3.0
+  max_wall_time_s: 14400
+  max_iterations: 4
+
+model:
+  provider: openai
+  name: gpt-4o
+  temperature: 0.0
+  max_tokens: 4096
+
+repos:
+  gears:
+    manifest: agentcoop/wrappers/gears/manifest.yaml
+    external: external/GEARS
+  scgpt:
+    manifest: agentcoop/wrappers/scgpt/manifest.yaml
+    external: external/scGPT
+  scfoundation:
+    manifest: agentcoop/wrappers/scfoundation/manifest.yaml
+    external: external/scFoundation
+  geneformer:
+    manifest: agentcoop/wrappers/geneformer/manifest.yaml
+    external: external/Geneformer
+  commit_source: configs/external_commits.yaml
+
+variants:
+  SimpleBaselines:
+    description: "Only mean/matching/crispr/ridge baselines"
+  GEARS-only:
+    description: "GEARS in isolation"
+  AC-Parallel:
+    description: "Parallel model runners + evaluator + ensemble selector"
+  AC-Parallel-Gated:
+    description: "+ perturb_gates.yaml triggers"
+  AC-ForcedMulti:
+    force_topology_level: 5
+  AC-NoReviewer:
+    disable_reviewer: true
+
+sandbox_profiles:
+  gpu_sc_model: { network: none, gpu: true, cpus: 8, memory_gb: 32, min_vram_gb: 16 }
+
+risks:
+  - "Cell-level leakage — use perturbation-level splits"
+  - "Simple baselines often competitive; always report them"
+  - "Gene universe mismatch between models — report coverage"
