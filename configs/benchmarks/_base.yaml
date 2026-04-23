@@ -1,5 +1,5 @@
 # Shared benchmark defaults. Per-dataset configs inherit these via
-# `extends: _base` at load time.
+# `extends: _base` at load time. Variant names match experiments.md §3.
 
 run:
   seed: 42
@@ -8,46 +8,52 @@ run:
   persist_predictions: true
 
 model:
-  # Override per config. `mock-llm` keeps CI offline; real runs need
-  # OpenAI/Anthropic env vars.
+  # Override per config. `mock-llm` keeps dry-runs offline; real runs
+  # require OPENAI_API_KEY / ANTHROPIC_API_KEY.
   provider: mock
   name: mock-llm
   temperature: 0.0
   max_tokens: 4096
 
 variants:
-  # Each variant pins compile-time knobs so ablations stay honest.
   AC-Direct:
     force_topology_level: 0
-    description: "Force L0/L1 single-agent fallback (simplicity-first floor)"
+    description: "Direct / single-agent execution only — simplicity-first floor"
   AC-Compiled:
     force_topology_level: null
     disable_gates: true
-    description: "Base compiled graph without gated refinement"
+    description: "Compile a base workflow; disable runtime gated repair"
   AC-Gated:
     force_topology_level: null
     disable_gates: false
     description: "Main method — compiled graph + gated local refinement"
-  AC-NoMeta:
+  AC-ForcedMulti:
+    force_topology_level: 4
+    description: "Force multi-specialist execution to surface negative returns"
+  AC-NoMetaSkills:
     force_topology_level: null
     disable_gates: false
     retrieval_bias: coarse_rules
-    description: "Skill retrieval uses only coarse rules"
-  AC-NoSkillMemory:
-    force_topology_level: null
-    use_skill_memory: false
-    description: "Skill memory not consulted at compile time"
-  AC-ForcedMulti:
-    force_topology_level: 4
-    description: "Force multi-specialist topology to expose negative returns"
-  AC-NoSandbox:
+    description: "Disable meta-skill evidence; fall back to shallow routing rules"
+  AC-NoToolSkills:
     force_topology_level: null
     disable_python_sandbox: true
-    description: "Remove sandbox execution; forces LLM-only code paths"
+    disable_repo_backend: true
+    description: "Disable tool / sandbox / repo backends; force LLM-only execution"
   AC-NoReviewer:
     force_topology_level: null
     disable_reviewer: true
-    description: "Remove reviewer node; integrator only"
+    description: "Remove reviewer / verifier nodes and gates"
+  AC-AFlowImported:
+    source_graph: aflow_imported
+    disable_gates: true
+    description: "Execute AFlow-imported topology without AgentCo-Op skill/tool augmentation"
+  AC-AFlowImported-Gated:
+    source_graph: aflow_imported
+    augment_skills: true
+    augment_tools: true
+    disable_gates: false
+    description: "AFlow topology + AgentCo-Op skills + gated local repair (Case Study 3 main)"
 
 budget:
   max_tokens: 20000

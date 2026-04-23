@@ -1,0 +1,35 @@
+# Gate policies for Case Study 2 parallel single-cell workflow.
+
+gates:
+  model_env_fail:
+    trigger: model_env_fail
+    action: replace_backend
+    max_activations: 1
+  gene_universe_mismatch:
+    trigger: gene_universe_mismatch
+    threshold: 0.9
+    action: add_reviewer
+    max_activations: 1
+  prediction_schema_invalid:
+    trigger: prediction_schema_invalid
+    action: add_formatter
+    max_activations: 1
+  metric_outlier:
+    trigger: metric_outlier
+    action: add_reviewer
+    max_activations: 1
+  simple_baseline_beats_all:
+    trigger: simple_baseline_beats_all
+    action: reroute_to_simple
+    max_activations: 1
+  model_disagreement_high:
+    trigger: model_disagreement_high
+    threshold: 0.5
+    action: add_reviewer
+    max_activations: 1
+  budget_near_limit:
+    trigger: budget_near_limit
+    threshold: 0.9
+    action: terminate_with_uncertainty
+    max_activations: 1
+    scope: graph

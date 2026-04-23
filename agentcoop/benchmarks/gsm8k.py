@@ -1,8 +1,6 @@
-"""GSM8K loader."""
+"""GSM8K loader (AFlow-aligned nested schema)."""
 
 from __future__ import annotations
-
-from typing import Iterator
 
 from agentcoop.benchmarks.common import (
     BenchmarkTask,
@@ -10,41 +8,32 @@ from agentcoop.benchmarks.common import (
     DATA_RAW,
     ensure_data_exists,
     iter_jsonl,
+    task_from_record,
 )
 
 
 def load(split: str = "test", limit: int | None = None, aflow: bool = True) -> list[BenchmarkTask]:
-    root = DATA_AFLOW if aflow else DATA_RAW
-    path = root / "gsm8k" / f"{split}.jsonl"
-    ensure_data_exists(path, "gsm8k")
-    tasks: list[BenchmarkTask] = []
-    for i, row in enumerate(iter_jsonl(path)):
-        if aflow:
-            tasks.append(
-                BenchmarkTask(
-                    task_id=row["task_id"],
-                    prompt=row["prompt"],
-                    reference=row["reference"],
-                    dataset="gsm8k",
-                    split=split,
-                    metadata=row.get("metadata", {}),
-                )
+    if aflow:
+        path = DATA_AFLOW / "gsm8k" / f"{split}.jsonl"
+        ensure_data_exists(path, "gsm8k")
+        tasks = [task_from_record(row) for row in iter_jsonl(path)]
+    else:
+        path = DATA_RAW / "gsm8k" / f"{split}.jsonl"
+        ensure_data_exists(path, "gsm8k")
+        tasks = [
+            BenchmarkTask(
+                task_id=row["task_id"],
+                dataset="gsm8k",
+                split=split,
+                prompt=row["question"],
+                reference=row["answer"].split("####")[-1].strip(),
+                metadata={"raw_answer": row["answer"]},
+                input={"prompt": row["question"], "question": row["question"]},
+                reference_obj={"answer": row["answer"].split("####")[-1].strip()},
             )
-        else:
-            ref = row["answer"].split("####")[-1].strip()
-            tasks.append(
-                BenchmarkTask(
-                    task_id=row["task_id"],
-                    prompt=row["question"],
-                    reference=ref,
-                    dataset="gsm8k",
-                    split=split,
-                    metadata={"raw_answer": row["answer"]},
-                )
-            )
-        if limit is not None and len(tasks) >= limit:
-            break
-    return tasks
+            for row in iter_jsonl(path)
+        ]
+    return tasks if limit is None else tasks[:limit]
 
 
 __all__ = ["load"]

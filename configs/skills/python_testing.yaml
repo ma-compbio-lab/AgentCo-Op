@@ -1,0 +1,16 @@
+name: python_testing
+kind: agent_skill
+backend_type: llm
+capabilities:
+  - generate_unit_tests
+  - property_based_tests
+  - boundary_case_design
+input_contract:
+  problem: str
+  function_signature: str
+output_contract:
+  tests: list
+  rationale_summary: str
+cost_class: low
+risk_level: low
+applicable_tags: [code, humaneval, mbpp, tests]

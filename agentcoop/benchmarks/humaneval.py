@@ -1,4 +1,4 @@
-"""HumanEval loader."""
+"""HumanEval loader (nested schema)."""
 
 from __future__ import annotations
 
@@ -8,47 +8,50 @@ from agentcoop.benchmarks.common import (
     DATA_RAW,
     ensure_data_exists,
     iter_jsonl,
+    task_from_record,
 )
 
 
 def load(split: str = "test", limit: int | None = None, aflow: bool = True) -> list[BenchmarkTask]:
-    root = DATA_AFLOW if aflow else DATA_RAW
     if aflow:
-        path = root / "humaneval" / f"{split}.jsonl"
+        path = DATA_AFLOW / "humaneval" / f"{split}.jsonl"
+        ensure_data_exists(path, "humaneval")
+        tasks = []
+        for row in iter_jsonl(path):
+            task = task_from_record(row)
+            # Flatten reference for graders expecting a dict with `test`/`entry_point`.
+            ref = row.get("reference", {}) or {}
+            task.reference = {
+                "test": ref.get("tests", ""),
+                "entry_point": ref.get("entry_point", ""),
+                "canonical_solution": ref.get("answer", ""),
+            }
+            tasks.append(task)
     else:
-        path = root / "humaneval" / "HumanEval.jsonl"
-    ensure_data_exists(path, "humaneval")
-    tasks: list[BenchmarkTask] = []
-    for row in iter_jsonl(path):
-        if aflow:
-            tasks.append(
-                BenchmarkTask(
-                    task_id=row["task_id"],
-                    prompt=row["prompt"],
-                    reference=row["reference"],
-                    dataset="humaneval",
-                    split=split,
-                    metadata=row.get("metadata", {}),
-                )
+        path = DATA_RAW / "humaneval" / "HumanEval.jsonl"
+        ensure_data_exists(path, "humaneval")
+        tasks = [
+            BenchmarkTask(
+                task_id=row["task_id"],
+                dataset="humaneval",
+                split=split,
+                prompt=row["prompt"],
+                reference={
+                    "test": row.get("test", ""),
+                    "entry_point": row.get("entry_point", ""),
+                    "canonical_solution": row.get("canonical_solution", ""),
+                },
+                metadata={"task_id": row.get("task_id", "")},
+                input={"prompt": row["prompt"]},
+                reference_obj={
+                    "answer": row.get("canonical_solution", ""),
+                    "tests": row.get("test", ""),
+                    "entry_point": row.get("entry_point", ""),
+                },
             )
-        else:
-            tasks.append(
-                BenchmarkTask(
-                    task_id=row["task_id"],
-                    prompt=row["prompt"],
-                    reference={
-                        "test": row.get("test", ""),
-                        "entry_point": row.get("entry_point", ""),
-                        "canonical_solution": row.get("canonical_solution", ""),
-                    },
-                    dataset="humaneval",
-                    split=split,
-                    metadata={"task_id": row.get("task_id", "")},
-                )
-            )
-        if limit is not None and len(tasks) >= limit:
-            break
-    return tasks
+            for row in iter_jsonl(path)
+        ]
+    return tasks if limit is None else tasks[:limit]
 
 
 __all__ = ["load"]

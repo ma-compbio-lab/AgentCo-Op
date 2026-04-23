@@ -1,0 +1,26 @@
+skills:
+  - name: combinatorics_counting
+    kind: agent_skill
+    backend_type: llm
+    capabilities: [counting, probability, inclusion_exclusion]
+    applicable_tags: [math, combinatorics, probability]
+  - name: number_theory
+    kind: agent_skill
+    backend_type: llm
+    capabilities: [modular_arithmetic, divisibility, primes, diophantine]
+    applicable_tags: [math, number_theory]
+  - name: algebraic_simplification
+    kind: agent_skill
+    backend_type: llm
+    capabilities: [equations, inequalities, transformations]
+    applicable_tags: [math, algebra, pre_algebra]
+  - name: pre_calculus
+    kind: agent_skill
+    backend_type: llm
+    capabilities: [functions, trigonometry, limits, sequences]
+    applicable_tags: [math, pre_calculus]
+  - name: answer_normalization
+    kind: agent_skill
+    backend_type: llm
+    capabilities: [boxed_extraction, equivalence_check]
+    applicable_tags: [math, formatting]

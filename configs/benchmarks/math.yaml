@@ -6,9 +6,14 @@ grader: math
 
 budget:
   max_tokens: 24000
-  max_cost_usd: 0.50
+  max_cost_usd: 0.60
   max_wall_time_s: 600
   max_iterations: 8
+
+budget_by_dataset:
+  max_llm_calls: 8
+  max_tool_calls: 4
+  max_cost_usd: 0.60
 
 model:
   provider: openai
@@ -17,16 +22,21 @@ model:
   max_tokens: 4096
 
 variants:
-  AC-Direct:
-    force_topology_level: 1
-  AC-Compiled:
-    force_topology_level: null
-    disable_gates: true
-  AC-Gated:
-    force_topology_level: null
+  AC-Direct: {force_topology_level: 1}
+  AC-Compiled: {disable_gates: true}
+  AC-Gated: {disable_gates: false}
+  AC-ForcedMulti: {force_topology_level: 4}
+  AC-NoMetaSkills: {retrieval_bias: coarse_rules}
+  AC-NoReviewer: {disable_reviewer: true}
+  AC-AFlowImported: {source_graph: aflow_imported, disable_gates: true}
+  AC-AFlowImported-Gated:
+    source_graph: aflow_imported
+    augment_skills: true
+    augment_tools: true
     disable_gates: false
-  AC-ForcedMulti:
-    force_topology_level: 4
 
-budget_by_dataset:
-  max_llm_calls: 8
+gates:
+  solver_disagreement: {action: add_specialist, max_activations: 1}
+  symbolic_check_fail: {action: retry_node, max_activations: 1}
+  boxed_answer_missing: {action: add_formatter, max_activations: 1}
+  domain_mismatch: {action: replace_backend, max_activations: 1}

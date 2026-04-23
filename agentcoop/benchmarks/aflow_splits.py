@@ -47,13 +47,26 @@ def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
     return count
 
 
-def _aflow_task(dataset: str, split: str, raw: dict[str, Any], prompt: str, reference: Any, metadata: dict[str, Any]) -> dict[str, Any]:
+def _aflow_task(
+    dataset: str,
+    split: str,
+    raw: dict[str, Any],
+    *,
+    prompt: str,
+    input_extra: dict[str, Any] | None = None,
+    reference_obj: dict[str, Any],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Emit the benchmarks.md §3 nested JSONL record."""
+    input_obj: dict[str, Any] = {"prompt": prompt}
+    if input_extra:
+        input_obj.update(input_extra)
     return {
+        "task_id": raw.get("task_id") or f"{dataset}_{split}_{raw.get('id', '?')}",
         "dataset": dataset,
         "split": split,
-        "task_id": raw.get("task_id") or f"{dataset}_{split}_{raw.get('id', '?')}",
-        "prompt": prompt,
-        "reference": reference,
+        "input": input_obj,
+        "reference": reference_obj,
         "metadata": metadata,
     }
 
@@ -84,8 +97,13 @@ def _import_gsm8k() -> dict[str, int]:
                     split_name,
                     row,
                     prompt=row["question"],
-                    reference=row["answer"].split("####")[-1].strip(),
-                    metadata={"raw_answer": row["answer"]},
+                    input_extra={"question": row["question"]},
+                    reference_obj={"answer": row["answer"].split("####")[-1].strip()},
+                    metadata={
+                        "source": "gsm8k-main",
+                        "category": "word_problem_arithmetic",
+                        "raw_answer": row["answer"],
+                    },
                 )
                 for row in bucket
             ),
@@ -127,10 +145,12 @@ def _import_math() -> dict[str, int]:
                     split_name,
                     row,
                     prompt=row["problem"],
-                    reference=row["solution"],
+                    input_extra={"question": row["problem"]},
+                    reference_obj={"answer": row["solution"]},
                     metadata={
-                        "type": row["type"],
-                        "level": row["level"],
+                        "source": "hendrycks-math-level5",
+                        "category": row["type"],
+                        "difficulty": row["level"],
                         "source_split": row.get("_source_split"),
                     },
                 )
@@ -154,12 +174,18 @@ def _import_hotpotqa() -> dict[str, int]:
                     split_name,
                     row,
                     prompt=row["question"],
-                    reference=row["answer"],
-                    metadata={
-                        "level": row.get("level", ""),
-                        "type": row.get("type", ""),
-                        "supporting_facts": row.get("supporting_facts", {}),
+                    input_extra={
+                        "question": row["question"],
                         "context": row.get("context", {}),
+                    },
+                    reference_obj={
+                        "answer": row["answer"],
+                        "supporting_facts": row.get("supporting_facts", {}),
+                    },
+                    metadata={
+                        "source": "hotpot_qa/distractor",
+                        "category": row.get("type", ""),
+                        "difficulty": row.get("level", ""),
                     },
                 )
                 for row in bucket
@@ -182,8 +208,17 @@ def _import_drop() -> dict[str, int]:
                     split_name,
                     row,
                     prompt=row["question"] + "\n\nPassage:\n" + row["passage"],
-                    reference=row.get("answers_spans", {}),
-                    metadata={"section_id": row.get("section_id", "")},
+                    input_extra={
+                        "question": row["question"],
+                        "context": row["passage"],
+                    },
+                    reference_obj={
+                        "answer": row.get("answers_spans", {}),
+                    },
+                    metadata={
+                        "source": "drop",
+                        "section_id": row.get("section_id", ""),
+                    },
                 )
                 for row in bucket
             ),
@@ -207,12 +242,16 @@ def _import_humaneval() -> dict[str, int]:
                     split_name,
                     row,
                     prompt=row["prompt"],
-                    reference={
-                        "test": row.get("test", ""),
+                    input_extra={"prompt": row["prompt"]},
+                    reference_obj={
+                        "answer": row.get("canonical_solution", ""),
+                        "tests": row.get("test", ""),
                         "entry_point": row.get("entry_point", ""),
-                        "canonical_solution": row.get("canonical_solution", ""),
                     },
-                    metadata={"task_id": row.get("task_id", "")},
+                    metadata={
+                        "source": "openai/human-eval",
+                        "canonical_task_id": row.get("task_id", ""),
+                    },
                 )
                 for row in bucket
             ),
@@ -239,12 +278,14 @@ def _import_mbpp() -> dict[str, int]:
                     split_name,
                     row,
                     prompt=row.get("prompt", row.get("text", "")),
-                    reference={
-                        "code": row.get("code", ""),
-                        "test_list": row.get("test_list", []),
+                    input_extra={"prompt": row.get("prompt", row.get("text", ""))},
+                    reference_obj={
+                        "answer": row.get("code", ""),
+                        "tests": row.get("test_list", []),
                         "test_setup_code": row.get("test_setup_code", ""),
                     },
                     metadata={
+                        "source": "mbpp/sanitized",
                         "source_split": row.get("_source_split"),
                     },
                 )

@@ -143,6 +143,156 @@ def _match_trigger(
             return "risk flag raised"
         return None
 
+    # --- benchmarks.md §5 + case_study.md §4 triggers ------------------------
+    if trigger in ("answer_format_invalid", "format_invalid"):
+        if result.output.get("format_invalid") or result.output.get("format_error"):
+            return "final output format invalid"
+        if not _matches_schema(result.output, node.output_schema):
+            return "output did not match declared schema"
+        return None
+
+    if trigger == "solver_disagreement":
+        answers = result.output.get("solver_answers") or result.output.get("candidate_answers")
+        if isinstance(answers, list) and len({str(a) for a in answers}) > 1:
+            return "solver answers disagree"
+        return None
+
+    if trigger == "method_disagreement":
+        flag = result.metrics.get("method_disagreement") or result.output.get("method_disagreement")
+        if flag:
+            return f"method disagreement flagged: {flag}"
+        return None
+
+    if trigger == "symbolic_check_fail":
+        if result.metrics.get("symbolic_check") is False or "symbolic_check_fail" in result.errors:
+            return "symbolic equivalence check failed"
+        return None
+
+    if trigger == "boxed_answer_missing":
+        ans = result.output.get("final_answer") or result.output.get("answer") or ""
+        if isinstance(ans, str) and r"\boxed{" not in ans and ans.strip() == "":
+            return "boxed answer missing"
+        return None
+
+    if trigger == "domain_mismatch":
+        flag = result.metrics.get("domain_mismatch") or result.output.get("domain_mismatch")
+        if flag:
+            return "routing / domain mismatch flagged"
+        return None
+
+    if trigger == "numeric_inconsistency":
+        if result.metrics.get("numeric_inconsistency"):
+            return "numeric arithmetic inconsistency"
+        return None
+
+    if trigger == "multi_span_conflict":
+        if result.metrics.get("multi_span_conflict"):
+            return "multi-span answer conflict"
+        return None
+
+    if trigger == "unusually_complex_problem":
+        if result.confidence is not None and result.confidence < 0.3:
+            return "low confidence with high-difficulty profile"
+        return None
+
+    if trigger == "arithmetic_fail":
+        if result.metrics.get("arithmetic_verifier") is False:
+            return "arithmetic verifier disagreed"
+        return None
+
+    if trigger == "answer_extraction_fail":
+        if result.output.get("final_answer") in (None, ""):
+            return "answer extraction failed"
+        return None
+
+    if trigger in ("syntax_error", "runtime_error", "public_or_generated_test_failure"):
+        failed = int(result.metrics.get("tests_failed", 0))
+        returncode = result.metrics.get("returncode")
+        err_text = " ".join(result.errors).lower()
+        if trigger == "syntax_error" and "syntaxerror" in err_text:
+            return "syntax error"
+        if trigger == "runtime_error" and ("traceback" in err_text or "error:" in err_text):
+            return "runtime error"
+        if trigger == "public_or_generated_test_failure" and (failed > 0 or (returncode is not None and returncode != 0)):
+            return "public/generated test failure"
+        return None
+
+    if trigger == "timeout":
+        if "timeout" in " ".join(result.errors).lower():
+            return "sandbox timeout"
+        return None
+
+    if trigger == "answer_unsupported":
+        if result.output.get("final_answer") and not result.evidence:
+            return "answer lacks evidence"
+        return None
+
+    if trigger == "high_disagreement":
+        if result.metrics.get("disagreement", 0) >= (policy.threshold or 0.5):
+            return "cross-specialist disagreement above threshold"
+        return None
+
+    # --- Case Study 1 gates --------------------------------------------------
+    if trigger == "design_ambiguous":
+        if result.output.get("design_ambiguous"):
+            return "experimental design ambiguous"
+        return None
+
+    if trigger == "too_few_markers":
+        n = result.metrics.get("num_markers") or result.output.get("num_markers") or 0
+        if isinstance(n, (int, float)) and n < (policy.threshold or 5):
+            return f"too few markers: {n}"
+        return None
+
+    if trigger == "gene_mapping_low":
+        frac = result.metrics.get("mapping_rate") or result.output.get("mapping_rate")
+        if isinstance(frac, (int, float)) and frac < (policy.threshold or 0.7):
+            return f"gene mapping rate low: {frac:.2f}"
+        return None
+
+    if trigger == "enrichment_empty":
+        if (result.metrics.get("enrichment_rows") or 0) == 0:
+            return "no significant ORA result"
+        return None
+
+    if trigger == "geneagent_unsupported_claim":
+        if result.metrics.get("unsupported_claims", 0) > 0:
+            return "verifier rejected some claims"
+        return None
+
+    # --- Case Study 2 gates --------------------------------------------------
+    if trigger == "model_env_fail":
+        err_text = " ".join(result.errors).lower()
+        if "cuda" in err_text or "importerror" in err_text or "modulenotfounderror" in err_text:
+            return "model environment import or CUDA failure"
+        return None
+
+    if trigger == "gene_universe_mismatch":
+        if result.metrics.get("gene_universe_coverage", 1.0) < (policy.threshold or 0.9):
+            return "model output genes differ from evaluator genes"
+        return None
+
+    if trigger == "prediction_schema_invalid":
+        required = ("perturbation", "predicted_delta", "genes")
+        if not all(k in result.output for k in required):
+            return "prediction missing required schema keys"
+        return None
+
+    if trigger == "metric_outlier":
+        if result.metrics.get("metric_outlier"):
+            return "metric flagged as outlier"
+        return None
+
+    if trigger == "simple_baseline_beats_all":
+        if result.metrics.get("simple_baseline_wins"):
+            return "simple baseline wins validation"
+        return None
+
+    if trigger == "model_disagreement_high":
+        if result.metrics.get("model_disagreement", 0) >= (policy.threshold or 0.5):
+            return "models disagree strongly"
+        return None
+
     return None
 
 

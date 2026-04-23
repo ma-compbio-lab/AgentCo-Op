@@ -6,9 +6,13 @@ grader: gsm8k
 
 budget:
   max_tokens: 8000
-  max_cost_usd: 0.20
+  max_cost_usd: 0.15
   max_wall_time_s: 180
   max_iterations: 4
+
+budget_by_dataset:
+  max_llm_calls: 4
+  max_cost_usd: 0.15
 
 model:
   provider: openai
@@ -17,16 +21,14 @@ model:
   max_tokens: 1024
 
 variants:
-  AC-Direct:
-    force_topology_level: 0
-  AC-Compiled:
-    force_topology_level: null
-    disable_gates: true
-  AC-Gated:
-    force_topology_level: null
-    disable_gates: false
-  AC-ForcedMulti:
-    force_topology_level: 4
+  AC-Direct: {force_topology_level: 0}
+  AC-Compiled: {disable_gates: true}
+  AC-Gated: {disable_gates: false}
+  AC-ForcedMulti: {force_topology_level: 4}
+  AC-NoMetaSkills: {retrieval_bias: coarse_rules}
+  AC-NoReviewer: {disable_reviewer: true}
 
-budget_by_dataset:
-  max_llm_calls: 4
+gates:
+  arithmetic_fail: {action: retry_node, max_activations: 1}
+  answer_extraction_fail: {action: add_formatter, max_activations: 1}
+  unusually_complex_problem: {action: add_specialist, max_activations: 1}
