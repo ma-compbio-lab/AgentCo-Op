@@ -1,30 +1,55 @@
 # Pinned external repo commits for reproducibility.
 # Update this file alongside `external/` refreshes; image builds and
-# benchmark runs must reference these SHAs.
-# Clone date: 2026-04-22.
+# case-study runs must reference these SHAs.
+# Last reviewed: 2026-04-22.
 
 repos:
   aflow:
     url: https://github.com/FoundationAgents/AFlow
     commit: 3f457218fc716093fe53f6df8a5d5e6379d66346
-    notes: "Source of truth for AFlow-aligned splits and benchmark utilities."
-
-  biodiscovery_agent:
-    url: https://github.com/snap-stanford/BioDiscoveryAgent
-    commit: 19673c7371c542cfa155ffaa9047c53525f9fe2e
-    notes: "Closed-loop perturbation design agent. Ships ground-truth + topmovers CSV/NPY per dataset."
-
-  spatial_agent:
-    url: https://github.com/Genentech/SpatialAgent
-    commit: e51ec0f6b1e5c8ddbc52dae846031fbc04d3c9d6
-    notes: "Plan-Act-Conclude spatial biology agent. Public canonical examples live in-tree."
+    notes: "AFlow-aligned splits + reference workflows. Source of the imported AFlow topologies for Case Study 3."
 
   human_eval:
     url: https://github.com/openai/human-eval
     commit: 6d43fb980f9fee3c892a914eda09951f772ad10d
-    notes: "Provides HumanEval.jsonl.gz and the official `check_correctness` pytest harness."
+    notes: "HumanEval.jsonl.gz + official check_correctness harness."
 
-  spatialbench:
-    url: https://github.com/Genentech/SpatialBench
-    commit: NOT_PUBLIC
-    notes: "Private / gated access as of 2026-04-22; run public canonical examples from SpatialAgent instead."
+  # -------- Case Study 1: bulk RNA-seq → gene-set interpretation --------
+  geneagent:
+    url: https://github.com/ncbi-nlp/GeneAgent
+    commit: TODO_PIN
+    notes: "LLM-agent gene-set analysis with database-backed verification. Wrap as sandbox_repo."
+
+  # -------- Case Study 2: parallel single-cell specialists --------
+  gears:
+    url: https://github.com/snap-stanford/GEARS
+    commit: TODO_PIN
+    notes: "Graph-enhanced perturbation prediction. Needs GPU; ships Norman/Adamson/Dixit loaders."
+
+  scgpt:
+    url: https://github.com/bowang-lab/scGPT
+    commit: TODO_PIN
+    notes: "Single-cell foundation model. Use official perturbation tutorial checkpoints."
+
+  scfoundation:
+    url: https://github.com/biomap-research/scFoundation
+    commit: TODO_PIN
+    notes: "Downstream perturbation code adapts GEARS interface; pin the GEARS-compatible fork."
+
+  geneformer:
+    url: https://huggingface.co/ctheodoris/Geneformer
+    commit: TODO_PIN
+    notes: "Embedding / classifier specialist; optional in Case Study 2."
+
+  scperturbench:
+    url: https://github.com/bm2-lab/scPerturBench
+    commit: TODO_PIN
+    notes: "Broader perturbation benchmark methods (CPA, scGen, biolord, …). Add after main pipeline stable."
+
+  # -------- Case Study 3: AFlow dynamic topology --------
+  # (uses aflow above)
+
+  swe_bench:
+    url: https://github.com/SWE-bench/SWE-bench
+    commit: TODO_PIN
+    notes: "Optional Case Study 3 SWE-bench Lite / Verified target. Only enable after code pipeline stable."

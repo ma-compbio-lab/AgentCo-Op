@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Build sandboxed Docker images for the wrapped repos.
+# Build sandboxed Docker images for wrapped case-study repos.
 # Prerequisite: Docker daemon running (Docker Desktop on macOS).
 #
 # Usage:
-#   ./scripts/build_repo_images.sh                 # build both
-#   ./scripts/build_repo_images.sh biodiscovery    # one only
-#   ./scripts/build_repo_images.sh spatial
+#   ./scripts/build_repo_images.sh                 # build all case-study images
+#   ./scripts/build_repo_images.sh geneagent       # one only
+#   ./scripts/build_repo_images.sh gears
 #
-# The build context is assembled on the fly:
-#   1. Verify the pinned commit in configs/external_commits.yaml matches
-#      external/<Repo>/.git/HEAD.
-#   2. Copy external/<Repo>/ into a temp dir as `repo/`.
-#   3. Copy the wrapper adapter + Dockerfile.
+# Each target:
+#   1. Verifies the pinned commit in configs/external_commits.yaml matches
+#      external/<Repo>/.git/HEAD (warns on drift; TODO_PIN is allowed).
+#   2. Copies external/<Repo>/ into a temp build context.
+#   3. Copies the wrapper adapter + Dockerfile.
 #   4. docker build -t agentcoop/<name>:<short_sha> -f Dockerfile.agentcoop .
-#   5. Tag as agentcoop/<name>:latest.
+#   5. Also tags agentcoop/<name>:latest.
 
 set -euo pipefail
 
@@ -24,34 +24,38 @@ COMMITS="$ROOT/configs/external_commits.yaml"
 
 pick_commit() {
   local key="$1"
-  python3 -c "
-import yaml, sys
-with open('$COMMITS') as f:
-  d = yaml.safe_load(f)
-print(d['repos']['$key']['commit'])
-"
+  python3 - "$key" <<'PY'
+import sys, yaml
+key = sys.argv[1]
+with open("configs/external_commits.yaml") as f:
+    d = yaml.safe_load(f)
+print(d["repos"].get(key, {}).get("commit", "TODO_PIN"))
+PY
 }
 
 build_one() {
-  local key="$1"       # biodiscovery / spatial
-  local external_dir="$2"
-  local wrapper_dir="$3"
-  local image_name="$4"
+  local repo_key="$1"        # geneagent / gears / scgpt / ...
+  local external_name="$2"   # GeneAgent / GEARS / scGPT / ...
+  local wrapper_dir="$3"     # path under agentcoop/wrappers
+  local image_name="$4"      # agentcoop/<name>
 
-  echo "=== $key ==="
+  echo "=== $repo_key ==="
+  local external_dir="$EXTERNAL/$external_name"
   if [[ ! -d "$external_dir" ]]; then
-    echo "ERROR: $external_dir not cloned. Run: git clone ... external/$key"
-    exit 1
+    echo "SKIP: $external_dir not cloned. Run: git clone <url> $external_dir"
+    return 0
+  fi
+  if [[ ! -d "$wrapper_dir" ]]; then
+    echo "SKIP: wrapper dir $wrapper_dir missing"
+    return 0
   fi
 
-  # Verify commit pin
   local head_sha
   head_sha=$(git -C "$external_dir" rev-parse HEAD)
   local pinned
-  pinned=$(pick_commit "$key")
-  if [[ "$pinned" != "NOT_PUBLIC" && "$head_sha" != "$pinned" ]]; then
-    echo "WARNING: $key HEAD ($head_sha) differs from pinned ($pinned)"
-    echo "         Update configs/external_commits.yaml or checkout the pin."
+  pinned=$(pick_commit "$repo_key")
+  if [[ "$pinned" != "TODO_PIN" && "$head_sha" != "$pinned" ]]; then
+    echo "WARNING: $repo_key HEAD ($head_sha) differs from pinned ($pinned)"
   fi
 
   local ctx
@@ -73,16 +77,32 @@ build_one() {
 target="${1:-all}"
 
 case "$target" in
-  biodiscovery|all)
-    build_one biodiscovery_agent "$EXTERNAL/BioDiscoveryAgent" \
-      "$WRAPPERS/biodiscovery" agentcoop/biodiscovery
+  geneagent|all)
+    build_one geneagent GeneAgent "$WRAPPERS/geneagent" agentcoop/geneagent
     ;;
 esac
 
 case "$target" in
-  spatial|all)
-    build_one spatial_agent "$EXTERNAL/SpatialAgent" \
-      "$WRAPPERS/spatialagent" agentcoop/spatialagent
+  gears|all)
+    build_one gears GEARS "$WRAPPERS/gears" agentcoop/gears
+    ;;
+esac
+
+case "$target" in
+  scgpt|all)
+    build_one scgpt scGPT "$WRAPPERS/scgpt" agentcoop/scgpt
+    ;;
+esac
+
+case "$target" in
+  scfoundation|all)
+    build_one scfoundation scFoundation "$WRAPPERS/scfoundation" agentcoop/scfoundation
+    ;;
+esac
+
+case "$target" in
+  geneformer|all)
+    build_one geneformer Geneformer "$WRAPPERS/geneformer" agentcoop/geneformer
     ;;
 esac
 
