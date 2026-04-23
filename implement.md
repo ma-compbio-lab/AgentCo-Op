@@ -280,3 +280,155 @@ python -m agentcoop.cli benchmark --dataset gsm8k --limit 10 -v AC-Gated
 3. Acquire SpatialBench full-set access to run S2-full; otherwise
    S2-small (public canonical examples in `external/SpatialAgent/resource/`)
    is the default tier.
+
+---
+
+## Session 3 — Experiments refactored to benchmarks.md + case_study.md (2026-04-22)
+
+The v1 specialized track (SpatialBench / BioDiscoveryAgent /
+cross-specialist pilot) was removed and replaced with three case
+studies. Variant names now match `experiments.md` §3.
+
+### Removed (outdated, see git history)
+
+- `configs/benchmarks/biodiscovery.yaml`, `spatialbench.yaml`, `cross_specialist_pilot.yaml`.
+- `agentcoop/wrappers/{biodiscovery,spatialagent}/`.
+- `agentcoop/skills/{agents/biodiscovery_agent.yaml, agents/spatial_agent.yaml, meta/domain_agent_collaboration.md}`.
+- `tests/unit/test_wrappers.py` (replaced by `test_case_studies.py`).
+
+### New modules
+
+```
+agentcoop/
+  benchmarks/
+    bio.py              Case Study 1 helpers: select_markers / enrich / run_geneagent
+    perturb.py          Case Study 2 helpers: synthetic dataset, baselines, evaluators, ensembles
+  core/
+    aflow_import.py     AST-based AFlow workflow importer → WorkflowBlueprint
+    augment_graph.py    attach_skills_and_tools + load_gate_yaml + apply_gates
+    gate_analysis.py    rescue / harm rate analysis across run directories
+  wrappers/
+    geneagent/          Case Study 1 wrapper (GeneAgent stub)
+    gears/              Case Study 2 wrappers (GEARS / scGPT / scFoundation / Geneformer)
+    scgpt/
+    scfoundation/
+    geneformer/
+```
+
+### New configs
+
+- `configs/benchmarks/_base.yaml` — 9 variants matching experiments.md §3.
+- Per-dataset `configs/benchmarks/{gsm8k,math,humaneval,mbpp,hotpotqa,drop}.yaml`
+  now declare the benchmarks.md §7 per-dataset budgets and gate maps.
+- `configs/case_studies/{case1_airway,case2_norman_replogle,case3_aflow_import}.yaml` —
+  case-study runbooks with repo manifests, gates_file pointers, and
+  variant ablation plans.
+- `configs/gates/{code_runtime_gates,math_gates,bio_gates,perturb_gates}.yaml` —
+  gate policy catalogs consumed by `agentcoop aflow augment-graph --gates`.
+- `configs/skills/{code_debugging,python_testing,math_skills}.yaml` —
+  extra skill cards attached via Case Study 3's augment-graph step.
+- `configs/external_commits.yaml` — updated to list GeneAgent, GEARS,
+  scGPT, scFoundation, Geneformer, scPerturBench, swe_bench.
+
+### Unified task schema (benchmarks.md §3)
+
+`BenchmarkTask` now ships both a flat `.prompt` / `.reference` and the
+nested `input{question, context, prompt} / reference{answer, tests} /
+metadata{source, category, difficulty}` dicts. The AFlow importer emits
+nested records and all six loaders round-trip them.
+
+### Runner output layout (benchmarks.md §11)
+
+Every run now writes:
+
+```
+runs/{dataset}/{method}/{timestamp}/
+  config.yaml            (resolved config after extends)
+  git_state.txt
+  data_hashes.json       (SHA-256 of the input split)
+  model_versions.json    (provider / model / temperature / key presence)
+  workflow_blueprint.json (first compiled blueprint)
+  predictions.jsonl      (one record per (task, variant))
+  metrics.json           (per-variant aggregates + route / gate totals)
+  traces/                (JSONL events per run)
+  sandbox_logs/
+  artifacts/
+```
+
+### New CLI commands
+
+- `agentcoop run-benchmark` / `agentcoop benchmark` (alias)
+- `agentcoop evaluate` — regrade an existing `predictions.jsonl`.
+- `agentcoop analyze-gates` — compute rescue / harm rates.
+- `agentcoop data import-aflow` / `agentcoop data hash`.
+- `agentcoop bio select-markers` / `agentcoop bio enrich`.
+- `agentcoop run-node geneagent` — dry-run the GeneAgent wrapper.
+- `agentcoop aflow import-workflow` / `agentcoop aflow augment-graph`.
+- `agentcoop perturb {download, synth, run, evaluate, ensemble}` — CS2 pipeline.
+- `agentcoop repo {wrap, smoke}` — unchanged contract, now covers the new wrappers.
+
+### Gate catalogue (expanded)
+
+Session 3 adds `answer_format_invalid`, `solver_disagreement`,
+`method_disagreement`, `symbolic_check_fail`, `boxed_answer_missing`,
+`domain_mismatch`, `numeric_inconsistency`, `multi_span_conflict`,
+`unusually_complex_problem`, `arithmetic_fail`, `answer_extraction_fail`,
+`syntax_error`, `runtime_error`, `public_or_generated_test_failure`,
+`timeout`, `answer_unsupported`, `high_disagreement`,
+`design_ambiguous`, `too_few_markers`, `gene_mapping_low`,
+`enrichment_empty`, `geneagent_unsupported_claim`, `model_env_fail`,
+`gene_universe_mismatch`, `prediction_schema_invalid`, `metric_outlier`,
+`simple_baseline_beats_all`, `model_disagreement_high`.
+
+### Immediately-runnable commands (no API key needed)
+
+```bash
+# 1. AFlow-aligned dry run
+python -m agentcoop.cli run-benchmark --dataset gsm8k --limit 3 \
+  -v AC-Direct -v AC-Gated --dry-run
+
+# 2. Case Study 1 offline (uses synthetic DE TSV if R is unavailable)
+python scripts/case1_synthetic_de.py artifacts/case1
+python -m agentcoop.cli bio select-markers \
+  --de-results artifacts/case1/de_results.tsv --out artifacts/case1/gene_sets
+python -m agentcoop.cli bio enrich \
+  --gene-set artifacts/case1/gene_sets/up_genes.json \
+  --out artifacts/case1/enrichment/up.json
+python -m agentcoop.cli run-node geneagent \
+  --input artifacts/case1/gene_sets/up_genes.json \
+  --context "airway dex vs control" --out artifacts/case1/geneagent_up.json
+
+# 3. Case Study 2 offline (synthetic dataset, simple baselines)
+python -m agentcoop.cli perturb synth \
+  --dataset synthetic_norman --out data/perturb/synth.json
+python -m agentcoop.cli perturb run \
+  --dataset-path data/perturb/synth.json --out runs/case2/predictions
+python -m agentcoop.cli perturb evaluate \
+  --predictions runs/case2/predictions \
+  --dataset-path data/perturb/synth.json --out runs/case2/metrics.json
+python -m agentcoop.cli perturb ensemble \
+  --predictions runs/case2/predictions \
+  --dataset-path data/perturb/synth.json --strategy validation_winner \
+  --out runs/case2/ensemble.json
+
+# 4. Case Study 3: import AFlow MBPP graph, augment, run (dry)
+python -m agentcoop.cli aflow import-workflow \
+  --workflow-file external/AFlow/workspace/MBPP/workflows/round_1/graph.py \
+  --dataset mbpp --out runs/case3/mbpp_aflow.json
+python -m agentcoop.cli aflow augment-graph \
+  --graph runs/case3/mbpp_aflow.json \
+  --skills configs/skills/code_debugging.yaml \
+  --skills configs/skills/python_testing.yaml \
+  --tools sandbox_python --tools generated_tests --tools static_analyzer \
+  --gates configs/gates/code_runtime_gates.yaml \
+  --out runs/case3/mbpp_aflow_augmented.json
+python -m agentcoop.cli run-benchmark --dataset mbpp --limit 3 \
+  -v AC-AFlowImported-Gated --dry-run --method ac-aflow-skills-gates
+```
+
+### Tests
+
+82 unit tests pass. New modules: `test_aflow_importer.py` (importer +
+augment-graph + gate YAML loader), `test_case_studies.py` (CS1 + CS2
+end-to-end, wrapper adapter stubs, config sanity), `test_gate_extensions.py`
+(each new gate trigger fires once).

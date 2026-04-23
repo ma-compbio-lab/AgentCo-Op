@@ -77,3 +77,45 @@ For framework-only phase, we can defer `datasets`, `evaluate`, `docker`, `gitpyt
 ### Runner architecture choices
 - Dry-run registers MockLLM canned responses keyed by role + node_id. Each task compiles its own blueprint (per-task routing), so `metrics.json → route_distribution` is populated even in dry-run.
 - `force_topology_level` is applied post-compile as a provenance annotation; a future full recompile-with-level-filter is a nice-to-have but not blocking.
+
+---
+
+## Session 3 — spec refactor findings
+
+- `experiments.md` shrinks to a short overview; `benchmarks.md` and
+  `case_study.md` are the new detailed protocols. The v1 specialized
+  track (SpatialBench / BioDiscoveryAgent / cross-specialist pilot) is
+  replaced by three case studies.
+- New variant names in experiments.md §3: **AC-NoMeta → AC-NoMetaSkills**,
+  **AC-NoSandbox → AC-NoToolSkills**. Added `AC-AFlowImported` and
+  `AC-AFlowImported-Gated` for Case Study 3.
+- Benchmarks.md §3 defines a new unified JSONL record with nested
+  `input` / `reference` / `metadata`. `BenchmarkTask` keeps both flat
+  and nested forms to avoid breaking existing graders.
+- Benchmarks.md §11 requires a full reproducibility directory
+  (`config.yaml`, `git_state.txt`, `data_hashes.json`,
+  `model_versions.json`, `workflow_blueprint.json`, `predictions.jsonl`,
+  `metrics.json`, `traces/`, `sandbox_logs/`, `artifacts/`). The runner
+  now writes all of them.
+- Benchmarks.md §5 exposes dataset-specific gate names
+  (`answer_format_invalid`, `solver_disagreement`, `boxed_answer_missing`,
+  ...). `core/gates.py` grew a long list of new triggers.
+- Case Study 1 (airway + GeneAgent): framework uses synthetic DE TSV
+  when R/DESeq2 aren't available so tests stay offline. `select_markers`
+  keeps padj / log2fc thresholds configurable; `enrich` ships a tiny
+  Hallmark-style pathway table as a stub.
+- Case Study 2 (Norman + Replogle): real datasets require pertpy /
+  figshare access and GPUs; the framework ships a synthetic dataset
+  + four simple baselines + ensemble strategies so the pipeline is
+  exercisable without a GPU. The GPU adapters are **self-contained**
+  stubs that will be replaced with real repo calls when images are
+  built.
+- Case Study 3 (AFlow dynamic): AFlow's own workflow files (in
+  `external/AFlow/workspace/<dataset>/workflows/...`) are AST-parsed
+  via `agentcoop.core.aflow_import`. Unknown operators are tagged in
+  the blueprint's provenance. `augment-graph` + gate YAMLs drive the
+  `AC-AFlowImported-Gated` variant end-to-end.
+- Typer's list-option syntax is `--tools X --tools Y` (not a single
+  repeated argument). Documented in implement.md.
+- Wrapper adapters now avoid importing `agentcoop` so they can run
+  inside isolated Docker images without the package on `sys.path`.

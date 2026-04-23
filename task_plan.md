@@ -125,9 +125,105 @@ Wire `agentcoop benchmark --dataset X --split Y --config Z --limit N --out dir` 
 Add `configs/external_commits.yaml`, `data/data_hashes.json` schema, and update `implement.md` with the experiment-config map. Update `.gitignore` for `external/**`, `data/raw/**`, `data/processed/**`, `data/aflow_aligned/**`.
 **Verify:** `implement.md` has a "Session 2 — Experiments configured" section; repo remains small after ignore rules applied.
 
-### Phase 25: Test + commit + push — status: pending
-Run pytest; split the new work into logical commits (data loaders / graders / configs / docs); push `clean-dev`.
-**Verify:** remote ref advances cleanly.
+### Phase 25: Test + commit + push — status: complete
+
+---
+
+## Session 3 phases — Refactor to experiments.md v2 / benchmarks.md / case_study.md
+
+`experiments.md` has been rewritten as a short overview. `benchmarks.md`
+supersedes the per-dataset experiment detail. `case_study.md` replaces
+SpatialBench / BioDiscovery with three case studies:
+CS1 bulk RNA-seq (airway + GeneAgent), CS2 parallel single-cell
+(GEARS / scGPT / scFoundation / Geneformer on Norman + Replogle K562),
+CS3 dynamic topology refinement from AFlow workflows.
+
+No API key yet → everything must run in dry-run mode.
+
+### Phase 26: Inventory + remove outdated configs — status: pending
+Drop v1 specialized configs (biodiscovery.yaml, spatialbench.yaml,
+cross_specialist_pilot.yaml) and the wrappers/skills that only served
+them. Keep anything reused by the new case studies.
+**Verify:** `git status` shows deletions; `yaml.safe_load` still accepts
+every remaining config.
+
+### Phase 27: Variant matrix + unified task schema — status: pending
+Rename variants to match experiments.md §3 (AC-Direct, AC-Compiled,
+AC-Gated, AC-ForcedMulti, AC-NoMetaSkills, AC-NoToolSkills,
+AC-NoReviewer, AC-AFlowImported, AC-AFlowImported-Gated). Migrate the
+BenchmarkTask JSONL loader to the nested `input/reference/metadata`
+schema from benchmarks.md §3.
+**Verify:** each dataset still loads 2 tasks; new schema is readable by
+every grader.
+
+### Phase 28: Runner output layout — status: pending
+Write predictions.jsonl (not csv), metrics.json, workflow_blueprint.json,
+git_state.txt, model_versions.json, data_hashes.json into
+`runs/{benchmark}/{method}/{timestamp}/`. Keep a compact CSV as optional.
+**Verify:** `agentcoop benchmark --dry-run` produces the required files.
+
+### Phase 29: Gate + patch extensions — status: pending
+Add new triggers referenced by benchmarks.md §5 and case_study.md §4.5-6:
+`answer_format_invalid`, `solver_disagreement`, `symbolic_check_fail`,
+`boxed_answer_missing`, `domain_mismatch`, `method_disagreement`,
+`numeric_inconsistency`, `multi_span_conflict`, `model_env_fail`,
+`prediction_schema_invalid`, `gene_mapping_low`, `enrichment_empty`,
+`design_ambiguous`.
+**Verify:** unit test for each new trigger routes to a plausible patch.
+
+### Phase 30: AFlow workflow importer + augment-graph — status: pending
+`agentcoop/core/aflow_import.py` converts AFlow `workflow.py`
+operator usage into a minimal WorkflowBlueprint (node manifests with
+`source: aflow`). `agentcoop/core/augment_graph.py` attaches skill
+cards and tools and writes the augmented graph JSON. Gate YAML reader.
+**Verify:** smoke import on `external/AFlow/workspace/…` and augment it
+with dummy skill cards; round-trip through JSON.
+
+### Phase 31: Case Study 1 scaffolding — status: pending
+R sandbox profile doc; `scripts/case1_airway_de.R` per case_study.md
+§2.5; `agentcoop bio select-markers` / `agentcoop bio enrich` CLI
+commands (Python); GeneAgent wrapper manifest + adapter stub; airway
+loader reads an R-produced TSV stub when R isn't installed.
+**Verify:** dry-run `agentcoop bio select-markers` on a synthetic DE
+TSV produces well-formed `up_genes.json` / `down_genes.json`; wrapper
+adapter stub accepts a gene list and returns a canned report.
+
+### Phase 32: Case Study 2 scaffolding — status: pending
+GPU-sandbox manifest skeletons for GEARS, scGPT, scFoundation,
+Geneformer; `agentcoop/benchmarks/perturb.py` with dataset + split
+planner stubs; unified prediction schema validator; simple baselines
+(perturbed mean, matching mean, CRISPR-informed mean, ridge);
+`agentcoop run-case2` / `evaluate-perturb` / `ensemble-perturb` /
+`report-case2` CLI commands.
+**Verify:** synthetic Norman-like AnnData (or JSON surrogate) runs
+through mean baseline + evaluator without external deps.
+
+### Phase 33: Case Study 3 scaffolding — status: pending
+`configs/gates/code_runtime_gates.yaml`, `configs/gates/math_gates.yaml`;
+`agentcoop import-aflow-workflow`, `augment-graph`, `analyze-gates`
+CLI commands; AFlow-imported nodes add `source: aflow` provenance.
+**Verify:** `agentcoop import-aflow-workflow --dry-run` emits a graph JSON.
+
+### Phase 34: Case study configs — status: pending
+`configs/case_studies/{case1_airway,case2_norman_replogle,case3_aflow_import}.yaml`
+with dataset / model / variant / budget / repo-manifest references.
+**Verify:** every YAML loads and declares a `case_study` key.
+
+### Phase 35: Test suite update — status: pending
+Remove tests for deleted wrappers; add tests for:
+new variant names, new gate triggers, AFlow importer, augment-graph,
+bio CLI, perturb simple baselines, run-layout compliance.
+**Verify:** `pytest tests/unit` green.
+
+### Phase 36: Docs + planning files — status: pending
+Update `implement.md` with session-3 module map; log session-3 entries
+in `progress.md` and `findings.md`.
+**Verify:** implement.md references only current modules.
+
+### Phase 37: Commit + push — status: pending
+Split into logical commits (remove-old / new-runner / case-studies /
+docs); push to origin/clean-dev.
+**Verify:** `git push` succeeds; all tests pass before push.
 
 ---
 

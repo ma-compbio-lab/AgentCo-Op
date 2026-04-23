@@ -68,6 +68,52 @@ Split the work into 3 logical commits on `clean-dev`:
 
 Pushed to `origin/clean-dev` (ffac7c5..94ff027). Remote: git@github.com:Eurekashen/AgentCo-Op.git.
 
+---
+
+## Session 3 — experiments.md v2 + benchmarks.md + case_study.md (2026-04-22)
+
+Phases 26 – 36 complete. 82 unit tests pass.
+
+### Removals (outdated v1 specialized track)
+- Deleted `configs/benchmarks/{biodiscovery,spatialbench,cross_specialist_pilot}.yaml`.
+- Deleted `agentcoop/wrappers/{biodiscovery,spatialagent}/` (adapters + Dockerfile + manifest).
+- Deleted `agentcoop/skills/agents/{biodiscovery_agent,spatial_agent}.yaml`, `agentcoop/skills/meta/domain_agent_collaboration.md`.
+- Deleted `tests/unit/test_wrappers.py`.
+
+### Additions
+- `agentcoop/benchmarks/{bio,perturb}.py` — Case Study 1 & 2 helpers.
+- `agentcoop/core/{aflow_import,augment_graph,gate_analysis}.py` — Case Study 3 machinery.
+- `agentcoop/wrappers/{geneagent,gears,scgpt,scfoundation,geneformer}/` — new case-study wrappers.
+- `configs/case_studies/{case1_airway,case2_norman_replogle,case3_aflow_import}.yaml`.
+- `configs/gates/{code_runtime,math,bio,perturb}_gates.yaml`.
+- `configs/skills/{code_debugging,python_testing,math_skills}.yaml`.
+- `scripts/{case1_airway_de.R, case1_synthetic_de.py}`.
+- `configs/external_commits.yaml` rewritten for the new repos.
+
+### Changes
+- `agentcoop/benchmarks/common.py` — nested `BenchmarkTask` (`input/reference/metadata`).
+- `agentcoop/benchmarks/aflow_splits.py` — emits nested JSONL.
+- `agentcoop/benchmarks/runner.py` — new `runs/{dataset}/{method}/{timestamp}/` layout with `predictions.jsonl`, `workflow_blueprint.json`, `git_state.txt`, `model_versions.json`, `data_hashes.json`, `traces/`, `sandbox_logs/`, `artifacts/`.
+- `agentcoop/core/gates.py` — 28 new trigger branches.
+- `agentcoop/cli.py` — new subcommands under `bio`, `aflow`, `perturb`, `data`, plus `evaluate` / `analyze-gates`.
+- `configs/benchmarks/_base.yaml` — 9-variant matrix matching experiments.md §3.
+
+### Verification
+- Full `agentcoop benchmark --dry-run` pipeline validated end-to-end on GSM8K.
+- CS1 pipeline validated offline end-to-end (synthetic DE → enrich → GeneAgent stub).
+- CS2 pipeline validated: synthetic dataset → four baselines → evaluator → three ensemble strategies.
+- CS3 pipeline validated: AFlow MBPP graph → augment-graph → 6 gates attached, skills + tools applied.
+- All 5 wrapper adapter stubs return ok=True on canned requests.
+
+### Errors this session
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| Original `test_registry_loads_all_skills` expected 12 meta + 7 agent skills | 1 | Updated asserts to 11 + 5 after v1 skill-card removal |
+| `test_meta_retrieval_repo` expected `biodiscovery_agent` in top agents | 1 | Rewrote to assert `sandbox_repo_execution` meta-skill is top for repo-heavy profiles |
+| GPU-adapter stubs failed to import `agentcoop.benchmarks.perturb` from subprocess | 1 | Made adapters self-contained (no `agentcoop` import); Docker images would likewise lack the package |
+| Typer `--tools` option rejected `--tools a b c` syntax | 1 | Documented `--tools a --tools b --tools c` convention |
+| AFlow `CustomCodeGenerate` / `SelfConsistency` operators unmapped | 1 | Extended OPERATOR_MAP with 7 additional operators |
+
 Files delivered:
 - Package `agentcoop/` with core, skills (12 meta + 7 agent), 5 backends, memory, wrappers (bio + spatial).
 - `pyproject.toml`, `README.md`, `configs/{models,budgets,safety}.yaml`, `docker/base-python.Dockerfile`, `.gitignore`.

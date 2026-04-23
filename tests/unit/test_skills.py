@@ -10,8 +10,10 @@ PKG_SKILLS = Path(__file__).resolve().parents[2] / "agentcoop" / "skills"
 
 def test_registry_loads_all_skills() -> None:
     reg = SkillRegistry().load_dir(PKG_SKILLS)
-    assert len(reg.meta) == 12
-    assert len(reg.agents) == 7
+    # Session 3 removes the v1 domain_agent_collaboration / biodiscovery /
+    # spatial skill cards.
+    assert len(reg.meta) == 11
+    assert len(reg.agents) == 5
 
 
 def test_meta_retrieval_math() -> None:
@@ -47,16 +49,20 @@ def test_meta_retrieval_code() -> None:
 
 
 def test_meta_retrieval_repo() -> None:
+    """Case-study repo skills live in `agentcoop/wrappers/*` after session 3,
+    not as agent-skill YAMLs, so the registry-level retrieval only has
+    general-purpose skills. This test keeps the registry sanity."""
     reg = SkillRegistry().load_dir(PKG_SKILLS)
     prof = TaskProfile(
         task_id="t",
-        raw_task="Run BioDiscoveryAgent on IFNG",
-        domain=["bio", "repo"],
+        raw_task="Run a Dockerized repo in a sandbox",
+        domain=["repo"],
         answer_type="report",
         verification_available="rubric",
         difficulty="complex",
         repo_execution_need=0.9,
         budget=Budget(),
     )
-    top_agents = reg.search_agents(prof, top_k=3)
-    assert "biodiscovery_agent" in [a.name for a in top_agents]
+    top = reg.search_meta(prof, top_k=3)
+    # sandbox_repo_execution remains the most-repo-relevant meta-skill.
+    assert "sandbox_repo_execution" in [m.name for m in top]

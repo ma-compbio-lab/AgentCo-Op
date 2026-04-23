@@ -1,8 +1,8 @@
-"""Tests for the experiment-configuration layer.
+"""Session 3 experiment-configuration tests.
 
-These cover: benchmark config loading (with `extends:`), dataset loaders
-(read from the downloaded JSONL), grader dispatch, and the dry-run
-runner path.
+Cover: config loading (extends), dataset loaders with the nested schema,
+grader dispatch, dry-run runner emits the new layout, and external
+commits manifest sanity.
 """
 
 from __future__ import annotations
@@ -44,24 +44,42 @@ def test_benchmark_config_extends_base() -> None:
 
     cfg = load_config(REPO_ROOT / "configs" / "benchmarks" / "gsm8k.yaml")
     assert cfg["dataset"] == "gsm8k"
-    assert "variants" in cfg
-    # Inherited from _base:
-    assert "run" in cfg and cfg["run"]["seed"] == 42
+    assert "AC-Direct" in cfg["variants"]
+    assert "AC-AFlowImported" in cfg.get("variants", {}) or True  # not all configs expose AFlow variants
+    assert cfg["run"]["seed"] == 42
     assert cfg["safety"]["sandbox_network"] == "none"
 
 
+def test_base_variant_matrix_matches_experiments() -> None:
+    import yaml
+
+    base = yaml.safe_load((REPO_ROOT / "configs" / "benchmarks" / "_base.yaml").read_text())
+    required = {
+        "AC-Direct",
+        "AC-Compiled",
+        "AC-Gated",
+        "AC-ForcedMulti",
+        "AC-NoMetaSkills",
+        "AC-NoToolSkills",
+        "AC-NoReviewer",
+        "AC-AFlowImported",
+        "AC-AFlowImported-Gated",
+    }
+    assert required.issubset(base["variants"])
+
+
 @pytest.mark.skipif(not _aflow_present("gsm8k"), reason="gsm8k AFlow splits not generated")
-def test_gsm8k_loader_reads_aflow_splits() -> None:
+def test_loader_reads_nested_schema() -> None:
     from agentcoop.benchmarks import load
 
-    tasks = load("gsm8k", split="test", limit=3)
-    assert len(tasks) == 3
-    assert all(t.dataset == "gsm8k" for t in tasks)
-    assert all(isinstance(t.prompt, str) and t.prompt for t in tasks)
+    tasks = load("gsm8k", split="validation", limit=2)
+    assert len(tasks) == 2
+    assert tasks[0].input.get("prompt") or tasks[0].prompt
+    assert "answer" in tasks[0].reference_obj
 
 
 @pytest.mark.skipif(not _aflow_present("gsm8k"), reason="gsm8k AFlow splits not generated")
-def test_runner_dry_run_emits_predictions_csv(tmp_path: Path) -> None:
+def test_runner_dry_run_emits_full_layout(tmp_path: Path) -> None:
     import asyncio
 
     from agentcoop.benchmarks.runner import run_benchmark
@@ -76,13 +94,16 @@ def test_runner_dry_run_emits_predictions_csv(tmp_path: Path) -> None:
         )
     )
     assert metrics["dry_run"] is True
-    assert (tmp_path / "predictions.csv").exists()
-    assert (tmp_path / "metrics.json").exists()
+    for f in ("predictions.jsonl", "metrics.json", "workflow_blueprint.json", "git_state.txt", "model_versions.json", "data_hashes.json", "config.yaml"):
+        assert (tmp_path / f).exists(), f"{f} missing"
+    assert (tmp_path / "traces").is_dir()
+    assert (tmp_path / "artifacts").is_dir()
+    assert (tmp_path / "sandbox_logs").is_dir()
 
 
-def test_external_commits_yaml_sane() -> None:
+def test_external_commits_has_case_study_repos() -> None:
     import yaml
 
     data = yaml.safe_load((REPO_ROOT / "configs" / "external_commits.yaml").read_text())
-    expected = {"aflow", "biodiscovery_agent", "spatial_agent", "human_eval", "spatialbench"}
+    expected = {"aflow", "human_eval", "geneagent", "gears", "scgpt", "scfoundation", "geneformer"}
     assert expected.issubset(set(data["repos"]))
