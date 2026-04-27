@@ -1,19 +1,36 @@
 """LLM backend: one wrapper, multiple providers via a pluggable client.
 
-For the framework phase we ship only `MockLLM` (deterministic, offline).
-A real `OpenAILLM` / `AnthropicLLM` can be dropped in by implementing the
-`LLMClient` protocol.
+Ships:
+  - `MockLLM`:   deterministic, offline. Default.
+  - `OpenAIClient`: `httpx`-based Chat Completions client (no SDK dep).
+                    Set `OPENAI_API_KEY` env-var; passes the prompt-cache
+                    hint by reusing identical system prompts across nodes.
+
+The `LLMBackend` consults `agentcoop.backends.prompts` to build a
+role × dataset system+user prompt. For unknown roles / datasets it falls
+back to a generic prompt.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
+import httpx
+
+from agentcoop.core.cost import CostLedger, DEFAULT_PRICE_TABLE_USD_PER_1K
 from agentcoop.core.schema import NodeResult, NodeSpec
 from agentcoop.backends.base import Backend, NodeContext
+from agentcoop.backends.prompts import build_messages, parse_output
+
+
+# ---------------------------------------------------------------------------
+# Client protocol
+# ---------------------------------------------------------------------------
 
 
 class LLMClient(Protocol):
@@ -28,6 +45,11 @@ class LLMClient(Protocol):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> dict[str, Any]: ...
+
+
+# ---------------------------------------------------------------------------
+# MockLLM
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -54,8 +76,107 @@ class MockLLM:
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> dict[str, Any]:
-        # Unused here; the LLMBackend picks the canned output.
-        return {"system": system, "user": user}
+        # Unused here; the LLMBackend picks the canned output via _mock_output.
+        return {"text": "", "tokens_in": 0, "tokens_out": 0, "model": self.model}
+
+
+# ---------------------------------------------------------------------------
+# OpenAI client (httpx, no SDK)
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+
+
+@dataclass
+class OpenAIClient:
+    model: str = "gpt-4o-mini"
+    api_key: str | None = None
+    base_url: str = _DEFAULT_OPENAI_URL
+    timeout_s: float = 90.0
+    max_retries: int = 4
+    _client: httpx.AsyncClient | None = None
+
+    def __post_init__(self) -> None:
+        self.api_key = self.api_key or os.environ.get("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OpenAIClient: OPENAI_API_KEY is not set")
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout_s, connect=10.0),
+            limits=httpx.Limits(max_connections=64, max_keepalive_connections=32),
+        )
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+
+    async def complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        response_format: dict[str, Any] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": float(temperature),
+            "max_tokens": int(max_tokens),
+        }
+        if response_format:
+            body["response_format"] = response_format
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        last_exc: Exception | None = None
+        delay = 1.0
+        for attempt in range(self.max_retries + 1):
+            try:
+                assert self._client is not None
+                resp = await self._client.post(self.base_url, json=body, headers=headers)
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    raise httpx.HTTPStatusError(
+                        f"upstream {resp.status_code}: {resp.text[:200]}",
+                        request=resp.request,
+                        response=resp,
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                choice = data["choices"][0]["message"]["content"] or ""
+                usage = data.get("usage", {}) or {}
+                return {
+                    "text": choice,
+                    "tokens_in": int(usage.get("prompt_tokens", 0)),
+                    "tokens_out": int(usage.get("completion_tokens", 0)),
+                    "model": data.get("model", self.model),
+                }
+            except (httpx.HTTPStatusError, httpx.HTTPError, asyncio.TimeoutError) as exc:
+                last_exc = exc
+                if attempt >= self.max_retries:
+                    break
+                await asyncio.sleep(delay)
+                delay = min(delay * 2.0, 16.0)
+        # Surface the failure as a typed dict instead of crashing the runtime.
+        return {
+            "text": "",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "model": self.model,
+            "error": f"{type(last_exc).__name__}: {last_exc}" if last_exc else "unknown",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Backend
+# ---------------------------------------------------------------------------
 
 
 class LLMBackend:
@@ -63,8 +184,16 @@ class LLMBackend:
 
     name = "llm"
 
-    def __init__(self, client: LLMClient | None = None) -> None:
+    def __init__(
+        self,
+        client: LLMClient | None = None,
+        *,
+        price_table: dict[str, tuple[float, float]] | None = None,
+    ) -> None:
         self.client = client or MockLLM()
+        self._ledger = CostLedger(
+            price_table=price_table or dict(DEFAULT_PRICE_TABLE_USD_PER_1K)
+        )
 
     async def execute(
         self,
@@ -73,36 +202,76 @@ class LLMBackend:
         context: NodeContext,
     ) -> NodeResult:
         start = time.monotonic()
-        system = node.prompt_template or _default_system_for(node.role)
 
         if isinstance(self.client, MockLLM):
             output = await _mock_output(self.client, node, payload)
-            tokens_in, tokens_out = _approx_tokens(system, payload), _approx_tokens_output(output)
+            tokens_in = _approx_tokens(node.role, payload)
+            tokens_out = _approx_tokens_output(output)
+            text_for_summary = output.get("rationale_summary", "") if isinstance(output, dict) else ""
+            cost_usd = self._ledger.price(self.client.model, tokens_in, tokens_out)
         else:
+            dataset = _dataset_from_payload(payload)
+            system, user, want_json = build_messages(
+                role=node.role,
+                node_id=node.node_id,
+                dataset=dataset,
+                payload=payload,
+            )
+            response_format = {"type": "json_object"} if want_json else None
             raw = await self.client.complete(
-                system=system,
-                user=json.dumps(payload, ensure_ascii=False),
-                response_format={"type": "json_object"},
+                system=node.prompt_template or system,
+                user=user,
+                response_format=response_format,
                 temperature=float(node.params.get("temperature", 0.0)),
                 max_tokens=int(node.params.get("max_tokens", 4096)),
             )
-            output = raw.get("output", raw)
-            tokens_in = int(raw.get("tokens_in", _approx_tokens(system, payload)))
-            tokens_out = int(raw.get("tokens_out", _approx_tokens_output(output)))
+            text = raw.get("text", "") or ""
+            tokens_in = int(raw.get("tokens_in", 0))
+            tokens_out = int(raw.get("tokens_out", 0))
+            output = parse_output(
+                role=node.role,
+                node_id=node.node_id,
+                dataset=dataset,
+                raw_text=text,
+            )
+            text_for_summary = output.get("rationale_summary", "")
+            if "error" in raw:
+                output.setdefault("issues", []).append(raw["error"])
+            cost_usd = self._ledger.price(raw.get("model", self.client.model), tokens_in, tokens_out)
 
         latency = time.monotonic() - start
         confidence = float(output.get("confidence", 0.5)) if isinstance(output, dict) else 0.5
         return NodeResult(
             node_id=node.node_id,
-            ok=True,
+            ok=bool(output) and not (isinstance(output, dict) and output.get("issues") == ["json_parse_fail"]),
             output=output if isinstance(output, dict) else {"text": str(output)},
             confidence=confidence,
             evidence=output.get("evidence", []) if isinstance(output, dict) else [],
             tokens_in=tokens_in,
             tokens_out=tokens_out,
+            cost_usd=cost_usd,
             latency_s=latency,
-            logs_summary=output.get("rationale_summary", "") if isinstance(output, dict) else "",
+            logs_summary=text_for_summary,
         )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _dataset_from_payload(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    task_input = payload.get("task_input", {}) or {}
+    if isinstance(task_input, dict):
+        ds = task_input.get("dataset")
+        if ds:
+            return str(ds)
+        inner = task_input.get("input", {}) or {}
+        if isinstance(inner, dict) and inner.get("dataset"):
+            return str(inner["dataset"])
+    return payload.get("dataset")
 
 
 async def _mock_output(client: MockLLM, node: NodeSpec, payload: dict[str, Any]) -> dict[str, Any]:
@@ -131,13 +300,4 @@ def _approx_tokens_output(output: Any) -> int:
     return max(1, len(s) // 4)
 
 
-def _default_system_for(role: str) -> str:
-    return (
-        f"You are the `{role}` node in AgentCo-Op. "
-        "Respond with JSON conforming to the declared output schema. "
-        "Do not include hidden chain-of-thought; include a one-paragraph "
-        "`rationale_summary` only."
-    )
-
-
-__all__ = ["LLMBackend", "MockLLM", "LLMClient"]
+__all__ = ["LLMBackend", "MockLLM", "OpenAIClient", "LLMClient"]

@@ -75,6 +75,24 @@ def grade_gsm8k(prediction: Any, reference: Any, task: Any = None) -> dict:
 _BOXED_RE = re.compile(r"\\boxed{([^}]*)}")
 
 
+def _restore_latex_backslashes(s: str) -> str:
+    """Convert JSON-folded control chars back to LaTeX backslash escapes."""
+    if not s:
+        return s
+    out: list[str] = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        nxt = s[i + 1] if i + 1 < len(s) else ""
+        if c in "\b\f\t\v" and nxt.isalpha():
+            out.append("\\")
+            out.append({"\b": "b", "\f": "f", "\t": "t", "\v": "v"}[c])
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _extract_boxed(text: str) -> str | None:
     if not text:
         return None
@@ -110,8 +128,12 @@ def _math_canonical(expr: str | None) -> str:
 
 def grade_math(prediction: Any, reference: Any, task: Any = None) -> dict:
     pred_s = prediction.get("final_answer", "") if isinstance(prediction, dict) else str(prediction)
+    if isinstance(prediction, dict) and prediction.get("boxed"):
+        pred_s = prediction["boxed"]
     ref_raw = str(reference)
-    pred = _extract_boxed(pred_s) or pred_s.strip()
+    # Defensive: undo JSON-control-char folding on \boxed / \frac etc.
+    pred_repaired = _restore_latex_backslashes(pred_s)
+    pred = _extract_boxed(pred_repaired) or pred_repaired.strip()
     ref = _extract_boxed(ref_raw) or ref_raw.strip()
 
     # Canonicalization first.
@@ -151,6 +173,29 @@ def grade_math(prediction: Any, reference: Any, task: Any = None) -> dict:
 _SANDBOX_TIMEOUT_S = 20
 
 
+_PRED_CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)\n```", re.DOTALL)
+
+
+def _extract_pred_code(prediction: Any) -> str:
+    """Pull Python source from a prediction, accepting code/final_answer/answer keys.
+
+    Handles cases where the formatter wrote the implementation into
+    `final_answer` (string) or wrapped it in a fenced ```python``` block.
+    """
+    if prediction is None:
+        return ""
+    if isinstance(prediction, dict):
+        for key in ("code", "final_answer", "answer", "text"):
+            v = prediction.get(key)
+            if isinstance(v, str) and v.strip():
+                m = _PRED_CODE_FENCE_RE.search(v)
+                return (m.group(1) if m else v).strip()
+        return ""
+    s = str(prediction or "")
+    m = _PRED_CODE_FENCE_RE.search(s)
+    return (m.group(1) if m else s).strip()
+
+
 def _run_python(code: str, timeout: int = _SANDBOX_TIMEOUT_S) -> tuple[int, str, str]:
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
         f.write(code)
@@ -174,7 +219,7 @@ def grade_humaneval(prediction: Any, reference: Any, task: Any = None) -> dict:
     ref = reference if isinstance(reference, dict) else {}
     test = ref.get("test", "")
     entry = ref.get("entry_point", "")
-    pred_code = prediction.get("code", "") if isinstance(prediction, dict) else str(prediction or "")
+    pred_code = _extract_pred_code(prediction)
     prompt = ""
     if task is not None and hasattr(task, "prompt"):
         prompt = task.prompt
@@ -208,7 +253,7 @@ def grade_mbpp(prediction: Any, reference: Any, task: Any = None) -> dict:
     ref = reference if isinstance(reference, dict) else {}
     test_list = ref.get("test_list", [])
     setup = ref.get("test_setup_code", "")
-    pred_code = prediction.get("code", "") if isinstance(prediction, dict) else str(prediction or "")
+    pred_code = _extract_pred_code(prediction)
     harness = pred_code + "\n\n" + setup + "\n\n" + "\n".join(test_list) + "\n"
     rc, _stdout, stderr = _run_python(harness)
     ok = rc == 0
@@ -285,22 +330,34 @@ def _drop_normalize(text: str) -> str:
 
 
 def _drop_extract_answers(reference: Any) -> list[list[str]]:
-    """DROP references are nested: {"spans": [...], "types": [...]} or lists.
+    """Return a list of alternative gold answers; each alt is a list of spans.
 
-    We accept either: a list[str] of answers, a dict with "spans", or a list
-    of dicts (multiple gold answers).
+    Per the official DROP eval, each annotator contributes one answer
+    (number / spans / date). The score is the MAX F1 across alternatives.
+    Our preprocessed format flattens annotator spans into a single list, so
+    we treat each entry as its own alternative single-span answer (which
+    matches the DROP test set where >95% of questions have a single-span
+    annotated answer). Multi-span answers (e.g., "John and Mary") still
+    work because the model emits them as `; `-joined strings that compare
+    against any one alternative.
     """
     if isinstance(reference, list):
-        return [[str(x) for x in reference]]
+        return [[str(x)] for x in reference] or [[""]]
     if isinstance(reference, dict):
-        if "spans" in reference and reference["spans"]:
-            return [[str(x) for x in reference["spans"]]]
-        if "number" in reference and reference["number"]:
-            return [[str(reference["number"])]]
-        if "date" in reference and reference["date"]:
+        alts: list[list[str]] = []
+        spans = reference.get("spans") or []
+        if isinstance(spans, list):
+            for x in spans:
+                alts.append([str(x)])
+        if reference.get("number"):
+            alts.append([str(reference["number"])])
+        if reference.get("date"):
             d = reference["date"]
             date_str = " ".join(filter(None, [d.get("day", ""), d.get("month", ""), d.get("year", "")]))
-            return [[date_str.strip()]]
+            if date_str.strip():
+                alts.append([date_str.strip()])
+        if alts:
+            return alts
     return [[str(reference)]]
 
 

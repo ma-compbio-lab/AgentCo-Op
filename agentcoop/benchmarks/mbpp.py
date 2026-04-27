@@ -20,9 +20,20 @@ def load(split: str = "test", limit: int | None = None, aflow: bool = True) -> l
         for row in iter_jsonl(path):
             task = task_from_record(row)
             ref = row.get("reference", {}) or {}
+            tests = ref.get("tests", []) or []
+            # Per benchmarks.md §4.4 the test_list is public — include it in
+            # the prompt so the programmer sees the canonical function name.
+            base_prompt = (task.input or {}).get("prompt") or task.prompt
+            if tests:
+                augmented = (
+                    f"{base_prompt}\n\nYour code must pass these tests:\n"
+                    + "\n".join(tests)
+                )
+                task.prompt = augmented
+                task.input = {**(task.input or {}), "prompt": augmented, "public_tests": tests}
             task.reference = {
                 "code": ref.get("answer", ""),
-                "test_list": ref.get("tests", []),
+                "test_list": tests,
                 "test_setup_code": ref.get("test_setup_code", ""),
             }
             tasks.append(task)

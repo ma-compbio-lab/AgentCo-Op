@@ -130,6 +130,7 @@ def run_benchmark(
     method: Optional[str] = typer.Option(None, "--method"),
     out: Optional[Path] = typer.Option(None, "--out"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    concurrency: Optional[int] = typer.Option(None, "--concurrency"),
 ) -> None:
     """Run a benchmark config (compile → execute → grade).
 
@@ -146,6 +147,7 @@ def run_benchmark(
             variants=list(variants) if variants else None,
             out_dir=str(out) if out else None,
             dry_run=True if dry_run else None,
+            concurrency=concurrency,
         )
     )
     if method:
@@ -166,11 +168,13 @@ def benchmark(
     variants: Optional[list[str]] = typer.Option(None, "--variant", "-v"),
     out: Optional[Path] = typer.Option(None, "--out"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    concurrency: Optional[int] = typer.Option(None, "--concurrency"),
 ) -> None:
     """Alias of `run-benchmark` retained for backward compatibility."""
     run_benchmark(
         dataset=dataset, config=config, graph=None, gates_file=None, split=split,
         limit=limit, variants=variants, method=None, out=out, dry_run=dry_run,
+        concurrency=concurrency,
     )
 
 

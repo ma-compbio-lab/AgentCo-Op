@@ -11,8 +11,16 @@ from dataclasses import dataclass, field
 from typing import Dict
 
 DEFAULT_PRICE_TABLE_USD_PER_1K: Dict[str, tuple[float, float]] = {
-    # Framework-only defaults: 0 so offline tests don't hit accidental budgets.
+    # Framework / mock defaults.
     "mock-llm": (0.0, 0.0),
+    # OpenAI public pricing (USD per 1k tokens, in/out).
+    "gpt-4o-mini": (0.00015, 0.00060),
+    "gpt-4o-mini-2024-07-18": (0.00015, 0.00060),
+    "gpt-4o": (0.00250, 0.01000),
+    "gpt-4o-2024-08-06": (0.00250, 0.01000),
+    "gpt-4o-2024-11-20": (0.00250, 0.01000),
+    "gpt-4-turbo": (0.01000, 0.03000),
+    "gpt-3.5-turbo": (0.00050, 0.00150),
 }
 
 

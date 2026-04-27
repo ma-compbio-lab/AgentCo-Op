@@ -9,7 +9,7 @@ warning in the result.
 from __future__ import annotations
 
 import asyncio
-import shlex
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -30,14 +30,19 @@ class PythonSandboxBackend:
         payload: dict[str, Any],
         context: NodeContext,
     ) -> NodeResult:
-        code = payload.get("code", "")
-        if not isinstance(code, str) or not code:
+        code = _resolve_code_from_payload(payload)
+        if not code:
             return NodeResult(
                 node_id=node.node_id,
                 ok=False,
                 output={},
                 errors=["python_sandbox: missing 'code' in payload"],
             )
+        # Sandbox role: lightweight import/syntax sanity check only. The
+        # runtime can't iterate the programmer (back-edges are excluded for
+        # cycle safety), so running the public tests here just produces
+        # gate noise without enabling repair. The formatter still packages
+        # the programmer's code.
         timeout = int(payload.get("timeout_s", node.timeout_s or self.default_timeout_s))
         start = time.monotonic()
         try:
@@ -86,6 +91,29 @@ class PythonSandboxBackend:
 
 def _tail(text: str, n: int) -> str:
     return text[-n:] if len(text) > n else text
+
+
+_CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)\n```", re.DOTALL)
+
+
+def _resolve_code_from_payload(payload: dict[str, Any]) -> str:
+    """Find code in (a) explicit payload['code'], (b) upstream outputs."""
+    code = payload.get("code")
+    if isinstance(code, str) and code.strip():
+        return _strip_fence(code)
+    for k, v in payload.items():
+        if not k.startswith("output:") or not isinstance(v, dict):
+            continue
+        for ck in ("code", "final_answer", "answer", "text"):
+            cv = v.get(ck)
+            if isinstance(cv, str) and cv.strip():
+                return _strip_fence(cv)
+    return ""
+
+
+def _strip_fence(text: str) -> str:
+    m = _CODE_FENCE_RE.search(text)
+    return (m.group(1) if m else text).strip()
 
 
 __all__ = ["PythonSandboxBackend"]

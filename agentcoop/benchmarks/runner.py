@@ -38,6 +38,7 @@ from typing import Any
 import yaml
 
 from agentcoop.backends import MockLLM, default_registry
+from agentcoop.backends.llm import OpenAIClient
 from agentcoop.benchmarks import load as load_dataset
 from agentcoop.benchmarks.common import BenchmarkTask, REPO_ROOT, RUNS_ROOT
 from agentcoop.benchmarks.graders import grade as grade_prediction
@@ -89,6 +90,13 @@ def _build_llm_client(config: dict, dry_run: bool) -> Any | None:
     provider = (config.get("model", {}) or {}).get("provider", "mock")
     if dry_run or provider == "mock" or not _has_api_key():
         return None
+    if provider == "openai":
+        model_cfg = config.get("model", {}) or {}
+        return OpenAIClient(
+            model=model_cfg.get("name", "gpt-4o-mini"),
+            timeout_s=float(model_cfg.get("timeout_s", 90.0)),
+            max_retries=int(model_cfg.get("max_retries", 4)),
+        )
     raise NotImplementedError(
         f"Provider '{provider}' is not wired yet. Either use --dry-run or add a "
         "real LLMClient shim in agentcoop/backends/llm.py and re-run."
@@ -226,8 +234,40 @@ async def _run_task(
     *,
     dry_run: bool,
     mock_pred: Any,
+    semaphore: asyncio.Semaphore | None = None,
+    task_timeout_s: float | None = None,
 ) -> BenchmarkRow:
-    profile = profile_task(task.prompt, task_id=task.task_id).profile
+    if semaphore is not None:
+        await semaphore.acquire()
+    try:
+        coro = _run_task_inner(
+            task, variant, config, registry, cfg, dry_run=dry_run, mock_pred=mock_pred
+        )
+        if task_timeout_s and task_timeout_s > 0:
+            try:
+                return await asyncio.wait_for(coro, timeout=task_timeout_s)
+            except asyncio.TimeoutError:
+                return _failed_row(
+                    asyncio.TimeoutError(f"task wall-time {task_timeout_s}s exceeded"),
+                    task.dataset, task.split,
+                )
+        return await coro
+    finally:
+        if semaphore is not None:
+            semaphore.release()
+
+
+async def _run_task_inner(
+    task: BenchmarkTask,
+    variant: str,
+    config: dict,
+    registry: SkillRegistry,
+    cfg: RuntimeConfig,
+    *,
+    dry_run: bool,
+    mock_pred: Any,
+) -> BenchmarkRow:
+    profile = profile_task(task.prompt, task_id=task.task_id, dataset=task.dataset).profile
     budget = config.get("budget", {}) or {}
     profile_budget = Budget(
         max_tokens=int(budget.get("max_tokens", 20000)),
@@ -237,6 +277,16 @@ async def _run_task(
     )
     profile = profile.model_copy(update={"budget": profile_budget})
     blueprint = compile_workflow(profile, registry, budget=profile_budget)
+
+    # Inject per-call max_tokens / temperature into every LLM node so the
+    # client honours the dataset config without callers reaching into nodes.
+    model_cfg = config.get("model", {}) or {}
+    per_call_max = int(model_cfg.get("max_tokens", 4096))
+    per_call_temp = float(model_cfg.get("temperature", 0.0))
+    for node in blueprint.nodes:
+        if node.backend == "llm":
+            node.params.setdefault("max_tokens", per_call_max)
+            node.params.setdefault("temperature", per_call_temp)
 
     variant_cfg = (config.get("variants", {}) or {}).get(variant, {}) or {}
     _apply_variant(blueprint, variant_cfg)
@@ -249,7 +299,12 @@ async def _run_task(
     outcome = await run_blueprint(
         blueprint,
         config=cfg,
-        payload={"task": task.prompt, "task_id": task.task_id, "input": task.input},
+        payload={
+            "task": task.prompt,
+            "task_id": task.task_id,
+            "input": task.input,
+            "dataset": task.dataset,
+        },
     )
     pred_s, pred_obj = _as_prediction_string(outcome)
     grader_payload = pred_obj if pred_obj else pred_s
@@ -300,6 +355,7 @@ async def run_benchmark(
     variants: list[str] | None = None,
     out_dir: str | None = None,
     dry_run: bool | None = None,
+    concurrency: int | None = None,
 ) -> dict[str, Any]:
     config = load_config(config_path)
     dataset = config["dataset"]
@@ -307,8 +363,10 @@ async def run_benchmark(
     aflow = bool(config.get("aflow_aligned", True))
     variants = variants or list((config.get("variants") or {}).keys())
     dry_run = dry_run if dry_run is not None else (os.environ.get("AGENTCOOP_MODE") == "dry_run" or not _has_api_key())
+    if concurrency is None:
+        concurrency = int(config.get("run", {}).get("concurrency", 8))
 
-    method_tag = "ac-gated" if len(variants) > 1 else variants[0].lower()
+    method_tag = variants[0].lower() if len(variants) == 1 else "multi"
     out_dir_path = _resolve_out_dir(out_dir, dataset, method_tag)
     out_dir_path.mkdir(parents=True, exist_ok=True)
     (out_dir_path / "traces").mkdir(exist_ok=True)
@@ -339,26 +397,39 @@ async def run_benchmark(
     # falsely inflate scores. Tests assert low accuracy in dry-run mode.
     mock_pred = {"final_answer": "", "confidence": 0.5, "rationale_summary": "dry-run mock"}
 
-    # Write the first compiled blueprint for inspection.
-    first_blueprint_written = False
+    # Persist a representative compiled blueprint up-front (the first task's).
+    first_task = tasks[0]
+    profile0 = profile_task(
+        first_task.prompt, task_id=first_task.task_id, dataset=first_task.dataset
+    ).profile
+    bp0 = compile_workflow(profile0, registry, budget=profile0.budget)
+    (out_dir_path / "workflow_blueprint.json").write_text(
+        bp0.model_dump_json(indent=2), encoding="utf-8"
+    )
 
-    rows: list[BenchmarkRow] = []
+    semaphore = asyncio.Semaphore(max(1, int(concurrency)))
+    # Per-task wall-clock cap; if a single task hangs (rate-limit / slow
+    # API) we record it as failed and keep going with the rest.
+    per_task_cap = float(config.get("budget", {}).get("max_wall_time_s", 600))
+    per_task_cap = min(per_task_cap, 240.0)  # hard upper bound for one task
     t0 = time.time()
-    for variant in variants:
-        for task in tasks:
-            row = await _run_task(
-                task, variant, config, registry, cfg, dry_run=dry_run, mock_pred=mock_pred
-            )
-            rows.append(row)
-
-            if not first_blueprint_written:
-                # Re-compile once just to persist a representative blueprint.
-                profile = profile_task(task.prompt, task_id=task.task_id).profile
-                bp = compile_workflow(profile, registry, budget=profile.budget)
-                (out_dir_path / "workflow_blueprint.json").write_text(
-                    bp.model_dump_json(indent=2), encoding="utf-8"
-                )
-                first_blueprint_written = True
+    coros = [
+        _run_task(
+            task, variant, config, registry, cfg,
+            dry_run=dry_run, mock_pred=mock_pred, semaphore=semaphore,
+            task_timeout_s=per_task_cap,
+        )
+        for variant in variants
+        for task in tasks
+    ]
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    rows: list[BenchmarkRow] = []
+    for r in results:
+        if isinstance(r, BenchmarkRow):
+            rows.append(r)
+        elif isinstance(r, Exception):
+            # Surface the failure but don't abort the whole run.
+            rows.append(_failed_row(r, dataset, split))
 
     elapsed = time.time() - t0
 
@@ -406,10 +477,42 @@ async def run_benchmark(
         "elapsed_s": round(elapsed, 3),
         "by_variant": metrics_by_variant,
         "dry_run": dry_run,
+        "concurrency": int(concurrency),
         "run_dir": str(out_dir_path),
     }
     (out_dir_path / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    # Best-effort cleanup of the live OpenAI HTTP client pool.
+    try:
+        if hasattr(llm_client, "aclose"):
+            await llm_client.aclose()
+    except Exception:
+        pass
     return metrics
+
+
+def _failed_row(exc: Exception, dataset: str, split: str) -> BenchmarkRow:
+    return BenchmarkRow(
+        dataset=dataset,
+        split=split,
+        task_id="<failed>",
+        variant="<failed>",
+        blueprint_id="<none>",
+        topology_level=0,
+        complexity=0.0,
+        provenance=[],
+        prediction="",
+        final_output={},
+        score=0.0,
+        metric="",
+        ok=False,
+        tokens_used=0,
+        cost_usd=0.0,
+        latency_s=0.0,
+        gate_activations={},
+        patches_applied=0,
+        issues=[f"{type(exc).__name__}: {exc}"],
+        reference=None,
+    )
 
 
 def _resolve_config(config_arg: str | None, dataset_arg: str | None) -> str:
@@ -429,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--variants", "--variant", nargs="*", default=None)
     p.add_argument("--out")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--concurrency", type=int, default=None)
     args = p.parse_args(argv)
 
     config_path = _resolve_config(args.config, args.dataset)
@@ -439,6 +543,7 @@ def main(argv: list[str] | None = None) -> int:
             variants=args.variants,
             out_dir=args.out,
             dry_run=args.dry_run or None,
+            concurrency=args.concurrency,
         )
     )
     json.dump(metrics, sys.stdout, indent=2)

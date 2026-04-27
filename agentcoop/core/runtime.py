@@ -178,13 +178,11 @@ async def run_blueprint(
                 trace.terminate(state.termination_reason)
                 break
 
-            # If a retry was scheduled for this node, don't mark it executed.
-            retries_now = state.node_retries.get(node.node_id, 0)
-            if retries_now == 0 or node.node_id in executed:
-                executed.add(node.node_id)
-            else:
-                # Pop from `executed` to allow re-execution next pass.
-                executed.discard(node.node_id)
+            # Always mark the node executed; retries are consumed via the
+            # `node_retries` counter in `_ready_nodes`, not by toggling the
+            # executed-set (toggling caused infinite loops when both
+            # `executed` and `node_retries` were unsynchronized).
+            executed.add(node.node_id)
 
         state.elapsed_s = time.monotonic() - start_wall
         if len(executed) >= len(blueprint.nodes) and not state.terminated:
