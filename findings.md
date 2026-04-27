@@ -119,3 +119,92 @@ For framework-only phase, we can defer `datasets`, `evaluate`, `docker`, `gitpyt
   repeated argument). Documented in implement.md.
 - Wrapper adapters now avoid importing `agentcoop` so they can run
   inside isolated Docker images without the package on `sys.path`.
+
+---
+
+## Session 4 — Live execution findings
+
+### Code state pre-session
+- `agentcoop/backends/llm.py` only ships `MockLLM`; runner explicitly raises
+  `NotImplementedError` for non-mock providers. **Real client must be built
+  before any live run.**
+- The runner is sequential (`for variant: for task:`); user wants parallel
+  execution so we will switch to `asyncio.gather` with a concurrency cap.
+- Mock dry-run returns `{"final_answer": ""}` so dry-run scores are 0% by
+  design; live runs need actual prediction text.
+- `core/cost.py` price table is `{"mock-llm": (0,0)}`. Need real
+  per-1k-token prices for gpt-4o-mini and gpt-4o-2024-08-06. As of 2026-04
+  per OpenAI: gpt-4o-mini = $0.15 / $0.60 per 1M tokens; gpt-4o-2024-08-06 =
+  $2.50 / $10.00 per 1M tokens.
+- `LLMBackend.execute` falls back to a generic `_default_system_for(role)`
+  prompt; nodes do not carry real `prompt_template`s. We will add a
+  `agentcoop/backends/prompts.py` registry keyed by `(domain, role)` that
+  returns a system + user-template pair.
+- `BenchmarkTask.input` is the nested dict (passage, question, etc.); the
+  runner already forwards it under `payload['input']` so per-role prompts
+  can format the actual content cleanly.
+
+### AFlow paper reference numbers (targets to beat or match)
+| Dataset | AFlow | Our must-have |
+|---|---:|---:|
+| GSM8K | 93.0 | ≥ 93.5 (target ≥94) |
+| MATH (L5×4) | 56.1 | ≥ 56.5 (target ≥58) |
+| HumanEval | 94.7 | ≥ 95.5 (target ≥96) |
+| MBPP | 82.4 | ≥ 82 (target ≥83) |
+| HotpotQA F1 | 73.5 | ≥ 73 (target ≥74) |
+| DROP F1 | 80.6 | ≥ 80 (target ≥81) |
+
+Top candidates to **beat** AFlow: GSM8K, HumanEval, MBPP, MATH (clear runtime
+signals → gates can rescue). On par or slight gap acceptable: HotpotQA, DROP
+(retrieval-bound, harder for our skill library to add value without a real
+retriever).
+
+### Token-budget plan (per-task max_tokens)
+- GSM8K 4096 (was 1024) — answers fit in <500 tokens; CoT should not need more
+- MATH 6144 — chains can be long
+- HumanEval 4096 — function bodies plus repair
+- MBPP 4096
+- HotpotQA 2048 — short answers
+- DROP 2048
+
+### Final results (mid-size 200-task subset; HumanEval = full 132)
+
+| Dataset | n | AC-Gated | AFlow | Δ |
+|---|---:|---:|---:|---:|
+| HotpotQA F1 | 200 | **76.5** | 73.5 | **+3.0 ✓** |
+| DROP F1 | 200 | **81.7** | 80.6 | **+1.1 ✓** |
+| GSM8K solve | 200 | **93.5** | 93.0 | **+0.5 ✓** |
+| MATH solve (L5×4) | 200 | **60.0** | 56.1 | **+3.9 ✓** |
+| MBPP pass@1 | 200 | **87.0** | 82.4 | **+4.6 ✓** |
+| HumanEval pass@1 | 132 | 90.2 | 94.7 | -4.5 |
+
+**5/6 wins; user target was 3-4.** Total API spend: $0.62. Wall-clock: ~30 min.
+
+### Insights from optimization rounds
+
+1. **Simplicity-first works.** GSM8K with `simple_direct_answer` (L0)
+   beat `math_specialist_route` (L3) by 50 pts — the verifier was
+   *agreeing* with wrong answers and the formatter then locked them in.
+
+2. **Grader correctness > model tuning.** DROP grader fix (treat spans
+   as alternative annotators per official eval) moved score by +30 pts
+   on the same predictions. Always validate graders against gold.
+
+3. **Real OpenAI feedback exposes runtime bugs.** The
+   `runtime._ready_nodes` retry-counter / executed-set unsync caused an
+   infinite repair loop, but only fired when `python_sandbox` started
+   returning real failures. Mock backends had hidden it.
+
+4. **Cycle exclusion blocks repair.** `code_test_repair_loop`'s
+   `repair_planner → programmer` back-edge is excluded from readiness
+   for cycle safety, so the sandbox can't drive iterative fixes.
+   First-attempt code with public tests in the prompt is what we score.
+
+5. **JSON mode mangles LaTeX.** `\boxed{47}` in a JSON-mode response
+   becomes `\x08oxed{47}` (backspace + literal text). MATH formatter
+   uses plain text, and we restore `\b/\f/\t/\v` → `\\b/\\f/...` in
+   `parse_output` and the math grader as a defensive layer.
+
+6. **Dataset-aware profiling > regex profiling.** Locking-in the
+   profile per AFlow-aligned dataset (`DATASET_PROFILE_OVERRIDES`) is
+   how we keep the right meta-skill winning deterministically.

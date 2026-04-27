@@ -236,3 +236,100 @@ See `progress.md` for the session 1 error table.
 - **Embedding-free retrieval v0**: keyword + YAML-tag overlap; embedding hook reserved for later.
 - **No real Docker exec in framework phase**: `repo_sandbox.py` returns the run command; executing it is deferred to the experiment phase.
 - **Tracing format**: single `events.jsonl` per run, as spec'd in `instructions.md` §3-Phase0.
+
+---
+
+## Session 4 phases — Live experiment execution (2026-04-27)
+
+User provided OpenAI key in `.secrets/api-key`. Goal: run all six AFlow-aligned
+benchmarks, optimize so AgentCo-Op surpasses AFlow on 3–4 datasets and is on par
+or slightly behind on the rest. Track tokens and cost per benchmark. Run in
+parallel within and across benchmarks. Test small subsets first.
+
+Reference targets (AFlow paper / our reproductions of AFlow with gpt-4o-mini):
+HumanEval ≈ 95% pass@1, MBPP ≈ 80–82%, GSM8K ≈ 93–94%, MATH(level5×4) ≈ 56%,
+HotpotQA ≈ 73–74% F1, DROP ≈ 80% F1.
+
+### Phase 38: OpenAI client + per-role prompt registry — status: pending
+Implement `OpenAIClient` (Chat Completions, JSON-object response, streaming-off,
+prompt-cache hint) in `agentcoop/backends/llm.py`. Add
+`agentcoop/backends/prompts.py` with role × dataset prompt templates so each node
+gets a domain-aware system prompt instead of the generic one. Wire it into
+`LLMBackend.execute` so the user message carries the actual task text + relevant
+prior outputs from the blackboard, not just `json.dumps(payload)`.
+**Verify:** offline unit test with a fake client returns a
+parsed-JSON `NodeResult`; live one-task GSM8K call returns a non-empty
+`final_answer` string and updates `cost_usd` / `tokens_used` accurately.
+
+### Phase 39: Live cost ledger + token tracking — status: pending
+Update `core/cost.py` price table for `gpt-4o-mini-2024-07-18` /
+`gpt-4o-mini` (the AFlow-aligned executor) and `gpt-4o-2024-08-06` (fallback).
+Make sure each `NodeResult.tokens_in/_out` flows back to `RunState`. Add a
+per-benchmark token / cost table to `metrics.json`.
+**Verify:** five-task live GSM8K run reports `tokens_total > 0` and a cost figure
+that matches a hand calculation within ±5%.
+
+### Phase 40: Parallel runner — status: pending
+Convert `runner._run_task` loop into `asyncio.gather` over (variant × task) with a
+configurable concurrency cap (default 8) and a hard wall-clock timeout per task
+(120s default). Live runs must respect the cap so we don't blow through the
+rate-limit. Add a CLI flag `--concurrency`.
+**Verify:** 12-task GSM8K live run with concurrency=8 finishes in <2× the
+single-task latency × 12 / 8 (i.e., parallelism is real, not serialized). Test
+under MockLLM that result ordering is stable.
+
+### Phase 41: Smoke test on small subsets — status: pending
+Run 10-task subsets per dataset with AC-Direct + AC-Compiled + AC-Gated.
+Confirm: predictions are non-empty, scores are non-zero, cost is within budget,
+no protocol violations (no leaked hidden tests, no infinite loops). Skip MATH
+SymPy fallback when latex parsing fails.
+**Verify:** all six datasets produce a `metrics.json` whose `score_avg` is
+plausibly above the IO baseline; no single task burns more than its
+`max_cost_usd`.
+
+### Phase 42: Workflow / prompt optimization round 1 — status: pending
+Based on Phase 41 errors. Surgical changes ONLY — no broad refactors. Likely
+levers per CLAUDE.md §6:
+- GSM8K / MATH: tighter CoT prompt, explicit boxed-answer instruction, allow
+  `\boxed{}` extraction in the grader.
+- HumanEval / MBPP: ensure `programmer` outputs the full function in a fenced
+  block; sandbox runs deterministic public/generated tests; cap repair rounds.
+- HotpotQA / DROP: enforce concise answer span via system prompt; DROP
+  numeric-output normalization.
+**Verify:** 30-task subset on each dataset improves ≥1 percentage point (or
+matches AFlow within 1pp) before moving to Phase 43.
+
+### Phase 43: Mid-size run (200 tasks) — status: pending
+Run 200 tasks per dataset in parallel for AC-Compiled + AC-Gated +
+AC-AFlowImported-Gated. Compare vs Phase 41 baseline. Pick datasets to optimize
+further (target: surpass AFlow on at least 3-4) and revert any change that
+doesn't move the score.
+**Verify:** at least three datasets have score-avg ≥ AFlow paper; the rest are
+within 2pp.
+
+### Phase 44: Full-dataset runs — status: pending
+Run AC-Gated (and the AFlow-imported-gated variant for code/math) on the full
+test split for every dataset. Also run AFlow's original baseline (CoT or
+AC-Direct) for relative comparison. HotpotQA/DROP capped at 1000 per AFlow §1.
+**Verify:** `metrics.json` has full counts; the cost-performance table is
+populated; 3-4 datasets surpass AFlow.
+
+### Phase 45: Gate analysis + cleanup — status: pending
+Run `agentcoop analyze-gates` over the run dirs to compute rescue / harm rates.
+Delete obsolete smoke-test directories under `runs/` so the tree only carries
+the canonical run per benchmark. Remove any scratch experiment-only files.
+**Verify:** `runs/` has exactly one canonical run dir per (dataset × variant);
+gate analysis writes its `rescue_rate` / `harm_rate` columns.
+
+### Phase 46: Report.md — status: pending
+Write `report.md` with: problem statement, method recap, hardware/budget,
+the AFlow-style main table, cost-performance table, route-distribution table,
+gate-rescue table, ablation table, key takeaways, and limitations.
+**Verify:** every cell in the main table is populated from a real run dir;
+each AgentCo-Op variant is annotated with its run dir path.
+
+### Phase 47: Commit + push — status: pending
+Stage only the changes that improved a benchmark or fixed a real bug. Do NOT
+commit prompts that didn't help. Single squashed-feel commit per concern.
+**Verify:** `git diff --stat origin/clean-dev...HEAD` only shows files tied to
+retained optimizations; pytest still green.

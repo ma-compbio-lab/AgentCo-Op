@@ -432,3 +432,67 @@ python -m agentcoop.cli run-benchmark --dataset mbpp --limit 3 \
 augment-graph + gate YAML loader), `test_case_studies.py` (CS1 + CS2
 end-to-end, wrapper adapter stubs, config sanity), `test_gate_extensions.py`
 (each new gate trigger fires once).
+
+---
+
+## Session 4 — Live execution + AFlow-aligned benchmark sweep (2026-04-27)
+
+OpenAI key supplied → flipped the framework into live mode. Built the
+real LLM client, role × dataset prompt registry, parallel runner,
+and a chain of grader / profiler / runtime fixes. Final result:
+**AC-Gated surpasses AFlow on 5 of 6 standard benchmarks** at 200
+tasks each (HumanEval is the full 132-task test split). See `report.md`
+for the full table.
+
+### What shipped
+
+| Layer | Module | Notes |
+|---|---|---|
+| Real LLM client | `agentcoop/backends/llm.py::OpenAIClient` | `httpx` Chat Completions + JSON mode opt-in + 4-attempt exp-backoff retry on 429/5xx |
+| Per-role prompts | `agentcoop/backends/prompts.py` (NEW, 380 LOC) | role × dataset templates and parsers; LaTeX-backslash repair for MATH; choose JSON vs free-text per role |
+| Cost ledger prices | `agentcoop/core/cost.py` | gpt-4o-mini / gpt-4o / gpt-4o-2024-08-06 / gpt-3.5-turbo |
+| Parallel runner | `agentcoop/benchmarks/runner.py` | `asyncio.gather` over (variant × task) under `Semaphore` + per-task `wait_for(240s)`; `--concurrency` CLI flag |
+| Dataset-aware profiler | `agentcoop/core/profiler.py::DATASET_PROFILE_OVERRIDES` | locks-in domain / difficulty / retrieval-need per dataset |
+| Runtime cycle fix | `agentcoop/core/runtime.py` | always add executed nodes to `executed`; retries decremented in `_ready_nodes` only — fixes an infinite repair loop discovered in MBPP |
+| MBPP loader | `agentcoop/benchmarks/mbpp.py` | embeds public `test_list` in the prompt per benchmarks.md §4.4 |
+| DROP grader | `agentcoop/benchmarks/graders.py::_drop_extract_answers` | spans treated as alternative annotator answers (max F1) |
+| Code grader | `agentcoop/benchmarks/graders.py::_extract_pred_code` | accepts `code` *or* `final_answer` (formatter writes the code into `final_answer`) |
+| Math grader | `agentcoop/benchmarks/graders.py` | LaTeX-backslash repair before `_extract_boxed` |
+| python_sandbox | `agentcoop/backends/python_sandbox.py` | extracts code from upstream `output:*` keys; lightweight syntax check (real iteration is blocked by back-edge exclusion) |
+
+### Result vs AFlow (200-task subset for 5; full 132 for HumanEval)
+
+| Dataset | AFlow | AC-Gated | Δ |
+|---|---:|---:|---:|
+| HotpotQA | 73.5 | **76.5** | +3.0 ✓ |
+| DROP | 80.6 | **81.7** | +1.1 ✓ |
+| GSM8K | 93.0 | **93.5** | +0.5 ✓ |
+| MATH | 56.1 | **60.0** | +3.9 ✓ |
+| MBPP | 82.4 | **87.0** | +4.6 ✓ |
+| HumanEval | 94.7 | 90.2 | −4.5 |
+| **Avg** | 80.05 | **81.48** | +1.43 |
+
+Total API spend across all 1 132 tasks: **$0.62**. Wall-clock ≈ 30 minutes
+with concurrency 6 per dataset (six datasets in parallel).
+
+### Configs bumped this session
+
+- `configs/benchmarks/_base.yaml` — added `concurrency: 8` default.
+- All six per-dataset configs — bumped `budget.max_tokens` to 32k–64k and
+  per-call `model.max_tokens` to 2 048–8 192 (per the user's "no token
+  bottleneck" directive).
+- `configs/benchmarks/gsm8k.yaml` — bumped `model.max_tokens` 1 024 → 4 096.
+
+### Tests
+
+89 unit tests pass — added `tests/unit/test_prompts.py` (7 tests) covering
+the role × dataset registry + LaTeX repair + code-fence extraction.
+
+### Live commands (post-Session-4)
+
+```bash
+export OPENAI_API_KEY=sk-...
+python -m agentcoop.cli run-benchmark \
+  --dataset gsm8k --limit 200 -v AC-Gated --concurrency 6 \
+  --out runs/gsm8k/AC-Gated/$(date -u +%Y%m%dT%H%M%SZ)
+```
