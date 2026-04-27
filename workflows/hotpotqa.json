@@ -1,0 +1,131 @@
+{
+  "blueprint_id": "bp-39f49eb94b",
+  "task_profile": {
+    "task_id": "hotpotqa_validation_5a85b2d95542997b5ce40028",
+    "raw_task": "Who was known by his stage name Aladin and helped organizations improve their performance as a consultant?",
+    "domain": [
+      "qa",
+      "hotpot",
+      "multi-hop"
+    ],
+    "answer_type": "short_answer",
+    "objective": "solve",
+    "difficulty": "simple",
+    "decomposition_need": 0.4,
+    "tool_need": 0.2,
+    "retrieval_need": 0.2,
+    "repo_execution_need": 0.0,
+    "verification_available": "rubric",
+    "risk_level": "low",
+    "budget": {
+      "max_tokens": 20000,
+      "max_cost_usd": null,
+      "max_wall_time_s": 900,
+      "max_iterations": 3
+    },
+    "output_schema": null,
+    "constraints": [],
+    "rationale_summary": null
+  },
+  "nodes": [
+    {
+      "node_id": "solver",
+      "role": "solver",
+      "backend": "llm",
+      "skill_refs": [
+        "drop_numeric_reasoner"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    },
+    {
+      "node_id": "formatter",
+      "role": "formatter",
+      "backend": "llm",
+      "skill_refs": [
+        "drop_numeric_reasoner"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "solver",
+      "target": "formatter",
+      "condition": null,
+      "payload_map": {}
+    }
+  ],
+  "gate_policies": [
+    {
+      "name": "schema_invalid",
+      "trigger": "schema_invalid",
+      "threshold": null,
+      "action": "add_formatter",
+      "max_activations": 1,
+      "scope": "node",
+      "node_ids": []
+    },
+    {
+      "name": "low_confidence",
+      "trigger": "low_confidence",
+      "threshold": 0.3,
+      "action": "retry_node",
+      "max_activations": 1,
+      "scope": "node",
+      "node_ids": []
+    },
+    {
+      "name": "budget_near_limit",
+      "trigger": "budget_near_limit",
+      "threshold": 0.9,
+      "action": "terminate_with_uncertainty",
+      "max_activations": 1,
+      "scope": "graph",
+      "node_ids": []
+    }
+  ],
+  "memory_plan": {
+    "scratch_scope": "per_node",
+    "blackboard_keys": [
+      "solver",
+      "formatter"
+    ],
+    "artifact_dir": "artifacts",
+    "persist_trace": true
+  },
+  "eval_contract": {
+    "answer_type": "short_answer",
+    "normalization": null,
+    "grader": "llm_rubric",
+    "required_evidence": true,
+    "answer_schema": null
+  },
+  "budget": {
+    "max_tokens": 20000,
+    "max_cost_usd": null,
+    "max_wall_time_s": 900,
+    "max_iterations": 3
+  },
+  "topology_level": 0,
+  "complexity": 0.95,
+  "provenance": [
+    "meta:simple_direct_answer",
+    "agent:drop_numeric_reasoner"
+  ]
+}

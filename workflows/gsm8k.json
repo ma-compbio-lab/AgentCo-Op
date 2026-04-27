@@ -1,0 +1,137 @@
+{
+  "blueprint_id": "bp-ce0bc7ed04",
+  "task_profile": {
+    "task_id": "gsm8k_test_0",
+    "raw_task": "Janet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?",
+    "domain": [
+      "math",
+      "gsm8k",
+      "arithmetic"
+    ],
+    "answer_type": "short_answer",
+    "objective": "solve",
+    "difficulty": "simple",
+    "decomposition_need": 0.35,
+    "tool_need": 0.25,
+    "retrieval_need": 0.0,
+    "repo_execution_need": 0.0,
+    "verification_available": "exact",
+    "risk_level": "low",
+    "budget": {
+      "max_tokens": 20000,
+      "max_cost_usd": null,
+      "max_wall_time_s": 900,
+      "max_iterations": 3
+    },
+    "output_schema": null,
+    "constraints": [],
+    "rationale_summary": null
+  },
+  "nodes": [
+    {
+      "node_id": "solver",
+      "role": "solver",
+      "backend": "llm",
+      "skill_refs": [
+        "drop_numeric_reasoner",
+        "math_algebra_solver",
+        "math_number_theory_solver"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    },
+    {
+      "node_id": "formatter",
+      "role": "formatter",
+      "backend": "llm",
+      "skill_refs": [
+        "drop_numeric_reasoner",
+        "math_algebra_solver",
+        "math_number_theory_solver"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "solver",
+      "target": "formatter",
+      "condition": null,
+      "payload_map": {}
+    }
+  ],
+  "gate_policies": [
+    {
+      "name": "schema_invalid",
+      "trigger": "schema_invalid",
+      "threshold": null,
+      "action": "add_formatter",
+      "max_activations": 1,
+      "scope": "node",
+      "node_ids": []
+    },
+    {
+      "name": "low_confidence",
+      "trigger": "low_confidence",
+      "threshold": 0.3,
+      "action": "retry_node",
+      "max_activations": 1,
+      "scope": "node",
+      "node_ids": []
+    },
+    {
+      "name": "budget_near_limit",
+      "trigger": "budget_near_limit",
+      "threshold": 0.9,
+      "action": "terminate_with_uncertainty",
+      "max_activations": 1,
+      "scope": "graph",
+      "node_ids": []
+    }
+  ],
+  "memory_plan": {
+    "scratch_scope": "per_node",
+    "blackboard_keys": [
+      "solver",
+      "formatter"
+    ],
+    "artifact_dir": "artifacts",
+    "persist_trace": true
+  },
+  "eval_contract": {
+    "answer_type": "short_answer",
+    "normalization": "gsm8k_numeric",
+    "grader": "exact_match",
+    "required_evidence": false,
+    "answer_schema": null
+  },
+  "budget": {
+    "max_tokens": 20000,
+    "max_cost_usd": null,
+    "max_wall_time_s": 900,
+    "max_iterations": 3
+  },
+  "topology_level": 0,
+  "complexity": 0.95,
+  "provenance": [
+    "meta:simple_direct_answer",
+    "agent:drop_numeric_reasoner",
+    "agent:math_algebra_solver",
+    "agent:math_number_theory_solver"
+  ]
+}

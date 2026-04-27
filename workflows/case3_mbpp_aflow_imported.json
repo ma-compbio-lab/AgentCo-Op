@@ -1,0 +1,112 @@
+{
+  "blueprint_id": "aflow-779f5ede",
+  "task_profile": {
+    "task_id": "aflow-import-mbpp",
+    "raw_task": "AFlow-imported workflow for mbpp",
+    "domain": [
+      "mbpp"
+    ],
+    "answer_type": "short_answer",
+    "objective": "solve",
+    "difficulty": "moderate",
+    "decomposition_need": 0.0,
+    "tool_need": 0.0,
+    "retrieval_need": 0.0,
+    "repo_execution_need": 0.0,
+    "verification_available": "none",
+    "risk_level": "low",
+    "budget": {
+      "max_tokens": 20000,
+      "max_cost_usd": null,
+      "max_wall_time_s": 900,
+      "max_iterations": 3
+    },
+    "output_schema": null,
+    "constraints": [],
+    "rationale_summary": null
+  },
+  "nodes": [
+    {
+      "node_id": "custom_code_generate_1",
+      "role": "programmer",
+      "backend": "llm",
+      "skill_refs": [],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {
+        "aflow_operator": "CustomCodeGenerate",
+        "source_line": 29,
+        "problem": "problem",
+        "entry_point": "entry_point",
+        "instruction": ""
+      }
+    },
+    {
+      "node_id": "aflow_formatter",
+      "role": "formatter",
+      "backend": "llm",
+      "skill_refs": [],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "shared_read",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "custom_code_generate_1",
+      "target": "aflow_formatter",
+      "condition": null,
+      "payload_map": {}
+    }
+  ],
+  "gate_policies": [
+    {
+      "name": "budget_near_limit",
+      "trigger": "budget_near_limit",
+      "threshold": 0.9,
+      "action": "terminate_with_uncertainty",
+      "max_activations": 1,
+      "scope": "graph",
+      "node_ids": []
+    }
+  ],
+  "memory_plan": {
+    "scratch_scope": "per_node",
+    "blackboard_keys": [
+      "custom_code_generate_1"
+    ],
+    "artifact_dir": "artifacts",
+    "persist_trace": true
+  },
+  "eval_contract": {
+    "answer_type": "short_answer",
+    "normalization": null,
+    "grader": null,
+    "required_evidence": false,
+    "answer_schema": null
+  },
+  "budget": {
+    "max_tokens": 20000,
+    "max_cost_usd": null,
+    "max_wall_time_s": 900,
+    "max_iterations": 3
+  },
+  "topology_level": 4,
+  "complexity": 0.1,
+  "provenance": [
+    "aflow_import:/Users/shenshuaike/Documents/Research/Projects/Agent/AgentCo-Op/external/AFlow/workspace/MBPP/workflows/round_1/graph.py",
+    "aflow:appended_formatter_sink"
+  ]
+}

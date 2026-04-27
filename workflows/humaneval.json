@@ -1,0 +1,215 @@
+{
+  "blueprint_id": "bp-07d9cc1603",
+  "task_profile": {
+    "task_id": "HumanEval/1",
+    "raw_task": "from typing import List\n\n\ndef separate_paren_groups(paren_string: str) -> List[str]:\n    \"\"\" Input to this function is a string containing multiple groups of nested parentheses. Your goal is to\n    separate those group into separate strings and return the list of those.\n    Separate groups are balanced (each open brace is properly closed) and not nested within each other\n    Ignore any spaces in the input string.\n    >>> separate_paren_groups('( ) (( )) (( )( ))')\n    ['()', '(())', '(()())']\n    \"\"\"\n",
+    "domain": [
+      "code",
+      "humaneval"
+    ],
+    "answer_type": "program",
+    "objective": "solve",
+    "difficulty": "moderate",
+    "decomposition_need": 0.55,
+    "tool_need": 0.75,
+    "retrieval_need": 0.0,
+    "repo_execution_need": 0.0,
+    "verification_available": "unit_test",
+    "risk_level": "low",
+    "budget": {
+      "max_tokens": 20000,
+      "max_cost_usd": null,
+      "max_wall_time_s": 900,
+      "max_iterations": 3
+    },
+    "output_schema": null,
+    "constraints": [],
+    "rationale_summary": null
+  },
+  "nodes": [
+    {
+      "node_id": "parser",
+      "role": "extractor",
+      "backend": "llm",
+      "skill_refs": [
+        "code_programmer"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    },
+    {
+      "node_id": "programmer",
+      "role": "programmer",
+      "backend": "llm",
+      "skill_refs": [
+        "code_programmer"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    },
+    {
+      "node_id": "sandbox_test",
+      "role": "tool",
+      "backend": "python_sandbox",
+      "skill_refs": [],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    },
+    {
+      "node_id": "repair_planner",
+      "role": "reviewer",
+      "backend": "llm",
+      "skill_refs": [
+        "code_programmer"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    },
+    {
+      "node_id": "formatter",
+      "role": "formatter",
+      "backend": "llm",
+      "skill_refs": [
+        "code_programmer"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "memory_scope": "private",
+      "prompt_template": null,
+      "tool_policy": {},
+      "timeout_s": 300,
+      "max_retries": 1,
+      "confidence_policy": {},
+      "params": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "parser",
+      "target": "programmer",
+      "condition": null,
+      "payload_map": {}
+    },
+    {
+      "source": "programmer",
+      "target": "sandbox_test",
+      "condition": null,
+      "payload_map": {}
+    },
+    {
+      "source": "sandbox_test",
+      "target": "repair_planner",
+      "condition": "not ok",
+      "payload_map": {}
+    },
+    {
+      "source": "repair_planner",
+      "target": "programmer",
+      "condition": "needs_repair",
+      "payload_map": {}
+    },
+    {
+      "source": "sandbox_test",
+      "target": "formatter",
+      "condition": "ok",
+      "payload_map": {}
+    }
+  ],
+  "gate_policies": [
+    {
+      "name": "test_failure",
+      "trigger": "test_failure",
+      "threshold": null,
+      "action": "retry_node",
+      "max_activations": 3,
+      "scope": "node",
+      "node_ids": []
+    },
+    {
+      "name": "schema_invalid",
+      "trigger": "schema_invalid",
+      "threshold": null,
+      "action": "add_formatter",
+      "max_activations": 1,
+      "scope": "node",
+      "node_ids": []
+    },
+    {
+      "name": "tool_error",
+      "trigger": "tool_error",
+      "threshold": null,
+      "action": "replace_backend",
+      "max_activations": 1,
+      "scope": "node",
+      "node_ids": []
+    },
+    {
+      "name": "budget_near_limit",
+      "trigger": "budget_near_limit",
+      "threshold": 0.9,
+      "action": "terminate_with_uncertainty",
+      "max_activations": 1,
+      "scope": "graph",
+      "node_ids": []
+    }
+  ],
+  "memory_plan": {
+    "scratch_scope": "per_node",
+    "blackboard_keys": [
+      "parser",
+      "programmer",
+      "sandbox_test",
+      "repair_planner",
+      "formatter"
+    ],
+    "artifact_dir": "artifacts",
+    "persist_trace": true
+  },
+  "eval_contract": {
+    "answer_type": "program",
+    "normalization": "pytest",
+    "grader": "pytest",
+    "required_evidence": false,
+    "answer_schema": null
+  },
+  "budget": {
+    "max_tokens": 20000,
+    "max_cost_usd": null,
+    "max_wall_time_s": 900,
+    "max_iterations": 3
+  },
+  "topology_level": 6,
+  "complexity": 2.3,
+  "provenance": [
+    "meta:code_test_repair_loop",
+    "agent:code_programmer"
+  ]
+}
