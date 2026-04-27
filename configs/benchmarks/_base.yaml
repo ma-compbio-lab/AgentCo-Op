@@ -6,6 +6,7 @@ run:
   repeats: 1
   output_root: runs
   persist_predictions: true
+  concurrency: 8
 
 model:
   # Override per config. `mock-llm` keeps dry-runs offline; real runs

@@ -5,20 +5,20 @@ aflow_aligned: true
 grader: gsm8k
 
 budget:
-  max_tokens: 8000
-  max_cost_usd: 0.15
-  max_wall_time_s: 180
+  max_tokens: 32000
+  max_cost_usd: 0.20
+  max_wall_time_s: 240
   max_iterations: 4
 
 budget_by_dataset:
   max_llm_calls: 4
-  max_cost_usd: 0.15
+  max_cost_usd: 0.20
 
 model:
   provider: openai
   name: gpt-4o-mini
   temperature: 0.0
-  max_tokens: 1024
+  max_tokens: 4096
 
 variants:
   AC-Direct: {force_topology_level: 0}

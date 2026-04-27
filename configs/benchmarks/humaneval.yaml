@@ -5,21 +5,21 @@ aflow_aligned: true
 grader: humaneval
 
 budget:
-  max_tokens: 16000
-  max_cost_usd: 0.50
+  max_tokens: 48000
+  max_cost_usd: 0.60
   max_wall_time_s: 900
   max_iterations: 5
 
 budget_by_dataset:
   max_llm_calls: 6
   max_sandbox_runs: 4
-  max_cost_usd: 0.50
+  max_cost_usd: 0.60
 
 model:
   provider: openai
   name: gpt-4o-mini
   temperature: 0.0
-  max_tokens: 2048
+  max_tokens: 4096
 
 variants:
   AC-Direct: {force_topology_level: 1}

@@ -5,15 +5,15 @@ aflow_aligned: true
 grader: hotpotqa
 
 budget:
-  max_tokens: 20000
-  max_cost_usd: 0.25
+  max_tokens: 32000
+  max_cost_usd: 0.30
   max_wall_time_s: 600
   max_iterations: 5
 
 budget_by_dataset:
   max_llm_calls: 6
   max_tool_calls: 5
-  max_cost_usd: 0.25
+  max_cost_usd: 0.30
 
 model:
   provider: openai

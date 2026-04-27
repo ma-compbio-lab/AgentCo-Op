@@ -5,20 +5,20 @@ aflow_aligned: true
 grader: drop
 
 budget:
-  max_tokens: 16000
-  max_cost_usd: 0.25
+  max_tokens: 32000
+  max_cost_usd: 0.30
   max_wall_time_s: 600
   max_iterations: 5
 
 budget_by_dataset:
   max_llm_calls: 5
-  max_cost_usd: 0.25
+  max_cost_usd: 0.30
 
 model:
   provider: openai
   name: gpt-4o-mini
   temperature: 0.0
-  max_tokens: 1024
+  max_tokens: 2048
 
 variants:
   AC-Direct: {force_topology_level: 1}
