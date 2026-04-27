@@ -363,12 +363,18 @@ def _drop_extract_answers(reference: Any) -> list[list[str]]:
 
 def grade_drop(prediction: Any, reference: Any, task: Any = None) -> dict:
     pred_s = prediction.get("final_answer", "") if isinstance(prediction, dict) else str(prediction)
-    pred_items = [s.strip() for s in re.split(r"[;,]", pred_s) if s.strip()] or [pred_s]
+    # Split multi-span predictions on `;` only — splitting on `,` would
+    # break thousand-separators in numbers like "40,543".
+    pred_items = [s.strip() for s in re.split(r";", pred_s) if s.strip()] or [pred_s]
     candidates = _drop_extract_answers(reference)
     best_em, best_f1 = 0.0, 0.0
     for gold in candidates:
         em = 1.0 if sorted([_drop_normalize(x) for x in pred_items]) == sorted([_drop_normalize(x) for x in gold]) else 0.0
+        # Compare both as joined strings AND each pred-item against the
+        # joined gold (helps multi-span answers).
         f1s = [_f1(" ".join(pred_items), " ".join(gold))]
+        for p in pred_items:
+            f1s.append(_f1(p, " ".join(gold)))
         f1 = max(f1s) if f1s else 0.0
         best_em = max(best_em, em)
         best_f1 = max(best_f1, f1)
