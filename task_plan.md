@@ -328,8 +328,79 @@ gate-rescue table, ablation table, key takeaways, and limitations.
 **Verify:** every cell in the main table is populated from a real run dir;
 each AgentCo-Op variant is annotated with its run dir path.
 
-### Phase 47: Commit + push — status: pending
+### Phase 47: Commit + push — status: complete
 Stage only the changes that improved a benchmark or fixed a real bug. Do NOT
 commit prompts that didn't help. Single squashed-feel commit per concern.
 **Verify:** `git diff --stat origin/clean-dev...HEAD` only shows files tied to
 retained optimizations; pytest still green.
+
+---
+
+## Session 5 phases — Full-dataset runs + workflow exports + case studies (2026-04-27)
+
+User confirmed mid-size results (5/6 wins vs AFlow). Now wants:
+1. Full test splits to confirm wins hold beyond 200-task subsets.
+2. Save canonical compiled workflows so others can reproduce.
+3. Run case studies CS1/CS2/CS3.
+
+Full splits: DROP 800, GSM8K 1056, HotpotQA 800, HumanEval 132,
+MATH 484, MBPP 342 = 3 614 tasks. Estimated cost ~$1.80, wall ≈35 min
+(math is bottleneck) at concurrency 6 per dataset, six in parallel.
+
+### Phase 48: Plan + restore context — status: complete
+Read planning files; check git/diff/status; identify full split sizes;
+queue tasks.
+
+### Phase 49: Launch full-dataset runs (parallel) — status: pending
+Six runs under `runs/full/{dataset}/` with the same `AC-Gated` variant +
+concurrency 6 per dataset. Use `--limit 99999` to consume the whole test
+split. Per-task timeout still 240s.
+**Verify:** all six write `metrics.json`; predictions.jsonl line count
+matches test split; cost stays under $0.50 per dataset.
+
+### Phase 50: Mid-flight optimization round (if needed) — status: pending
+If any full-dataset score regresses below AFlow, diagnose via failures
+in `predictions.jsonl`. Surgical changes only — no broad refactors.
+Likely candidates: HumanEval edge-case prompt (currently 90.2% vs 94.7
+AFlow); HotpotQA complex multi-hop tasks; MATH hard categories.
+**Verify:** any prompt change tested on a 30-task re-smoke before
+applying to a full re-run; revert if no positive Δ.
+
+### Phase 51: Save canonical compiled workflows — status: pending
+Extract the per-dataset `workflow_blueprint.json` from each full run dir
+and copy to `workflows/{dataset}/workflow.json` plus a small `README.md`
+explaining how to load and use them via `agentcoop run --blueprint`.
+**Verify:** `python -m agentcoop.cli run --blueprint workflows/gsm8k/workflow.json`
+returns a valid (mock) run; the workflow JSON loads via `WorkflowBlueprint.model_validate_json`.
+
+### Phase 52: Case Study 1 — bulk RNA-seq → GeneAgent — status: pending
+Run end-to-end with synthetic DE TSV + GeneAgent stub + LLM-driven
+EvidenceVerifier + IntegratorReviewer. Capture pipeline metrics + final
+report.
+**Verify:** `runs/case1/airway/` has `de_results.tsv`, `gene_sets/`,
+`enrichment/`, `geneagent_*.json`, `final_report.md`.
+
+### Phase 53: Case Study 2 — parallel perturb-seq specialists — status: pending
+Synthetic Norman dataset → 4 baselines + 4 GPU-stub model adapters →
+PredictionNormalizer → MetricEvaluator → EnsembleSelector +
+LLM-driven BiologicalPatternAnalyzer + BenchmarkReportReviewer.
+**Verify:** `runs/case2/synth/` has predictions per model, metrics.json,
+ensemble.json, final_report.md.
+
+### Phase 54: Case Study 3 — AFlow dynamic on MBPP/HumanEval — status: pending
+Import AFlow MBPP workflow → augment with skills/tools/gates →
+run AC-AFlowImported-Gated on a 50-task MBPP subset → compare to plain
+AC-AFlowImported and to our AC-Gated baseline.
+**Verify:** `runs/case3/mbpp/` has all three variants' metrics; report
+shows where gated dynamic repair rescued or harmed the AFlow topology.
+
+### Phase 55: Update report.md with full numbers + case studies — status: pending
+Replace "200-task subset" cells with full numbers; add a Case Studies
+section summarizing CS1/CS2/CS3 deliverables; add a "Compiled workflow
+artifacts" section pointing to `workflows/`.
+**Verify:** every row has a final number with run-dir path.
+
+### Phase 56: Commit + push — status: pending
+Logical commits: full-runs evidence, workflow exports, case-study
+artifacts, docs. Push to origin/clean-dev.
+**Verify:** `git status` clean; tests pass; `git push` succeeds.
