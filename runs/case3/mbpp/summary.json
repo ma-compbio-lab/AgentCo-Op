@@ -1,0 +1,60 @@
+{
+  "dataset": "mbpp",
+  "n_per_variant": 50,
+  "variants": [
+    {
+      "variant": "AFlow-imported",
+      "n": 50,
+      "score_avg": 0.84,
+      "ok_rate": 0.84,
+      "tokens_total": 37480,
+      "cost_total_usd": 0.0106,
+      "elapsed_s": 122.2,
+      "gate_totals": {}
+    },
+    {
+      "variant": "AFlow+Skills+Tools",
+      "n": 50,
+      "score_avg": 0.86,
+      "ok_rate": 0.86,
+      "tokens_total": 34039,
+      "cost_total_usd": 0.0084,
+      "elapsed_s": 57.4,
+      "gate_totals": {}
+    },
+    {
+      "variant": "AFlow+Skills+Gates",
+      "n": 50,
+      "score_avg": 0.86,
+      "ok_rate": 0.86,
+      "tokens_total": 33649,
+      "cost_total_usd": 0.0082,
+      "elapsed_s": 54.4,
+      "gate_totals": {}
+    },
+    {
+      "variant": "AC-Gated",
+      "n": 50,
+      "score_avg": 0.8,
+      "ok_rate": 0.8,
+      "tokens_total": 115569,
+      "cost_total_usd": 0.029,
+      "elapsed_s": 136.2,
+      "gate_totals": {
+        "tool_error": 1
+      }
+    },
+    {
+      "variant": "AFlow+MedPrompt-Voting",
+      "n": 50,
+      "score_avg": 0.88,
+      "ok_rate": 0.88,
+      "tokens_total": 100408,
+      "cost_total_usd": 0.0245,
+      "elapsed_s": 245.7,
+      "gate_totals": {},
+      "k_samples": 3,
+      "sample_temperature": 0.7
+    }
+  ]
+}

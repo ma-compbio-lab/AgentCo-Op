@@ -1,0 +1,48 @@
+{
+  "dataset": "mbpp",
+  "n_per_variant": 50,
+  "variants": [
+    {
+      "variant": "AFlow-imported",
+      "n": 50,
+      "score_avg": 0.84,
+      "ok_rate": 0.84,
+      "tokens_total": 37729,
+      "cost_total_usd": 0.0107,
+      "elapsed_s": 112.9,
+      "gate_totals": {}
+    },
+    {
+      "variant": "AFlow+Skills+Tools",
+      "n": 50,
+      "score_avg": 0.88,
+      "ok_rate": 0.88,
+      "tokens_total": 33549,
+      "cost_total_usd": 0.0082,
+      "elapsed_s": 53.0,
+      "gate_totals": {}
+    },
+    {
+      "variant": "AFlow+Skills+Gates",
+      "n": 50,
+      "score_avg": 0.84,
+      "ok_rate": 0.84,
+      "tokens_total": 33981,
+      "cost_total_usd": 0.0083,
+      "elapsed_s": 55.8,
+      "gate_totals": {}
+    },
+    {
+      "variant": "AC-Gated",
+      "n": 50,
+      "score_avg": 0.82,
+      "ok_rate": 0.82,
+      "tokens_total": 115231,
+      "cost_total_usd": 0.0289,
+      "elapsed_s": 115.7,
+      "gate_totals": {
+        "tool_error": 1
+      }
+    }
+  ]
+}

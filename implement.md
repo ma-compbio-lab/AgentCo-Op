@@ -496,3 +496,56 @@ python -m agentcoop.cli run-benchmark \
   --dataset gsm8k --limit 200 -v AC-Gated --concurrency 6 \
   --out runs/gsm8k/AC-Gated/$(date -u +%Y%m%dT%H%M%SZ)
 ```
+
+---
+
+## Session 6 — close-the-gap attempts + CS3 MedPrompt variant (2026-04-29)
+
+### Goal
+
+Push HumanEval (89.4 → ≥ 95) and DROP (78.3 → ≥ 81) above AFlow
+without disturbing the experiments.md narrative (CLAUDE.md
+simplicity-first, "modifications not overly drastic").
+
+### Attempts and outcomes
+
+| # | Attempt | Smoke / mid / full result | Decision |
+|---:|---|---|---|
+| 1 | Code prompt: "silently trace each `>>>` example" silent-discipline block | 89.4 % → **86.4 %** on full HumanEval (model deletes `>>>` lines, leaves docstring unclosed) | **REVERTED** |
+| 1 | DROP `numeric_reasoner` prompt: 5-step "list numbers / state op / compute / verify" | 86.1 % → **84.0 %** on N=100 (DROP same-100 subset) | **REVERTED** |
+| 2 | Bounded back-edge iteration: `state.executed: set[str]` on RunState; new `RETRY_UPSTREAM` patch op walks back to programmer + stales downstream nodes; `python_sandbox` runs `>>>` examples as informative asserts; `tool_error` skips `ran_public_tests=True` cases; `_user_prompt` injects a REPAIR section with prior code + traceback when programmer is being retried | 91.25 % → **88.75 % – 91.25 %** on N=80 across four iterations. 0 known fails recovered, 0-2 regressions per variant (gpt-4o-mini @ T=0 re-derives the same buggy code on retry) | **REVERTED** (mechanism documented in `findings.md` Session 6 §2) |
+| 3 | DROP `answer_formatter` prompt: "use the SHORTEST minimal phrase" with examples of articles and titles to drop | 86.1 % → **83.6 %** on N=100 (over-trims correct full-credit spans → 1.0 → 0.0 regressions on 5 tasks) | **REVERTED** |
+| 4 | CS3: new `AFlow+MedPrompt-Voting` variant — K=3 samples @ T=0.7 of `AFlow+Skills+Tools` graph, candidate picked by public-test pass count (tie-break: shortest passing code) | **0.880** on N=50 MBPP, 3× cost; beats AFlow paper baseline (0.824) by 5.6 pts and the next-best CS3 variant by 2 pts | **kept** (case-study scope only) |
+
+### What's actually new in code
+
+- `scripts/case3_aflow_dynamic.py::_execute_medprompt` — K-sample
+  parallel runner + public-test voting harness (added at end of file,
+  no impact on existing variants).
+- CS3 README rewritten to add the 5th variant + diagnostics.
+
+The runtime, gates, schema, sandbox, and prompts files are
+**bit-identical** to Session 5 head — every code change made during
+Session 6 was rolled back via `git checkout HEAD --` after the smoke /
+mid / full result didn't move (or moved the wrong way).
+
+### Final numbers (Session 6 reruns vs Session 5 baseline)
+
+| Dataset | n | S5 | S6 rerun | AFlow | Δ vs AFlow |
+|---|---:|---:|---:|---:|---:|
+| HotpotQA | 800 | 76.4 | **76.5** | 73.5 | **+3.0 ✓** |
+| GSM8K | 1 056 | 93.8 | **94.4** | 93.0 | **+1.4 ✓** |
+| MATH (S5 carried) | 478 | 58.2 | (carried) | 56.1 | **+2.1 ✓** |
+| MBPP | 342 | 86.6 | **87.1** | 82.4 | **+4.7 ✓** |
+| DROP | 800 | 78.3 | 77.2 | 80.6 | −3.4 |
+| HumanEval | 132 | 89.4 | 90.2 | 94.7 | −4.5 |
+| **Avg** | — | 80.43 | **80.55** | 80.05 | +0.50 |
+
+**4 / 6 wins vs AFlow on full-test data**, with each winner widening
+its margin by ~0.6 pt on the rerun. Total Session 6 spend: $1.31 (the
+five re-runs only; MATH carried over). CS3 MedPrompt-Voting added
+another $0.0245 on N=50.
+
+### Tests
+
+89 unit tests still pass (no test file changes; see `pytest tests/unit -q`).

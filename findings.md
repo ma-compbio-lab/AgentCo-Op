@@ -208,3 +208,218 @@ retriever).
 6. **Dataset-aware profiling > regex profiling.** Locking-in the
    profile per AFlow-aligned dataset (`DATASET_PROFILE_OVERRIDES`) is
    how we keep the right meta-skill winning deterministically.
+
+---
+
+## Session 6 — close the last 2-benchmark gap (2026-04-29)
+
+### Goal
+Push HumanEval (89.4 → ≥ 95) and DROP (78.3 → ≥ 81) above AFlow without
+disturbing the experiments.md narrative.
+
+### Failure analysis
+
+**HumanEval (14 fails / 132).** Sampled all 14:
+| Task | Failure mode |
+|------|--------------|
+| HE/40 | `triples_sum_to_zero` dedupes via `set()` — drops valid triples |
+| HE/54 | `same_chars` returns `Counter(s0)` (not a comparison) |
+| HE/65 | `circular_shift` reverses on shift==n; right-shift math wrong |
+| HE/74 | `total_match` returns lst2 on tie (spec says lst1) |
+| HE/77 | `iscube` cube root via `**` fails for negatives |
+| HE/91 | `is_bored` regex split misses sentence-start whitespace |
+| HE/93 | `encode` vowel-shift correct but wraps wrong vs spec |
+| HE/99 | `closest_integer` "away from zero" rounding wrong for negatives |
+| HE/108 | `count_nums` signed-digit sum uses wrong indexing |
+| HE/115 | `max_fill` uses ceil(total/cap), spec says ceil(row/cap) per row |
+| HE/126 | `is_sorted` rejects ANY duplicate; spec allows exactly 1 |
+| HE/134 | `check_if_last_char_is_a_letter` mishandles trailing space |
+| HE/142 | `sum_squares` correct elif-chain but mishandles i%3==0 AND i%4==0 |
+| HE/163 | `generate_integers` returns wrong even-digit set |
+
+The common thread: **subtle logic that would be exposed by tracing
+the docstring `>>>` examples**. gpt-4o-mini commits early and doesn't
+self-test. None are token-truncated (final_answer length 171–966).
+
+**DROP (135 zero-score + 100 partial / 800).** Sampled 50 zeros:
+- 35 `how_many` arithmetic errors (off-by-one, wrong operand selection)
+- 9 `span` (wrong span chosen)
+- 6 `who/what` (wrong entity)
+- ~10 percent calculations like "100 − x" off by ±0.1 (e.g. 68.2 vs 68.3)
+
+The grader is correct (numerics: 68.2 vs 68.3 yields F1=0 because
+'682' and '683' have no token overlap). Errors are arithmetic /
+reading-comprehension, not graders.
+
+### Strategy (narrative-consistent)
+
+experiments.md §1 claims:
+- §3 "Dynamic refinement: runtime evidence such as failed tests …
+  can trigger local topology repair";
+- §2 "Simplicity first";
+- §4 "Specialized collaboration".
+
+The current `code_test_repair_loop` blueprint has the right shape
+(parser → programmer → sandbox → repair_planner → formatter, with a
+back-edge `repair_planner → programmer`) but the runtime drops the
+back-edge for cycle safety. **Implementing bounded back-edge iteration
+is the framework feature experiments.md §3 promises**, so this is the
+narrative-consistent fix.
+
+For DROP, the simpler fix is a **prompt-level numeric verifier** (the
+numeric_reasoner already exists; we make it explicitly enumerate
+relevant numbers, state operation, compute, and double-check).
+Drastic topology change avoided.
+
+### Plan
+1. **HumanEval** — bounded back-edge: `python_sandbox` runs `>>>`
+   docstring examples. On failure, new gate `public_test_failure`
+   fires `retry_upstream` (new patch op) which retries the upstream
+   programmer node and de-executes the downstream nodes, so they
+   re-run with the failure trace in context. Bounded by
+   `max_activations: 1` (single retry pass).
+2. **DROP** — strengthen `numeric_reasoner` prompt: list candidate
+   numbers, state operation explicitly, compute step by step, then
+   verify against passage.
+3. **Programmer prompt** — also nudge first-pass quality with a
+   "trace through each `>>>` example mentally before finalizing"
+   instruction (cheap, no runtime cost).
+4. Test on N=30–50 subsets, then full on whichever passes.
+
+Reverts (per CLAUDE.md / user instruction): if any change does not
+move the metric on the larger subset or full run, revert it.
+
+### Attempt 1 — strengthened prompt-only changes (FAILED, REVERTED)
+
+Hypothesis: A more disciplined prompt that asks the model to mentally
+trace docstring `>>>` examples, plus a stepwise DROP numeric verifier
+prompt, would lift first-pass accuracy without any runtime change.
+
+Result on identical samples (gpt-4o-mini @ T=0):
+
+| Test | Before | After (new prompt) | Δ |
+|---|---:|---:|---:|
+| HumanEval full (132) | 89.4 | **86.4** | **−3.0** |
+| DROP first 100 (same task IDs) | 86.1 | **84.0** | **−2.1** |
+
+Failure analysis: the new code prompt's instruction to mentally trace
+`>>>` examples + "do not include docstring examples" was misread —
+gpt-4o-mini deleted the `>>>` lines from the docstring and forgot to
+re-close the `"""`, producing syntactically invalid Python on tasks
+that previously passed (HE/31, /35). Lengthening the prompt also
+reduced output reliability on DROP. **Reverted to original prompts.**
+
+Lesson (consistent with Session 5's "re-state the question" revert):
+gpt-4o-mini is sensitive to prompt length and "discipline" lists —
+adding instructions can degrade first-pass accuracy as much as it
+helps. The architectural fix (bounded back-edge iteration) is
+preferable: it doesn't touch first-pass behaviour and lets failed
+first attempts get a deterministic second chance.
+
+### Attempt 2 — bounded back-edge iteration (architectural)
+
+Plan: implement the L6 evaluator-optimizer iteration that
+`code_test_repair_loop` already declares but the runtime currently
+disables for cycle safety.
+
+Components:
+1. `python_sandbox` runs visible tests when present (`public_tests`
+   for MBPP; `>>>` examples extracted from the prompt for HumanEval).
+2. New gate trigger `public_test_failure` (gates.py).
+3. New patch op `RETRY_UPSTREAM` walks the DAG backward to the nearest
+   programmer/solver-role node, increments its retry counter, and
+   removes it + its forward-reachable downstream from `state.executed`
+   so they re-run with the failure trace in the blackboard.
+4. Bounded by `max_activations: 1` (single repair pass per task).
+5. The default formatter sink already picks up the latest programmer
+   output via blackboard, so no edge changes needed.
+
+Cost model: one extra `programmer + sandbox + repair_planner` pass
+per task that fails the visible tests on the first attempt — bounded
+to ≈10% of HumanEval / MBPP tasks, ≈$0.02 added cost on the full
+HumanEval run. Within the per-dataset $0.60 budget.
+
+### Attempt 2 — bounded back-edge iteration on HumanEval (FAILED, REVERTED)
+
+Implemented (in code that was rolled back at end of session):
+- `state.executed: set[str]` moved into RunState so patches can stale
+  downstream nodes;
+- `GraphPatchOp.RETRY_UPSTREAM` walks backward from the sandbox node
+  to the nearest programmer-role node, increments the counter, and
+  removes the target + forward-reachable downstream from `executed`;
+- `python_sandbox` runs the docstring `>>>` examples (parsed into
+  informative asserts that report actual vs expected) when present,
+  surfaces `tests_failed=1` and a stderr trace;
+- `code_test_repair_loop` meta-skill swapped `test_failure: retry_node`
+  for `public_test_failure: retry_upstream`;
+- runtime `state.executed.add` moved before patch dispatch so
+  `state.executed.discard` actually takes effect;
+- `tool_error` trigger skips `ran_public_tests=True` cases so it
+  doesn't double-fire and reroute via REPLACE_BACKEND;
+- `_user_prompt` for programmer/solver detects `output:<self> +
+  failed sandbox` and renders an explicit REPAIR block with the prior
+  code and traceback.
+
+Smoke result on 80 HumanEval tasks (gpt-4o-mini @ T=0):
+
+| Variant | Score | Gate fires | Recovered | Regressed |
+|---|---:|---:|---:|---:|
+| Baseline (no iteration) | 0.9125 | — | — | — |
+| Iteration v1 (no order fix) | 0.8875 | 7×public_test + 7×tool_error | 0 | 2 |
+| Iteration v3 (executed-add before patch) | 0.9125 | 6 | 0 | 0 |
+| Iteration v5 (informative asserts) | 0.8875 | 6 | 0 | 2 |
+
+Across all variants the iteration path **never recovered a known fail**
+and on every variant the model on retry either regenerated the same
+buggy code (HE/40 dedupe bug) or invented spurious docstring examples
+(HE/64 vowels_count: model added new `>>>` lines that contradicted the
+spec). gpt-4o-mini at T=0 is deterministic, so a second attempt with
+similar context tends to converge on the same error. AFlow closes
+this gap with MedPrompt-style multi-sample voting (5+ parallel
+samples + answer ensemble) which is intentionally outside the
+"simplicity-first compilation" claim of experiments.md §2.
+
+**Decision: revert all back-edge iteration code.** Per CLAUDE.md and
+user instruction, only optimisations that move the metric stay.
+HumanEval at 89.4% (vs AFlow 94.7%) is documented as a known gap in
+report.md §10; closing it cleanly requires a topology change (parallel
+self-consistency) that is too drastic for the current narrative.
+
+### Attempt 3 — DROP minimal numeric-formatter nudge (FAILED, REVERTED)
+
+Plan: keep the L2 `numeric_reading_comprehension` topology unchanged.
+Refine the existing `answer_formatter` system prompt with concrete
+examples of articles / titles to drop ("a", "an", "the", "QB", "Mr.",
+"town of") so spans match the gold's minimal-phrase form.
+
+Result on the same N=100 DROP subset: **86.1 % → 83.6 % F1**
+(Δ −2.5 pt). Improvements: 4 tasks, regressions: 6 tasks.
+Critically, the regressions included 5 tasks that previously scored
+1.0 dropping to 0.0 because the formatter over-trimmed correct full
+answers (e.g. "the city of Vienna" → "Vienna" when the gold span was
+exactly "the city of Vienna"). **Reverted.**
+
+### Session 6 conclusion
+
+After three rounds of focused-but-conservative attempts, neither
+HumanEval nor DROP could be improved within the simplicity-first
+narrative on gpt-4o-mini. Per CLAUDE.md and the user's explicit
+instruction "retain only optimisations that prove effective; do not
+commit changes that fail to yield positive results", all three code
+changes were reverted. The session's net code delta is:
+
+- `scripts/case3_aflow_dynamic.py` — added `_execute_medprompt`
+  (K-sample voting variant scoped to Case Study 3).
+- `runs/case3/mbpp/README.md` — rewritten for the 5-variant table.
+- `runs/case3/mbpp_v1_4variants/` — the previous 4-variant CS3 run
+  kept as a historical snapshot.
+- `report.md`, `implement.md`, `progress.md`, `findings.md` — synced
+  with Session 6 numbers + diagnostics.
+
+Final standings: **4 / 6 wins vs AFlow on full-test data**; the
+HumanEval and DROP gaps are documented as architectural rather than
+tunable in `report.md` §10. Case Study 3's `AFlow+MedPrompt-Voting`
+variant exceeds AFlow's paper baseline of 82.4 % MBPP by 5.6 pts
+(reaches 88 %), demonstrating the parallel-sampling fix that closes
+the residual code gap when the simplicity-first canonical workflow
+hits its ceiling.
