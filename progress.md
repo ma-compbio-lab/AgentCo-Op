@@ -388,3 +388,56 @@ data should be re-confirmed once the dataset is downloaded.
 None this session — the policy was no reverts (all changes either
 worked or were not made in the first place).
 
+---
+
+### Session 7.1 — Real-data run on Farah MERFISH (2026-05-01)
+
+User downloaded the real Dryad MERFISH file to
+`data/heart_merfish/overall_merfish.h5ad` (368 MB, 228 635 cells × 238
+genes) and asked to rerun CS1 end-to-end on the actual dataset.
+
+Steps:
+1. `pip install anndata scanpy h5py` (anndata 0.12.11 / scanpy 1.11.5 /
+   h5py 3.16.0).
+2. Updated `case_study_1.request.yaml` `local_cache_dir` from
+   `data/farah_human_heart_merfish` to `data/heart_merfish` (the path
+   the user actually used).
+3. Archived the prior synthetic-fallback run as
+   `runs/case1/heart_merfish_synthetic_fallback_v1/` and reran into a
+   fresh `runs/case1/heart_merfish/`.
+
+Real-data results (`status: success`, no synthetic fallback):
+
+| Metric | Value | case_study_1.md target |
+|---|---|---|
+| n_target | 576 cells (aFibro × AVN/AV Ring) | non-zero |
+| n_control | 5 685 cells (aFibro × Left + Right Atria) | non-zero |
+| Markers, Welch t | **53** | 40–60 acceptable |
+| Markers, Mann-Whitney U | **46** ← exact manuscript match | 46 strict |
+| Expected example overlap | **6 / 6** (DES, IGFBP5, NELL2, HAND2, MYH7, MYH6) | ≥ 5 / 6 |
+| GeneAgent process label | "AV Canal/Nodal Fibroblast Developmental Program" | "Cardiac Development and Remodeling" or eq. |
+| GeneAgent subprocesses | 6 / 5+ | ≥ 4 / 5 |
+| Total LLM tokens (gpt-5) | 4 611 | — |
+| Wall time | 160 s | — |
+
+Both tests reproduce the manuscript story; **Mann-Whitney U lands
+exactly on the manuscript's reported 46-marker panel**, recorded in
+`de_sensitivity_summary.csv`. The Welch t panel of 53 markers is the
+primary auditable result; both contain all 6 expected example markers
+and the canonical AV-canal TF signature (HCN4, TBX3, NKX2-5, IRX4,
+TBX5 in the top 25).
+
+No code regressions: pytest still 101/101; no edits to runtime,
+gates, schema, prompts, python_sandbox, profiler, runner, compiler,
+or `workflows/*.json`. The only mutation was the `local_cache_dir`
+field in the request YAML.
+
+### Files touched (Session 7.1, kept)
+- `case_study_1.request.yaml` — `local_cache_dir: data/heart_merfish`.
+- `runs/case1/heart_merfish/README.md` — rewritten for real-data run.
+- `runs/case1/heart_merfish_synthetic_fallback_v1/README.md` — flagged
+  as superseded.
+- `report.md` §8.1 — replaced with real-data table + Welch/MWU
+  comparison.
+- `implement.md`, `findings.md`, `progress.md` — Session 7.1 entries.
+

@@ -632,3 +632,40 @@ agentcoop collaborate --request my_request.yaml --workdir runs/my_run \
 Per-repo specifics (local-Python adapters, Dockerfile overrides) live
 under `agentcoop/wrappers/<agent>/`; the framework code does not
 mention TissueAgent or GeneAgent.
+
+### Session 7.1 — real-data CS1 run (2026-05-01)
+
+User downloaded the Farah Dryad MERFISH AnnData and asked to rerun
+CS1 against the real file (`data/heart_merfish/overall_merfish.h5ad`).
+
+Steps:
+1. `pip install anndata scanpy h5py` (no AgentCo-Op code change).
+2. `case_study_1.request.yaml` → `local_cache_dir: data/heart_merfish`
+   (the path the user actually used).
+3. Archived prior synthetic run as
+   `runs/case1/heart_merfish_synthetic_fallback_v1/` and re-ran into
+   the canonical `runs/case1/heart_merfish/`.
+
+Real-data result:
+
+| Metric | Value | Target |
+|---|---|---|
+| Status | **success** (real data) | — |
+| n_target / n_control | 576 / 5 685 | non-zero |
+| Welch t markers | 53 | 40–60 acceptable |
+| Mann-Whitney U markers | **46 — exact manuscript match** | 46 strict |
+| Expected example overlap | **6 / 6** | ≥ 5 / 6 |
+| GeneAgent label | "AV Canal/Nodal Fibroblast Developmental Program" | "Cardiac Development and Remodeling" or eq. |
+| GeneAgent subprocesses | 6 / 5+ | ≥ 4 / 5 |
+| GeneAgent + integrator tokens | 4 611 (gpt-5) | — |
+| Wall time | 160 s | — |
+
+`de_sensitivity_summary.csv` records both Welch t (53) and
+Mann-Whitney U (46); the latter exactly reproduces the
+manuscript-reported 46-marker AVN/AV ring panel.
+
+No benchmark regression: 101/101 unit tests still pass; only the
+request YAML, run READMEs, and the doc files were touched. None of
+the Sessions 4–6 protective files (`workflows/*.json`, runtime,
+gates, schema, prompts, python_sandbox, profiler, runner, compiler)
+changed.

@@ -240,25 +240,44 @@ clone repos
   → Integrator — gpt-5 reasoning, evidence-linked Markdown report
 ```
 
-Result on N=50 target / 223 control synthetic-MERFISH cells (Farah
-h5ad not on disk on this host; deterministic synthetic fixture used —
-flagged `synthetic_fallback` in the manifest):
+Result on the **real Farah MERFISH AnnData** (228 635 cells × 238
+genes; `data/heart_merfish/overall_merfish.h5ad`):
 
-| Outcome | Value |
-|---|---|
-| Marker count (adj_p<0.05, log2fc>0) | **51** (target 46) |
-| Expected example marker overlap | **6 / 6** (DES, IGFBP5, NELL2, HAND2, MYH7, MYH6) |
-| GeneAgent process label | "AV canal/AV node–biased developmental program in AV ring atrial fibroblasts" |
-| GeneAgent subprocess coverage | 5 / 5 (TF network · ECM · myofibroblast contractile · AV-junction adhesion · paracrine remodeling) |
-| Integrator + GeneAgent total tokens | 5 048 (`gpt-5`, `reasoning_effort=medium`) |
-| Sandbox Dockerfiles + compose | written under `runs/case1/heart_merfish/docker/` (dry-run; Docker daemon was down) |
+| Outcome | Value | case_study_1.md §13 target |
+|---|---|---|
+| Status | **success** (real data; not synthetic_fallback) | — |
+| Cells | 576 target (aFibro × AVN/AV Ring) / 5 685 control (aFibro × Left + Right Atria) | non-zero each |
+| Marker count, Welch t (adj_p<0.05, log2fc>0) | **53** | 46 strict; 40–60 acceptable |
+| Marker count, Mann-Whitney U | **46** ← **exact manuscript match** | 46 strict |
+| Expected example marker overlap | **6 / 6** (DES, IGFBP5, NELL2, HAND2, MYH7, MYH6) | ≥ 5 / 6 strict |
+| GeneAgent process label | **"AV Canal/Nodal Fibroblast Developmental Program"** | "Cardiac Development and Remodeling" or equivalent |
+| GeneAgent subprocess coverage | **6 / 5+** (nodal-TF / epicardial-mesenchyme / ECM / morphogen / myofibroblast / neuronal-paracrine) | ≥ 4 / 5 |
+| GeneAgent + integrator tokens (gpt-5, reasoning_effort=medium) | 4 611 | — |
+| Wall time | 160 s (load h5ad ≈ 70 s, DE ≈ 40 s, LLM ≈ 50 s) | — |
+
+The **Mann-Whitney U marker count of 46 exactly reproduces the
+TissueAgent manuscript's reported 46-marker AVN/AV ring panel** —
+recorded in the `de_sensitivity_summary.csv` artifact. Welch t lands
+slightly above (53) and is included as the auditable primary panel
+because it's transparent and easy to inspect; both panels are within
+the case-study's "40–60 acceptable" band and recover all six
+manuscript-listed example markers (DES, IGFBP5, NELL2, HAND2, MYH7,
+MYH6).
+
+Top-10 Welch t markers (full table at
+`runs/case1/heart_merfish/artifacts/tissueagent_run/avn_avring_marker_genes.csv`):
+DES (rank 1), MYH6, IGFBP5, MYH7, HAND2, **HCN4**, **TBX3**, NELL2,
+COL9A2, CD34. The presence of HCN4 + TBX3 + NKX2-5 + IRX4 + TBX5 (top
+25) directly matches the canonical AV-canal / nodal pacemaker
+transcription-factor signature.
 
 Artifacts at `runs/case1/heart_merfish/` (see its `README.md` for the
-full file tree and the recipe to rerun against the real Dryad
-download). The legacy synthetic airway / single-repo flow is preserved
-at `runs/case1/airway/` and is referenced from `case_study.md` §2.1.b
-as the simpler fallback when only a single repo + bulk RNA-seq is
-needed.
+full tree). A previous synthetic-fallback exercise of the same
+pipeline, before the Dryad download was on disk, is preserved at
+`runs/case1/heart_merfish_synthetic_fallback_v1/`. The legacy
+synthetic airway / single-repo flow remains at `runs/case1/airway/`
+and is referenced from `case_study.md` §2.1.b as the simpler fallback
+when only a single repo + bulk RNA-seq is needed.
 
 ### 8.2 Case Study 2 — parallel single-cell perturbation specialists
 

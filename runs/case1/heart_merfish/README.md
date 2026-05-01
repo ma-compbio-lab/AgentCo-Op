@@ -1,98 +1,124 @@
-# Case Study 1 — TissueAgent × GeneAgent external collaboration
+# Case Study 1 — TissueAgent × GeneAgent on real Farah MERFISH (real-data run)
 
-Run produced by `agentcoop collaborate --request case_study_1.request.yaml
---workdir runs/case1/heart_merfish --no-docker --model gpt-5
---reasoning-effort medium`.
-
-This case study tests AgentCo-Op's **generalised external-repo
-collaboration framework** added in Session 7. The framework:
-
-1. clones the two declared GitHub repositories (`TissueAgent`,
-   `GeneAgent`) and emits typed `RepoProfile`s;
-2. renders Dockerfiles + `docker-compose.yml` + per-image smoke tests
-   via the new `SandboxBuilder` (dry-run when the host has no Docker
-   daemon — exactly this host);
-3. registers an `AgentCard` per repository;
-4. runs the upstream agent (TissueAgent — spatial-transcriptomics
-   differential expression) and the downstream agent (GeneAgent —
-   gene-set interpretation) in declaration order;
-5. brokers the gene-list handoff with `ArtifactBroker`
-   (`gene_set` validator);
-6. integrates both agents' outputs with an LLM-backed integrator
-   (`gpt-5`, `reasoning_effort=medium`);
-7. writes a `run_manifest.json` + `compiled_workflow_graph.json` +
-   per-step artifacts.
-
-The same CLI runs **any** two-agent external collaboration — see the
-[generalisation](#generalisation) section below.
-
-## Run summary
-
-| Metric | Value |
-|---|---|
-| Status | `synthetic_fallback` (Farah `overall_merfish.h5ad` not on disk) |
-| Wall time | ~2 minutes (the LLM nodes dominate) |
-| Marker count (AVN/AV ring vs Atria) | **51** (target 46) |
-| Example marker overlap | **6 / 6** (DES, IGFBP5, NELL2, HAND2, MYH7, MYH6) |
-| GeneAgent process label | `AV canal/AV node–biased developmental program in AV ring atrial fibroblasts` |
-| GeneAgent subprocesses | 5 (AV-canal/conduction TFs · Cushion ECM/EMT · Myofibroblast contractile · AV-junction adhesion · Paracrine remodeling) |
-| Final integrator model | `gpt-5` (`reasoning_effort=medium`) |
-| Total LLM tokens (GeneAgent + integrator) | 5 048 |
-
-The run **passes** the case-study targets in `case_study_1.md`
-§13: marker count ≥ 40, ≥ 5/6 expected example markers recovered, the
-expected GeneAgent theme is found, all five expected subprocess
-categories are covered, and the final synthesis is evidence-linked.
-
-## Why "synthetic_fallback"?
-
-The driver looks for `data/farah_human_heart_merfish/overall_merfish.h5ad`
-(per the request YAML). When the file is absent OR `anndata` /
-`scanpy` are not installed locally, the TissueAgent local adapter
-generates a deterministic synthetic MERFISH-shaped AnnData fixture
-(seed=42; 3 000 cells × 240 genes; same `populations` /
-`communities` / `sample_id` columns). This lets the entire AgentCo-Op
-collaboration framework be exercised on a host that does not yet have
-the 370 MB Dryad download or the upstream conda envs installed. The
-synthetic fixture is engineered so a Welch t-test recovers the expected
-6/6 example markers — the methodology check passes; the *biological*
-result on real Farah data should be re-confirmed once the dataset is
-downloaded.
-
-To run with the real dataset:
+Run produced by
 
 ```bash
-mkdir -p data/farah_human_heart_merfish
-# Manual: download overall_merfish.h5ad from
-# https://datadryad.org/dataset/doi:10.5061/dryad.w0vt4b8vp into the
-# directory above (~370 MB).
-pip install anndata scanpy   # if not already installed
-agentcoop collaborate --request case_study_1.request.yaml \
-  --workdir runs/case1/heart_merfish --no-docker \
-  --model gpt-5 --reasoning-effort medium
+agentcoop collaborate \
+  --request case_study_1.request.yaml \
+  --workdir runs/case1/heart_merfish \
+  --no-docker \
+  --model gpt-5 \
+  --reasoning-effort medium
 ```
 
-When Docker is up, drop `--no-docker` and the orchestrator runs each
-wrapper inside its container — the Dockerfiles and `docker-compose.yml`
-are already written under `docker/` (next section).
+This is the **real-data** run on the Farah et al. 2024 developing
+human-heart MERFISH AnnData (`data/heart_merfish/overall_merfish.h5ad`,
+228 635 cells × 238 genes). The earlier synthetic-fallback exercise of
+the same pipeline is preserved at `runs/case1/heart_merfish_synthetic_fallback_v1/`
+and the legacy single-repo airway flow remains at `runs/case1/airway/`.
 
-## Generated artifacts
+## Top-line result
+
+| Metric | Value | Target (case_study_1.md §13) |
+|---|---|---|
+| Status | **`success`** (real-data; not synthetic_fallback) | — |
+| Wall time | ≈ 160 s | — |
+| n_target / n_control cells | **576 / 5 685** | non-zero each |
+| Marker count (Welch t, adj_p<0.05, log2fc>0) | **53** | 46 strict; 40–60 acceptable |
+| Marker count (Mann-Whitney U, adj_p<0.05, log2fc>0) | **46** ← **exact manuscript match** | 46 strict |
+| Expected example marker overlap | **6 / 6** (DES, IGFBP5, NELL2, HAND2, MYH7, MYH6) | ≥ 5/6 strict |
+| GeneAgent process label | **"AV Canal/Nodal Fibroblast Developmental Program"** | "Cardiac Development and Remodeling" or equivalent |
+| GeneAgent subprocess coverage | **6 / 5+** (TF + nodal · epicardial mesenchyme · ECM · morphogen · myofibroblast · neuronal) | ≥ 4 / 5 |
+| Final integrator model | `gpt-5` (`reasoning_effort=medium`) | — |
+| Total LLM tokens (GeneAgent + integrator) | 4 611 | — |
+
+**Both Welch t (53) and Mann-Whitney U (46) reproduce within the
+acceptable band; Mann-Whitney U lands exactly on the manuscript's
+reported 46.** All 6/6 expected example markers — DES, IGFBP5, NELL2,
+HAND2, MYH7, MYH6 — appear in the upregulated set.
+
+## What changed vs the synthetic-fallback v1
+
+| Property | v1 (synthetic) | v2 (real Farah MERFISH) |
+|---|---|---|
+| Dataset | deterministic synthetic (3 000 × 240) | real Farah `overall_merfish.h5ad` (228 635 × 238) |
+| n_target / n_control | 55 / 223 | 576 / 5 685 |
+| Marker count | 51 (Welch) | **53 (Welch) / 46 (Mann-Whitney)** |
+| Status field | `synthetic_fallback` | `success` |
+| GeneAgent label | "AV canal/AV node–biased developmental program" | "AV Canal/Nodal Fibroblast Developmental Program" |
+| Conclusion | hypothesis-only (synthetic caveat) | evidence-supported |
+
+## Top markers (rank-ordered by Welch t-test p-value)
+
+| Rank | Gene | log2 FC | adj-p |
+|---:|---|---:|---:|
+| 1 | DES | 0.43 | 2.3e-91 |
+| 2 | MYH6 | 0.25 | 9.0e-84 |
+| 3 | IGFBP5 | 0.92 | 7.2e-70 |
+| 4 | MYH7 | 0.78 | 1.3e-61 |
+| 5 | HAND2 | 0.58 | 5.1e-58 |
+| 6 | HCN4 | 0.96 | 4.6e-44 |
+| 7 | TBX3 | 0.52 | 8.7e-39 |
+| 8 | NELL2 | 0.31 | 1.1e-37 |
+| 9 | COL9A2 | 1.14 | 4.0e-36 |
+| 10 | CD34 | 0.38 | 5.1e-30 |
+
+(see `artifacts/tissueagent_run/avn_avring_marker_genes.csv` for the full
+53-row table; `de_results.csv` carries every gene.)
+
+## GeneAgent's six subprocesses
+
+1. **AV canal / conduction-system specification + excitability** (HCN4,
+   TBX3, TBX5, NKX2-5, HAND2, IRX4, HEY1, SEMA6D, KCNH2, CACNA1C, RRAD).
+2. **Epicardial-derived mesenchyme + AV cushion-like identity**
+   (TCF21, WT1, PDGFRA, PRRX1, MSX2, BMP2, INHBA, MECOM, HEY1, BAMBI,
+   TBX5, TSHZ2, TPBG).
+3. **ECM organisation + peri-nodal matrix remodelling** (POSTN, FBLN2,
+   FMOD, COL9A2, MMP11, CTSV, IGFBP5, ADGRL1).
+4. **Wnt / BMP / TGF-β + morphogen-pathway modulation** (RSPO3, SFRP1,
+   BMP2, INHBA, BAMBI, HHIP, CRABP2, MSX2, MECOM).
+5. **Myofibroblast / contractile reactivation + lineage memory**
+   (DES, CNN1, TTN, MYH6, MYH7).
+6. **Neuronal / axon-guidance + paracrine cues** (NRXN1, SEMA6D,
+   NELL2, NEFL, NTS, PENK, SERPINI1, ADM, BRINP3).
+
+GeneAgent's self-verification cited Gene Ontology, Reactome,
+MatrisomeDB, TF/developmental literature (TBX3/HCN4 for AV node;
+TCF21/WT1 for epicardial lineage; BMP2/MSX2 for AV cushion), and the
+ion-channel / guidance literature (CACNA1C/KCNH2; SEMA6D).
+
+## Final integrator output
+
+The `gpt-5` integrator produced an evidence-linked Markdown report
+(`artifacts/integration/final_hypothesis_report.md`) that:
+
+- restates the biological question;
+- lists the 53 upregulated markers and their developmental categories;
+- ties GeneAgent's 6 subprocesses to the upstream evidence;
+- concludes that AVN/AV ring aFibro **exhibit a distinct developmental
+  program** consistent with an "AV canal / nodal fibroblast" identity
+  relative to LA/RA aFibro;
+- explicitly enumerates limitations (cell-type purity, MERFISH panel
+  constraints, batch handling, developmental-stage heterogeneity, lack
+  of orthogonal validation).
+
+## Artifact tree
 
 ```
 runs/case1/heart_merfish/
-  run_manifest.json                         — top-level outcome + paths
-  compiled_workflow_graph.json              — L7 external_repo_collaboration nodes/edges
-  agent_registry.json                       — AgentCards (auto-built from RepoProfile)
+  run_manifest.json                            — top-level outcome + paths (status: success)
+  compiled_workflow_graph.json                 — L7 external_repo_collaboration nodes/edges
+  agent_registry.json                          — AgentCards (auto-built from RepoProfile)
   manifests/
     repo_profile_TissueAgent.json
     repo_profile_GeneAgent.json
-    docker_build_report.json                — dry-run report (Docker daemon down)
-    broker.jsonl                            — typed handoff audit log
+    docker_build_report.json                   — Dockerfiles written; daemon was down
+    broker.jsonl                               — typed handoff audit log
   docker/
-    Dockerfile.TissueAgent                  — generated from RepoProfile + SandboxSpec
-    Dockerfile.GeneAgent                    — generated from RepoProfile + SandboxSpec
-    docker-compose.yml                      — both services + volumes
-    smoke_TissueAgent.py                    — per-image smoke test
+    Dockerfile.TissueAgent                     — generated from RepoProfile + SandboxSpec
+    Dockerfile.GeneAgent
+    docker-compose.yml
+    smoke_TissueAgent.py
     smoke_GeneAgent.py
   artifacts/
     tissueagent_run/
@@ -100,64 +126,48 @@ runs/case1/heart_merfish/
       dataset_schema_report.{json,md}
       group_definition_report.json
       group_counts.csv
-      de_results.csv                         — full per-gene Welch t-test table
-      de_sensitivity_summary.csv             — Welch vs Mann-Whitney comparison
-      avn_avring_marker_genes.{csv,json}     — marker list (rank/log2fc/adj_p)
-      volcano_afibro_avn_avring_vs_atria.png — volcano plot, expected markers labeled
-      tissueagent_coding_report.md           — methodology + counts
-      de_config.json                         — exact preprocessing + test choices
-    geneagent_input.json                     — broker-validated handoff payload
+      de_results.csv                           — 238 genes × Welch t / log2FC / adj-p
+      de_sensitivity_summary.csv               — Welch t (53) vs Mann-Whitney (46)
+      avn_avring_marker_genes.{csv,json}       — 53 markers ranked
+      volcano_afibro_avn_avring_vs_atria.png   — volcano with expected markers labeled
+      tissueagent_coding_report.md             — methodology + counts
+      de_config.json
+    geneagent_input.json                        — broker-validated handoff payload
     geneagent_run/
       response.json
-      geneagent_report.md                    — LLM (gpt-5) gene-set interpretation
+      geneagent_report.md                       — gpt-5 gene-set interpretation
       geneagent_report.json
-      geneagent_raw.txt                      — raw LLM JSON (audit)
+      geneagent_raw.txt                         — raw LLM JSON (audit)
     integration/
-      final_hypothesis_report.md             — LLM (gpt-5) integrator output
+      final_hypothesis_report.md                — gpt-5 integrator output
       final_hypothesis_report.json
       final_summary.md
   traces/
-    execution_trace.jsonl                    — per-stage events
+    execution_trace.jsonl
 ```
 
-## Generalisation
-
-The case study is the **inaugural fixture** for the generic external-repo
-collaboration framework, not a one-off. Anything in this directory that
-would change for a different repo pair lives under
-`agentcoop/wrappers/<agent>/` and the user's `request.yaml`. The
-framework code (`agentcoop/core/repo_profile.py`,
-`agentcoop/core/sandbox_build.py`, `agentcoop/core/agent_card.py`,
-`agentcoop/core/artifact_broker.py`,
-`agentcoop/core/repo_collaboration.py`,
-`agentcoop/skills/meta/external_repo_collaboration.md`,
-`agentcoop/cli.py::collaborate`) does not mention TissueAgent or
-GeneAgent.
-
-To collaborate two arbitrary GitHub agents on a different downstream
-task:
-
-```yaml
-# my_request.yaml
-case_id: my_collab
-mode: autonomous_repo_wrapping
-repositories:
-  - {name: AgentA, url: https://github.com/<owner>/AgentA, role_hint: ...}
-  - {name: AgentB, url: https://github.com/<owner>/AgentB, role_hint: ...}
-task:
-  description: "..."
-dataset:
-  local_cache_dir: data/my_dataset
-required_outputs: [...]
-success_targets: {...}
-```
+## Reproduce
 
 ```bash
-agentcoop collaborate --request my_request.yaml --workdir runs/my_run \
-  --no-docker --model gpt-5 --reasoning-effort medium
+# 1. Place the Dryad download.
+mkdir -p data/heart_merfish
+# (Manual download of overall_merfish.h5ad ~370 MB into data/heart_merfish/.)
+
+# 2. Install scanpy / anndata once.
+pip install anndata scanpy h5py
+
+# 3. Run.
+export OPENAI_API_KEY="..."
+agentcoop collaborate \
+  --request case_study_1.request.yaml \
+  --workdir runs/case1/heart_merfish \
+  --no-docker \
+  --model gpt-5 \
+  --reasoning-effort medium
 ```
 
-Register a local-Python adapter for each agent in
-`agentcoop/wrappers/<agent>/__init__.py` via
-`from agentcoop.core.repo_collaboration import register_local_adapter`,
-or use the Docker mode by setting `--docker` once the daemon is up.
+The same CLI runs **any** two-agent external collaboration: write a
+`request.yaml` matching `case_study_1.md` §3.3, register a local
+adapter per agent in `agentcoop/wrappers/<agent>/`, and invoke
+`agentcoop collaborate --request <yaml>`. Nothing in the framework
+code mentions TissueAgent or GeneAgent.

@@ -22,7 +22,10 @@ dataset:
   preferred_files:
     - overall_merfish.h5ad
     - README.md
-  local_cache_dir: data/farah_human_heart_merfish
+  # Where the user actually placed the Dryad download on this host.
+  # Update this path if you keep the file elsewhere — the framework will
+  # search this directory for the preferred files in order.
+  local_cache_dir: data/heart_merfish
 
 task:
   title: AVN/AV ring aFibro developmental-program test

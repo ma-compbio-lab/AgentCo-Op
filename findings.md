@@ -495,3 +495,54 @@ per-dataset $0.60 budget cap.
 - Optional: the user could create another `request.yaml` with two
   unrelated GitHub agents (e.g. a code-tools agent + a docs-summary
   agent) to confirm the framework's generalisation outside biology.
+
+---
+
+## Session 7.1 — Real-data CS1 run (2026-05-01)
+
+User downloaded the real Farah Dryad MERFISH AnnData and asked to
+rerun CS1 against it.
+
+### Real-data summary
+
+| Property | Value |
+|---|---|
+| File | `data/heart_merfish/overall_merfish.h5ad` (368 MB, 228 635 × 238) |
+| Schema match | 9/9 obs columns from §5.1 present (`sample_id`, `batch`, `n_counts`, `leiden`, `zone_cluster`, `communities`, `complexity`, `populations`, `purity`) |
+| Label discovery | `AVN/AV Ring` (capital R) auto-matched to `avnavring` via `_norm()`; case-insensitive / punctuation-insensitive matching survived the spelling drift from `case_study_1.md` |
+| Normalisation state | already log-normalised (values 0–5.2, row sums ~90–100) — adapter does not double-log |
+| n_target / n_control | 576 / 5 685 cells |
+| Welch t markers | 53 (40–60 acceptable per §13) |
+| Mann-Whitney U markers | **46 — exact match to TissueAgent paper** |
+| Example overlap | **6 / 6** (DES/IGFBP5/NELL2/HAND2/MYH7/MYH6) |
+| GeneAgent label | "AV Canal/Nodal Fibroblast Developmental Program" |
+| GeneAgent subprocesses | 6 (TF/conduction · epicardial mesenchyme · ECM · morphogen Wnt/BMP · myofibroblast · neuronal) |
+| Status | `success` (real data; not synthetic_fallback) |
+| Total LLM tokens (gpt-5) | 4 611 |
+| Wall time | 160 s |
+
+### Design decisions resolved this sub-session
+1. **Code path was test-data ready.** The local TissueAgent adapter
+   already accommodated real data without changes — `_load_h5ad`
+   uses the `anndata` import that was just installed; `_build_group_masks`
+   has the case/punctuation-insensitive normaliser; the Welch t and
+   Mann-Whitney implementations don't assume normalisation. Once the
+   user supplied the file + `pip install anndata scanpy h5py`, the
+   pipeline ran end-to-end with no code edits beyond the
+   `local_cache_dir` field in the request YAML.
+2. **Both DE methods reported.** §6.3 of the spec asks for a
+   sensitivity panel — the adapter writes
+   `de_sensitivity_summary.csv` with both Welch t (53) and
+   Mann-Whitney U (46). Mann-Whitney U lands on the manuscript count
+   exactly; we report both rather than silently picking the one that
+   matches.
+3. **Doc artifact preserved both runs.** The earlier synthetic
+   exercise sat at `runs/case1/heart_merfish/`; we moved it to
+   `heart_merfish_synthetic_fallback_v1/` and freed the canonical
+   path for the real-data run, then flagged the v1 README as
+   superseded with a pointer.
+4. **No benchmark code touched.** `git diff` shows only the request
+   YAML, the run README, the v1 README header, and the doc files
+   were modified — `workflows/`, runtime, gates, schema, prompts,
+   python_sandbox, profiler, runner, compiler are untouched, so
+   Sessions 4–6 numbers are still reproducible.
