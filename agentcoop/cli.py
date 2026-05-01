@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -597,6 +598,62 @@ def repo_smoke(
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_text(json.dumps(summary, indent=2), encoding="utf-8")
     typer.echo(json.dumps(summary, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# `agentcoop collaborate` — generic external-repo collaboration entrypoint
+#
+# Reads a request YAML matching `case_study_1.md` §3.3 and runs the
+# external_repo_collaboration meta-skill end-to-end. Generic across repo
+# pairs — TissueAgent × GeneAgent is only the inaugural request fixture.
+# ---------------------------------------------------------------------------
+
+
+@app.command("collaborate")
+def collaborate(
+    request: Path = typer.Option(..., "--request", help="Path to a request YAML"),
+    workdir: Path = typer.Option(Path("runs/case1/heart_merfish"), "--workdir"),
+    no_docker: bool = typer.Option(
+        True, "--no-docker/--docker",
+        help="Run wrappers in the local Python env instead of inside Docker. "
+             "Default: --no-docker (Docker mode requires the daemon to be up).",
+    ),
+    external_root: Path = typer.Option(
+        Path("external"), "--external-root",
+        help="Root directory under which repositories are cloned.",
+    ),
+    model: str = typer.Option("gpt-5", "--model", help="LLM model for the integrator."),
+    reasoning_effort: str = typer.Option(
+        "medium", "--reasoning-effort",
+        help="Reasoning effort for gpt-5 / o-series models (minimal|low|medium|high).",
+    ),
+) -> None:
+    """Run a generic external-repo collaboration from a request YAML."""
+    from agentcoop.core.repo_collaboration import (
+        CollaborationRequest,
+        RepoCollaborationOrchestrator,
+    )
+    # Importing the wrappers package registers per-repo local adapters.
+    import agentcoop.wrappers  # noqa: F401
+
+    os.environ["AGENTCOOP_REPO_COLLAB_MODEL"] = model
+    os.environ["AGENTCOOP_REPO_COLLAB_EFFORT"] = reasoning_effort
+
+    req = CollaborationRequest.from_yaml(request)
+    orch = RepoCollaborationOrchestrator(
+        req,
+        workdir=workdir,
+        no_docker=no_docker,
+        external_root=external_root,
+    )
+    result = orch.run()
+    typer.echo(json.dumps({
+        "case_id": result.case_id,
+        "workdir": str(result.workdir),
+        "status": result.status,
+        "n_handoffs": len(result.handoffs),
+        "manifest": str(result.workdir / "run_manifest.json"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

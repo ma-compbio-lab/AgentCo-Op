@@ -549,3 +549,86 @@ another $0.0245 on N=50.
 ### Tests
 
 89 unit tests still pass (no test file changes; see `pytest tests/unit -q`).
+
+---
+
+## Session 7 — External-repo collaboration framework + CS1 (Tissue × Gene) (2026-05-01)
+
+### Goal
+
+Add a generalised framework so that AgentCo-Op can take any two
+GitHub repository URLs + a task description, build per-repo sandboxes,
+register each as an agent backend, and orchestrate upstream/downstream
+collaboration. First user is the TissueAgent × GeneAgent CS1 from
+`case_study_1.md`. LLM model: `gpt-5` ("thinking" reasoning model
+family) with `reasoning_effort=medium`.
+
+**Hard constraint** — minimise codebase changes; protect Sessions 4–6
+benchmark numbers. New behaviour goes through new modules; existing
+files only touched with surgical, additive edits.
+
+### What's new (NEW files)
+
+| Module | Purpose |
+|---|---|
+| `agentcoop/core/repo_profile.py` | `RepoProfile` Pydantic model + `profile_repo()` (clones + inspects environment files / READMEs / scripts; detects API-key envs, package managers, run modes, candidate capabilities) |
+| `agentcoop/core/sandbox_build.py` | `SandboxSpec` + `SandboxBuilder` (renders Dockerfile per `conda` / `uv` / `pip` strategy + `docker-compose.yml` + per-image smoke test; `dry_run=True` writes specs without invoking docker) |
+| `agentcoop/core/agent_card.py` | `AgentCard` (matches `case_study_1.md` §4.3 schema) + `AgentRegistry` (YAML-loadable) |
+| `agentcoop/core/artifact_broker.py` | Typed handoff broker with `gene_set` / `csv_path` / `image_path` / generic-file validators; writes a JSONL audit log |
+| `agentcoop/core/repo_collaboration.py` | `RepoCollaborationOrchestrator` — end-to-end driver consuming a request YAML, runs adapters in declaration order, brokers handoffs, integrates outputs via the existing `OpenAIClient`, writes `run_manifest.json` + `compiled_workflow_graph.json` + `agent_registry.json` + traces |
+| `agentcoop/skills/meta/external_repo_collaboration.md` | L7 meta-skill (12 meta total; the registry test was bumped 11 → 12) |
+| `agentcoop/wrappers/__init__.py` | Side-effect imports register the local-Python adapters used in `--no-docker` mode |
+| `agentcoop/wrappers/tissueagent/{__init__.py, manifest.yaml, Dockerfile.agentcoop, adapter.py}` | TissueAgent local adapter — log-norm + Welch t-test + BH FDR + volcano + coding report; deterministic synthetic-MERFISH fallback when the real h5ad is absent |
+| `agentcoop/wrappers/geneagent_local/{__init__.py, adapter.py}` | GeneAgent local adapter — direct OpenAI Chat-Completions call shaped per `case_study_1.md` §11.4, JSON-mode with deterministic fallback when no API key |
+| `case_study_1.request.yaml` | User-facing request fixture (the inaugural CS1 case) |
+| `tests/unit/test_repo_collaboration.py` | 12 new unit tests covering each new module + an offline orchestrator smoke test |
+
+### Surgical edits to existing files (kept intentionally tiny)
+
+| File | Edit | Reason |
+|---|---|---|
+| `agentcoop/backends/llm.py` | `complete()` now accepts `reasoning_effort` and switches to `max_completion_tokens` when `model.startswith("gpt-5")` or starts with `o1/o3/o4`. Otherwise the parameter set is **bit-identical** to Session 6, so existing gpt-4o-mini benchmarks are unaffected. | gpt-5 family rejects `temperature` and uses `max_completion_tokens` |
+| `agentcoop/core/cost.py` | Added gpt-5 family + o-series price entries (additive). | New models need pricing |
+| `agentcoop/cli.py` | Added `agentcoop collaborate` Typer subcommand. No edits to existing commands. | Generic external-repo collaboration entrypoint |
+| `agentcoop/skills/meta/code_test_repair_loop.md` | (untouched in S7) | preserve CS3 + benchmarks |
+| `tests/unit/test_skills.py` | Bumped meta-skill count assertion 11 → 12 to reflect the new `external_repo_collaboration` skill. | New meta-skill |
+
+### Run results
+
+| Outcome | Value |
+|---|---|
+| `agentcoop collaborate --request case_study_1.request.yaml --no-docker --model gpt-5 --reasoning-effort medium` | end-to-end success, status `synthetic_fallback` |
+| Wall time | ~2 min |
+| Marker count | 51 (target 46) |
+| Expected example marker overlap | **6 / 6** |
+| GeneAgent process label | "AV canal/AV node–biased developmental program in AV ring atrial fibroblasts" |
+| GeneAgent subprocesses | 5 (TF network · ECM · myofibroblast contractile · AV-junction adhesion · paracrine remodeling) |
+| Total LLM tokens (GeneAgent + integrator) | 5 048 (gpt-5, medium reasoning) |
+
+`runs/case1/heart_merfish/` carries the full artifact tree per
+`case_study_1.md` §12 (run_manifest, compiled_workflow_graph,
+agent_registry, broker.jsonl, repo profiles, Dockerfiles, smoke tests,
+DE table, marker CSV/JSON, volcano plot, GeneAgent report MD/JSON,
+final hypothesis report MD/JSON).
+
+### Regression check
+
+| Test | Result |
+|---|---|
+| `pytest tests/unit -q` | **101 / 101 pass** (89 prior + 12 new in `test_repo_collaboration.py`) |
+| GSM8K N=30 quick smoke (gpt-4o-mini path) | 0.90 — within Session 6 baseline N=1056 of 0.944 ± natural variance |
+| `git diff HEAD` on workflows/, runtime, gates, schema, prompts, python_sandbox, profiler, runner, compiler | no changes (these files protect the Sessions 4–6 numbers) |
+
+### Generalisation note
+
+The framework is **not** hard-coded to TissueAgent / GeneAgent. Any
+two GitHub URLs + a request YAML drive the same pipeline:
+
+```bash
+agentcoop collaborate --request my_request.yaml --workdir runs/my_run \
+  --no-docker --model gpt-5 --reasoning-effort medium
+```
+
+Per-repo specifics (local-Python adapters, Dockerfile overrides) live
+under `agentcoop/wrappers/<agent>/`; the framework code does not
+mention TissueAgent or GeneAgent.

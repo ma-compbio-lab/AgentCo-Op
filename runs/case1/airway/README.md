@@ -1,4 +1,11 @@
-# Case Study 1 — Bulk RNA-seq → GeneAgent
+# Case Study 1 v1 (legacy) — Bulk RNA-seq → GeneAgent stub
+
+> **Superseded.** This is the Session-3/4 synthetic-DE scaffolding kept
+> for historical reference. The current Case Study 1 is the
+> **TissueAgent × GeneAgent external-repo collaboration** at
+> `runs/case1/heart_merfish/` (Session 7), which exercises the
+> generalised `external_repo_collaboration` framework end-to-end. See
+> `case_study_1.md` and `runs/case1/heart_merfish/README.md`.
 
 End-to-end vertical-collaboration pipeline using the airway dexamethasone
 dataset shape (synthetic DE TSV; same column set as

@@ -404,3 +404,75 @@ artifacts" section pointing to `workflows/`.
 Logical commits: full-runs evidence, workflow exports, case-study
 artifacts, docs. Push to origin/clean-dev.
 **Verify:** `git status` clean; tests pass; `git push` succeeds.
+
+---
+
+## Session 7 — External-repo collaboration framework + CS1 (Tissue × Gene)
+
+### Goal
+Add a generalized capability so that AgentCo-Op can take any two GitHub
+repository URLs + a task description, build per-repo sandboxes,
+register each as an agent backend, and orchestrate upstream/downstream
+collaboration. First user is the TissueAgent × GeneAgent CS1 from
+`case_study_1.md`. LLM model: `gpt-5` (reasoning_effort=medium).
+
+### Hard constraints (Session 7)
+- **Minimize codebase changes** — protect Sessions 4–6 benchmark
+  numbers. Add NEW files; touch existing files only with surgical,
+  additive edits.
+- Do NOT modify `workflows/*.json`, AC-Gated meta-skills, runtime,
+  gates, schema, prompts, or python_sandbox.
+- Generalization > one-off — code must work for any repo pair.
+
+### Phase 57: New core modules (NEW files only) — status: pending
+- `agentcoop/core/repo_profile.py`: `RepoProfile` + `profile_repo()`.
+- `agentcoop/core/sandbox_build.py`: `SandboxBuilder` (conda/uv/pip).
+- `agentcoop/core/agent_card.py`: `AgentCard` Pydantic + YAML loader.
+- `agentcoop/core/artifact_broker.py`: typed handoff validators.
+- `agentcoop/core/repo_collaboration.py`: orchestration entrypoint.
+**Verify:** new tests in `tests/unit/test_repo_collaboration.py`.
+
+### Phase 58: external_repo_collaboration meta-skill (NEW file) — status: pending
+- `agentcoop/skills/meta/external_repo_collaboration.md` — L7 topology,
+  G0–G7 gates per `case_study_1.md` §4.5.
+**Verify:** registry test still passes.
+
+### Phase 59: Surgical edits — status: pending
+Only:
+- `agentcoop/backends/llm.py` — gpt-5 / o-series path: pass
+  `max_completion_tokens` + optional `reasoning_effort`. Preserve
+  gpt-4o-mini path bit-identically.
+- `agentcoop/core/cost.py` — add gpt-5 family + o-series prices.
+- `agentcoop/cli.py` — add `collaborate` subcommand.
+**Verify:** `pytest tests/unit -q` 89/89 + new tests; quick GSM8K
+30-task smoke matches Session 6 baseline within ±1 pt.
+
+### Phase 60: TissueAgent + GeneAgent wrappers — status: pending
+- `agentcoop/wrappers/tissueagent/{manifest, adapter, Dockerfile}`.
+- `case_study_1.request.yaml` (root, user-facing example).
+- Wrappers run in BOTH Docker and `--no-docker` (local Python) modes
+  because Docker daemon is down on this host.
+**Verify:** `agentcoop collaborate --request case_study_1.request.yaml
+--no-docker --workdir runs/case1/heart_merfish` produces every
+artifact in `case_study_1.md` §12.
+
+### Phase 61: Run CS1 end-to-end — status: pending
+Use `gpt-5` reasoning. Try Dryad fetch; fall back to deterministic
+synthetic MERFISH AnnData (matching the §6.1 schema). Generate
+artifacts in §12.
+**Verify:** `runs/case1/heart_merfish/` has `run_manifest.json`,
+`compiled_workflow_graph.json`, `agent_registry.json`, etc.
+
+### Phase 62: Doc sync — status: pending
+- `case_study.md` — point CS1 to `case_study_1.md` + new run dir.
+- `report.md` §8.1 — replace airway numbers with heart-MERFISH summary.
+- `implement.md`, `progress.md`, `findings.md` — Session 7 entries.
+- `runs/case1/heart_merfish/README.md` — per-run writeup.
+- Existing `runs/case1/airway/README.md` flagged as v1 snapshot.
+**Verify:** every doc mentioning the airway CS1 also mentions the new
+heart-MERFISH CS1.
+
+### Phase 63: Regression check + commit + push — status: pending
+- 30-task GSM8K smoke vs Session 6 baseline (~93–94 %, ±1 pt).
+- pytest 89 + new tests.
+- Logical commits + push to `clean-dev`.

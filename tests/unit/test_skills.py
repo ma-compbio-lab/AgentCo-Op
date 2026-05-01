@@ -10,9 +10,10 @@ PKG_SKILLS = Path(__file__).resolve().parents[2] / "agentcoop" / "skills"
 
 def test_registry_loads_all_skills() -> None:
     reg = SkillRegistry().load_dir(PKG_SKILLS)
-    # Session 3 removes the v1 domain_agent_collaboration / biodiscovery /
-    # spatial skill cards.
-    assert len(reg.meta) == 11
+    # Session 3 removed the v1 domain_agent_collaboration / biodiscovery /
+    # spatial skill cards (left 11 meta + 5 agents). Session 7 adds the
+    # `external_repo_collaboration` L7 meta-skill (12 meta + 5 agents).
+    assert len(reg.meta) == 12
     assert len(reg.agents) == 5
 
 

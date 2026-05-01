@@ -1,0 +1,52 @@
+name: TissueAgent
+kind: sandboxed_external_agent
+repository: https://github.com/ma-compbio/TissueAgent
+container: agentcoop-tissueagent:case-study-1
+role: Spatial transcriptomics workflow and differential-expression specialist
+capabilities:
+  - inspect_anndata_spatial_dataset
+  - identify_cell_population_and_community_groups
+  - run_differential_expression
+  - generate_volcano_plot
+  - synthesize_spatial_biology_report
+input_schema:
+  type: object
+  required: [task_description, output_dir]
+  properties:
+    task_description: {type: string}
+    output_dir: {type: string}
+    population_label: {type: string}
+    target_community: {type: string}
+    control_communities:
+      type: array
+      items: {type: string}
+    expected_outputs:
+      type: array
+      items: {type: string}
+    dataset:
+      type: object
+      properties:
+        local_cache_dir: {type: string}
+        preferred_files:
+          type: array
+          items: {type: string}
+output_schema:
+  type: object
+  required: [status, artifacts, summary]
+  properties:
+    status: {enum: [success, failed, partial]}
+    artifacts:
+      type: object
+      properties:
+        dataset_schema_report: {type: string}
+        group_definition_report: {type: string}
+        de_results_csv: {type: string}
+        marker_genes_csv: {type: string}
+        marker_genes_json: {type: string}
+        volcano_png: {type: string}
+        coding_report_md: {type: string}
+        gene_set: {type: array, items: {type: string}}
+    summary: {type: string}
+    warnings:
+      type: array
+      items: {type: string}

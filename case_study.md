@@ -24,21 +24,53 @@ scGPT, scFoundation, Geneformer, and GEARS show that pretrained or knowledge-inf
 
 Dynamic refinement needs objective runtime signals. Code benchmarks provide syntax errors, runtime errors, unit-test failures, and timeouts. MATH provides answer-format failures, symbolic-check failures, and specialist disagreement. These signals are much more reliable than unconstrained reviewer confidence, so they are ideal for testing AgentCo-Op's gated-subgraph design.
 
-## 2. Case Study 1: Bulk RNA-seq upstream/downstream collaboration
+## 2. Case Study 1: External-repo collaboration — TissueAgent × GeneAgent
 
-### 2.1 Goal
+> **Spec.** Detailed protocol lives in **`case_study_1.md`** (the
+> Session-7 update). This section is the high-level overview kept inside
+> `case_study.md` so the three case studies stay in one document. The
+> earlier "bulk RNA-seq + airway" framing remains in §2.2–§2.5 below as
+> the *baseline / fallback* design — useful when the user only wants a
+> single-repo bulk RNA-seq + GeneAgent flow rather than the full
+> two-repo external-collaboration framework.
 
-Demonstrate a vertical collaboration pattern:
+### 2.1 Goal (Session-7 update)
+
+Demonstrate that AgentCo-Op can take **two GitHub repository URLs and a
+task description** and autonomously:
+
+1. clone each repo and emit a typed `RepoProfile`;
+2. generate Dockerfiles + docker-compose + smoke tests via
+   `SandboxBuilder`;
+3. register an `AgentCard` per repo (capabilities, container, I/O
+   schemas) in an `AgentRegistry`;
+4. run the upstream agent inside its sandbox, broker the typed
+   handoff via `ArtifactBroker` (gene-set / CSV validators), and run
+   the downstream agent;
+5. integrate both outputs with an LLM-backed integrator into an
+   auditable hypothesis report.
+
+Inaugural fixture: TissueAgent × GeneAgent on the developing human
+heart MERFISH dataset (Farah et al. 2024). The framework itself is
+**generic across repo pairs** — see `runs/case1/heart_merfish/README.md`
+for the recipe to reuse it on any other agent pair.
+
+The earlier vertical pattern still holds at the artifact-flow level:
 
 ```text
-Bulk RNA-seq dataset
-  -> differential expression node
-  -> differential gene markers
-  -> gene-set agent
+Repo A sandbox (upstream specialist)
+  -> typed artifact handoff via ArtifactBroker
+  -> Repo B sandbox (downstream specialist)
+  -> LLM integrator
   -> evidence-grounded biological interpretation
 ```
 
-This case study tests whether AgentCo-Op can pass structured biological artifacts between agents and tools, isolate memories by stage, and integrate statistical outputs with literature/database-grounded reasoning.
+This case study tests whether AgentCo-Op can pass structured
+biological artifacts between *external sandboxed* agents and tools,
+isolate memories by stage, and integrate statistical outputs with
+literature/database-grounded reasoning.
+
+### 2.1.b Baseline / fallback flow (legacy bulk RNA-seq + airway)
 
 ### 2.2 Recommended primary dataset
 

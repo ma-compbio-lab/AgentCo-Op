@@ -88,6 +88,20 @@ class MockLLM:
 _DEFAULT_OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
 
+def _is_reasoning_model(model: str) -> bool:
+    """gpt-5 family + o-series use the responses-style param set
+    (`max_completion_tokens` + optional `reasoning_effort`). Detection is
+    name-based on purpose so the function works without a network round trip.
+    """
+    m = (model or "").lower()
+    return (
+        m.startswith("gpt-5")
+        or m.startswith("o1")
+        or m.startswith("o3")
+        or m.startswith("o4")
+    )
+
+
 @dataclass
 class OpenAIClient:
     model: str = "gpt-4o-mini"
@@ -118,16 +132,29 @@ class OpenAIClient:
         response_format: dict[str, Any] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
+        # gpt-5 family + o-series reasoning models use `max_completion_tokens`
+        # and accept an optional `reasoning_effort` knob. They don't accept
+        # arbitrary `temperature` either (only the default). The legacy
+        # `gpt-4o*` / `gpt-4*` / `gpt-3.5*` chat models keep the original
+        # `temperature` + `max_tokens` parameters bit-identically so existing
+        # benchmark numbers are unaffected.
+        is_reasoning = _is_reasoning_model(self.model)
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": float(temperature),
-            "max_tokens": int(max_tokens),
         }
+        if is_reasoning:
+            body["max_completion_tokens"] = int(max_tokens)
+            if reasoning_effort:
+                body["reasoning_effort"] = str(reasoning_effort)
+        else:
+            body["temperature"] = float(temperature)
+            body["max_tokens"] = int(max_tokens)
         if response_format:
             body["response_format"] = response_format
 

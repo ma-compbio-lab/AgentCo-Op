@@ -311,3 +311,80 @@ deterministic). Total Session 6 API spend: $1.31.
 `agentcoop/core/schema.py`, `agentcoop/skills/meta/code_test_repair_loop.md`
 — all bit-identical to Session 5 head per `git diff HEAD`.
 
+---
+
+## Session 7 — External-repo collaboration framework + CS1 (Tissue × Gene) (2026-05-01)
+
+### Objective
+User updated `case_study_1.md` to specify a TissueAgent × GeneAgent
+external-collaboration experiment and asked for a **generalised**
+framework so the same CLI can collaborate any two GitHub agents on any
+task. LLM model: `gpt-5` ("thinking" reasoning model family).
+**Constraint:** keep modifications minimal so existing benchmarks
+(Sessions 4–6) are not impacted.
+
+### What was added (NEW files only)
+- `agentcoop/core/repo_profile.py` — `RepoProfile` + `profile_repo()`
+- `agentcoop/core/sandbox_build.py` — `SandboxBuilder` (conda/uv/pip,
+  dry-run when Docker daemon is down)
+- `agentcoop/core/agent_card.py` — `AgentCard` + `AgentRegistry`
+- `agentcoop/core/artifact_broker.py` — typed handoff broker
+- `agentcoop/core/repo_collaboration.py` — orchestration entrypoint
+- `agentcoop/skills/meta/external_repo_collaboration.md` — L7 meta-skill
+- `agentcoop/wrappers/{tissueagent, geneagent_local}/` — local-Python adapters
+- `case_study_1.request.yaml` — user-facing request fixture
+- `tests/unit/test_repo_collaboration.py` — 12 new unit tests
+- `runs/case1/heart_merfish/` — first run artifacts + per-run README
+
+### Surgical edits (additive only) to existing files
+- `agentcoop/backends/llm.py` — `complete()` accepts optional
+  `reasoning_effort`; routes gpt-5 / o-series to
+  `max_completion_tokens` (no `temperature`). gpt-4o-mini path
+  unchanged.
+- `agentcoop/core/cost.py` — gpt-5 family + o-series price entries.
+- `agentcoop/cli.py` — new `collaborate` Typer subcommand.
+- `tests/unit/test_skills.py` — bumped meta-skill count 11 → 12.
+
+### Run summary
+- `agentcoop collaborate --request case_study_1.request.yaml
+  --workdir runs/case1/heart_merfish --no-docker --model gpt-5
+  --reasoning-effort medium` — completes end-to-end in ≈ 2 min.
+- TissueAgent local adapter: 51 markers (target 46), 6/6 expected
+  example markers (DES/IGFBP5/NELL2/HAND2/MYH7/MYH6) recovered.
+- GeneAgent local adapter (gpt-5): "AV canal/AV node–biased
+  developmental program in AV ring atrial fibroblasts" — 5/5
+  expected subprocess categories covered.
+- Integrator (gpt-5): evidence-linked hypothesis report, lists every
+  artifact path, honest about the synthetic-fallback caveat.
+- Total LLM spend: ~5 K tokens.
+
+Status `synthetic_fallback` because `data/farah_human_heart_merfish/
+overall_merfish.h5ad` is not on disk on this host (370 MB Dryad
+download required + `pip install anndata scanpy`). The framework
+methodology is fully exercised; the biological result on real Farah
+data should be re-confirmed once the dataset is downloaded.
+
+### Regression check
+- `pytest tests/unit -q` — **101 / 101 pass** (89 baseline + 12 new).
+- GSM8K N=30 smoke = 0.90, within Session 6 baseline N=1056 0.944
+  ±natural variance — no benchmark regression.
+- `git diff HEAD` on `workflows/`, `runtime`, `gates`, `schema`,
+  `prompts`, `python_sandbox`, `profiler`, `runner`, `compiler`
+  shows no changes (these files protect the Sessions 4–6 numbers).
+
+### Errors this session
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| Docker daemon not running on host | 1 | `SandboxBuilder.build(dry_run=True)` writes Dockerfiles + compose without invoking `docker build`; orchestrator falls back to local-Python adapters via `register_local_adapter`. Documented as the canonical `--no-docker` mode in the CLI. |
+| `anndata` / `scanpy` not installed locally | 1 | TissueAgent adapter uses `numpy + scipy + matplotlib + pandas` (already installed) and a deterministic synthetic MERFISH fixture when the real h5ad / anndata are absent; status flagged `synthetic_fallback` in the manifest so users know. |
+| `gpt-5` requires `max_completion_tokens` (not `max_tokens`) and rejects custom `temperature` | 1 | `OpenAIClient._is_reasoning_model()` switches the body fields when the model name starts with `gpt-5` / `o1` / `o3` / `o4`; gpt-4o-mini path is bit-identical so existing benchmarks unaffected. |
+| `gpt-5` with default settings produced empty output (all tokens spent on hidden reasoning) | 1 | Pass `reasoning_effort=medium` and `max_tokens=8000` for GeneAgent + integrator so visible JSON has room. Defaults exposed via `--reasoning-effort` CLI flag. |
+| `tests/unit/test_skills.py` asserted 11 meta-skills | 1 | Bumped assertion to 12 to reflect the new L7 meta-skill. |
+
+### Files touched (kept)
+- See `implement.md` Session 7 entry for the full table.
+
+### Files touched (reverted)
+None this session — the policy was no reverts (all changes either
+worked or were not made in the first place).
+

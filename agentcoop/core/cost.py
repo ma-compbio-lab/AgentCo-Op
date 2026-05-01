@@ -21,6 +21,27 @@ DEFAULT_PRICE_TABLE_USD_PER_1K: Dict[str, tuple[float, float]] = {
     "gpt-4o-2024-11-20": (0.00250, 0.01000),
     "gpt-4-turbo": (0.01000, 0.03000),
     "gpt-3.5-turbo": (0.00050, 0.00150),
+    # OpenAI gpt-5 family + o-series reasoning models (USD per 1k tokens,
+    # in/out; OpenAI public pricing as of 2026-04). Reasoning tokens are
+    # billed as completion tokens, so the output rate covers them.
+    "gpt-5": (0.00125, 0.01000),
+    "gpt-5-2025-08-07": (0.00125, 0.01000),
+    "gpt-5-mini": (0.00025, 0.00200),
+    "gpt-5-mini-2025-08-07": (0.00025, 0.00200),
+    "gpt-5-nano": (0.00005, 0.00040),
+    "gpt-5-nano-2025-08-07": (0.00005, 0.00040),
+    "gpt-5-pro": (0.01250, 0.10000),
+    "gpt-5-pro-2025-10-06": (0.01250, 0.10000),
+    "gpt-5-codex": (0.00125, 0.01000),
+    "gpt-5-chat-latest": (0.00125, 0.01000),
+    "o1": (0.01500, 0.06000),
+    "o1-2024-12-17": (0.01500, 0.06000),
+    "o1-pro": (0.15000, 0.60000),
+    "o3": (0.00200, 0.00800),
+    "o3-2025-04-16": (0.00200, 0.00800),
+    "o3-mini": (0.00110, 0.00440),
+    "o4-mini": (0.00110, 0.00440),
+    "o4-mini-2025-04-16": (0.00110, 0.00440),
 }
 
 

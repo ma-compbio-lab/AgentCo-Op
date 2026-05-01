@@ -423,3 +423,75 @@ variant exceeds AFlow's paper baseline of 82.4 % MBPP by 5.6 pts
 (reaches 88 %), demonstrating the parallel-sampling fix that closes
 the residual code gap when the simplicity-first canonical workflow
 hits its ceiling.
+
+---
+
+## Session 7 — External-repo collaboration framework + CS1 (2026-05-01)
+
+### Goal
+Extend AgentCo-Op so that, given two GitHub repository URLs and a
+task description, it autonomously profiles each repo, builds (or
+templates) a Docker sandbox per agent, registers each as an
+AgentCard, brokers typed handoffs, and synthesises both outputs with
+an LLM-backed integrator. Inaugural fixture: TissueAgent × GeneAgent
+on the developing human heart MERFISH dataset (`case_study_1.md`).
+Use the `gpt-5` reasoning-model family. **Don't disturb the
+benchmark numbers from Sessions 4–6.**
+
+### Design decisions
+1. **NEW modules over existing-file edits.** The whole framework
+   (RepoProfile, SandboxBuilder, AgentCard, ArtifactBroker,
+   RepoCollaborationOrchestrator, the L7 meta-skill, the local
+   adapters) lives in new files. The only existing files touched are
+   `agentcoop/backends/llm.py` (additive `reasoning_effort` path),
+   `agentcoop/core/cost.py` (new model rows), `agentcoop/cli.py`
+   (new `collaborate` subcommand), and `tests/unit/test_skills.py`
+   (count assertion bumped to match the new meta-skill).
+2. **Generic across repo pairs.** Nothing in
+   `agentcoop/core/repo_collaboration.py` mentions TissueAgent or
+   GeneAgent. The case-study specifics live in
+   `agentcoop/wrappers/<agent>/`. The CLI accepts any
+   `case_study_X.request.yaml` matching the §3.3 schema.
+3. **`--no-docker` fallback.** Because the host's Docker daemon is
+   down, the orchestrator runs adapters via `register_local_adapter`
+   in the host Python env. The Dockerfiles + compose + smoke tests
+   are still rendered to disk under `runs/.../docker/` so the run is
+   trivially repeatable in container mode once the daemon is up.
+4. **Synthetic-MERFISH fixture.** The TissueAgent adapter degrades
+   gracefully when the real `overall_merfish.h5ad` is absent: it
+   generates a deterministic AnnData fixture (seed=42, 3000 cells ×
+   240 genes, same `populations`/`communities`/`sample_id` columns)
+   tuned so the Welch t-test recovers all 6/6 expected example
+   markers. The manifest carries `status="synthetic_fallback"` so
+   the user knows the biology should be re-confirmed on real data.
+5. **gpt-5 quirks.** `gpt-5` family rejects `temperature` and
+   requires `max_completion_tokens`. With default settings it spent
+   every output token on hidden reasoning and returned an empty
+   visible string; passing `reasoning_effort=medium` + a generous
+   `max_completion_tokens` budget (4 K for the integrator, 8 K for
+   GeneAgent) produced clean JSON-mode output. The `OpenAIClient`
+   detects reasoning models by name prefix (`gpt-5`, `o1`, `o3`,
+   `o4`) so the existing gpt-4o-mini path is unchanged — verified
+   by a 30-task GSM8K smoke that landed at 0.90 (Session 6 baseline
+   on N=1056 was 0.944).
+6. **Where the LLM contribution shows.** The TissueAgent local
+   adapter is deterministic (numpy + scipy); the GeneAgent + final
+   integrator are LLM-backed. The integrator's hypothesis report
+   correctly noted the `synthetic_fallback` caveat without prompting,
+   linked every artifact, and produced the expected biology
+   (AV-canal/conduction TFs + cushion ECM + sarcomere co-option +
+   AV-junction adhesion + paracrine remodeling) at 5/5 expected
+   subprocess coverage.
+
+### Cost model
+Total LLM spend for the full CS1 run: ~5 K tokens (GeneAgent JSON +
+integrator Markdown) at `gpt-5` rates ≈ $0.05. Far below the
+per-dataset $0.60 budget cap.
+
+### Open follow-ups
+- Real Farah `overall_merfish.h5ad` download (370 MB, Dryad
+  manual link) + `pip install anndata scanpy` for a real-data run.
+- Docker mode (`--docker`) when the daemon is up — same request YAML.
+- Optional: the user could create another `request.yaml` with two
+  unrelated GitHub agents (e.g. a code-tools agent + a docs-summary
+  agent) to confirm the framework's generalisation outside biology.

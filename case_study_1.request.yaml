@@ -1,0 +1,67 @@
+# Case Study 1 request — TissueAgent × GeneAgent external collaboration.
+# Loaded by `agentcoop collaborate --request case_study_1.request.yaml`.
+# This file is the inaugural fixture for the generic external-repo
+# collaboration framework: any other two-agent pair can reuse this shape.
+
+case_id: tissueagent_geneagent_external_collaboration
+mode: autonomous_repo_wrapping
+model: gpt-5
+reasoning_effort: medium
+
+repositories:
+  - name: TissueAgent
+    url: https://github.com/ma-compbio/TissueAgent
+    role_hint: Spatial transcriptomics workflow + differential-expression specialist
+  - name: GeneAgent
+    url: https://github.com/ncbi-nlp/GeneAgent
+    role_hint: Gene-set interpretation + self-verified annotation specialist
+
+dataset:
+  name: developing_human_heart_merfish_farah_2024
+  source_page: https://datadryad.org/dataset/doi:10.5061/dryad.w0vt4b8vp
+  preferred_files:
+    - overall_merfish.h5ad
+    - README.md
+  local_cache_dir: data/farah_human_heart_merfish
+
+task:
+  title: AVN/AV ring aFibro developmental-program test
+  description: >
+    Test whether atrial fibroblasts (aFibro) in the AVN/AV ring cellular
+    community exhibit a distinct developmental program compared with atrial
+    fibroblasts in the Left Atria and Right Atria cellular communities. Use
+    TissueAgent for spatial-transcriptomics differential expression analysis
+    and GeneAgent for gene-set interpretation.
+  organism: human
+  tissue: developing human heart
+  target_population: aFibro
+  target_community: AVN/AV ring
+  control_communities: [Left Atria, Right Atria]
+
+required_outputs:
+  - compiled_workflow_graph.json
+  - agent_registry.json
+  - manifests/docker_build_report.json
+  - manifests/repo_profile_TissueAgent.json
+  - manifests/repo_profile_GeneAgent.json
+  - artifacts/tissueagent_run/dataset_schema_report.json
+  - artifacts/tissueagent_run/group_definition_report.json
+  - artifacts/tissueagent_run/de_results.csv
+  - artifacts/tissueagent_run/avn_avring_marker_genes.csv
+  - artifacts/tissueagent_run/avn_avring_marker_genes.json
+  - artifacts/tissueagent_run/volcano_afibro_avn_avring_vs_atria.png
+  - artifacts/tissueagent_run/tissueagent_coding_report.md
+  - artifacts/geneagent_run/geneagent_report.md
+  - artifacts/geneagent_run/geneagent_report.json
+  - artifacts/integration/final_hypothesis_report.md
+  - artifacts/integration/final_hypothesis_report.json
+  - artifacts/integration/final_summary.md
+  - run_manifest.json
+  - traces/execution_trace.jsonl
+
+success_targets:
+  expected_marker_count: 46
+  expected_example_markers: [DES, IGFBP5, NELL2, HAND2, MYH7, MYH6]
+  expected_geneagent_theme: Cardiac Development and Remodeling
+  required_collaboration: true
+  max_replans: 2

@@ -216,23 +216,49 @@ The Case Study 3 `MedPrompt-Voting` variant uses
 
 ## 8. Case studies
 
-### 8.1 Case Study 1 — bulk RNA-seq → GeneAgent
+### 8.1 Case Study 1 — TissueAgent × GeneAgent external-repo collaboration (Session 7)
 
-Vertical-collaboration pipeline using the airway dexamethasone dataset
-shape (synthetic DE TSV; same column set as
-`scripts/case1_airway_de.R` produces from Bioconductor `airway`):
+Inaugural test of the **generalised external-repo collaboration
+framework** added in Session 7. The framework lets a user feed any two
+GitHub URLs + a task description into the new
+`agentcoop collaborate --request <yaml>` CLI; AgentCo-Op then profiles
+each repo, generates a Dockerfile + compose service per agent,
+registers an `AgentCard`, runs the upstream agent (here: TissueAgent
+spatial-transcriptomics DE on the developing human heart MERFISH
+dataset), brokers the typed gene-set handoff, runs the downstream agent
+(here: GeneAgent gene-set interpretation), and integrates both outputs
+with an LLM-backed integrator.
 
 ```
-DE TSV → bio.select_markers → bio.enrich (hypergeometric ORA)
-  → GeneAgent wrapper → IntegratorReviewer (LLM, gpt-4o-mini)
-  → final_report.md
+clone repos
+  → RepoProfile × 2 (manifests/repo_profile_*.json)
+  → SandboxBuilder writes Dockerfile.* + docker-compose.yml + smoke tests
+  → AgentRegistry (cards built from RepoProfile)
+  → TissueAgent local adapter — log-norm + Welch t + BH FDR + volcano
+  → ArtifactBroker validates/handoffs the marker gene set
+  → GeneAgent local adapter — gpt-5 reasoning, JSON-mode
+  → Integrator — gpt-5 reasoning, evidence-linked Markdown report
 ```
 
-Artifacts at `runs/case1/airway/` (see its `README.md`). The LLM
-integrator correctly flagged the synthetic GeneAgent's labels as
-*unsupported* because they lacked enrichment-grounded evidence — the
-verifier doing its job. Total LLM call: 448 in / 361 out tokens
-(~$0.0003).
+Result on N=50 target / 223 control synthetic-MERFISH cells (Farah
+h5ad not on disk on this host; deterministic synthetic fixture used —
+flagged `synthetic_fallback` in the manifest):
+
+| Outcome | Value |
+|---|---|
+| Marker count (adj_p<0.05, log2fc>0) | **51** (target 46) |
+| Expected example marker overlap | **6 / 6** (DES, IGFBP5, NELL2, HAND2, MYH7, MYH6) |
+| GeneAgent process label | "AV canal/AV node–biased developmental program in AV ring atrial fibroblasts" |
+| GeneAgent subprocess coverage | 5 / 5 (TF network · ECM · myofibroblast contractile · AV-junction adhesion · paracrine remodeling) |
+| Integrator + GeneAgent total tokens | 5 048 (`gpt-5`, `reasoning_effort=medium`) |
+| Sandbox Dockerfiles + compose | written under `runs/case1/heart_merfish/docker/` (dry-run; Docker daemon was down) |
+
+Artifacts at `runs/case1/heart_merfish/` (see its `README.md` for the
+full file tree and the recipe to rerun against the real Dryad
+download). The legacy synthetic airway / single-repo flow is preserved
+at `runs/case1/airway/` and is referenced from `case_study.md` §2.1.b
+as the simpler fallback when only a single repo + bulk RNA-seq is
+needed.
 
 ### 8.2 Case Study 2 — parallel single-cell perturbation specialists
 
