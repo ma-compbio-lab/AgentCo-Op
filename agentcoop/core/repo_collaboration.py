@@ -32,12 +32,22 @@ import yaml
 
 from agentcoop.core.agent_card import AgentCard, AgentRegistry
 from agentcoop.core.artifact_broker import ArtifactBroker, HandoffResult
+from agentcoop.core.collab_report import (
+    write_collaboration_log,
+    write_final_report,
+)
+from agentcoop.core.env_manager import (
+    EnvReport,
+    ensure_env_for_agents,
+    required_packages_for,
+)
 from agentcoop.core.repo_profile import RepoProfile, profile_repo
 from agentcoop.core.sandbox_build import (
     SandboxBuilder,
     SandboxSpec,
     spec_from_profile,
 )
+from agentcoop.core.topology_viz import render_topology
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +262,34 @@ class RepoCollaborationOrchestrator:
                 "warnings": [str(exc)],
             }
 
+    # ---- env manager ------------------------------------------------------
+
+    def _ensure_env(self) -> EnvReport | None:
+        """Ask EnvManager to pip-install whatever the registered adapters
+        declared via `register_required_packages`. In Docker mode this
+        is a no-op (the SandboxBuilder handles deps inside images)."""
+        names = [r.get("name") or _infer_name(r["url"])
+                 for r in self.request.repositories]
+        # Skip silently when no requirements are declared at all — keeps
+        # the manifest tidy for repos that ship their own bootstrap.
+        any_declared = any(required_packages_for(n) for n in names)
+        if not any_declared:
+            return None
+        mode = "docker" if not self.no_docker else "local"
+        try:
+            report = ensure_env_for_agents(names, workdir=self.workdir, mode=mode)
+        except Exception as exc:
+            self.notes.append(f"env_manager: {exc}")
+            return None
+        # Surface install_failed packages as warnings.
+        for pkg in report.packages:
+            if pkg.state == "install_failed":
+                self.notes.append(
+                    f"env_manager: pip install {pkg.requested!r} failed — "
+                    f"adapter may degrade. error_tail={(pkg.error or '')[:140]!r}"
+                )
+        return report
+
     # ---- main run --------------------------------------------------------
 
     def run(self) -> CollaborationResult:
@@ -260,12 +298,24 @@ class RepoCollaborationOrchestrator:
         sandbox_report = self._build_sandboxes()
         self._register_cards()
 
+        # Auto-resolve declared Python deps before invoking adapters.
+        env_report = self._ensure_env()
+
         # Compose the workflow graph (described, not LLM-compiled — we
         # ship a deterministic L7 topology so the run is reproducible).
         graph = self._compile_graph()
         (self.workdir / "compiled_workflow_graph.json").write_text(
             json.dumps(graph, indent=2), encoding="utf-8"
         )
+
+        # Render PNG + DOT topology so reviewers can see how the agents
+        # were wired without reading the JSON.
+        try:
+            topology_artifacts = render_topology(graph, out_dir=self.workdir,
+                                                  title=f"{self.request.case_id} — workflow topology")
+        except Exception as exc:
+            self.notes.append(f"topology_viz: render failed — {exc}")
+            topology_artifacts = {}
 
         # Pick upstream / downstream agent in declared order.
         if len(self.registry.names()) < 2:
@@ -392,6 +442,79 @@ class RepoCollaborationOrchestrator:
             else "success"
         )
 
+        repos_meta = {
+            name: {
+                "url": prof.repo_url,
+                "commit": prof.commit_sha,
+                "container": self.registry.get(name).container,
+                "wrapper_strategy": prof.preferred_wrapper_strategy,
+            }
+            for name, prof in self.profiles.items()
+        }
+
+        # Structured outputs: collaboration_log.md + final_report.md +
+        # topology pointers go into the manifest so the user has one
+        # place to look.
+        integrator_meta = integration.get("integrator_meta", {}) or {
+            "model": "unknown",
+            "reasoning_effort": "default",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
+        env_dump = env_report.model_dump() if env_report is not None else None
+        try:
+            collab_log_path = write_collaboration_log(
+                workdir=self.workdir,
+                case_id=self.request.case_id,
+                repos=repos_meta,
+                upstream_name=upstream_name,
+                downstream_name=downstream_name,
+                upstream_resp=upstream_resp,
+                downstream_resp=downstream_resp,
+                handoffs=[h.model_dump(exclude_none=True) for h in handoffs],
+                integrator_meta=integrator_meta,
+                env_report=env_dump,
+                sandbox_report=sandbox_report,
+                elapsed_s=elapsed,
+                status=status,
+                notes=self.notes,
+            )
+        except Exception as exc:
+            self.notes.append(f"collab_report: log write failed — {exc}")
+            collab_log_path = None
+        try:
+            final_report_path = write_final_report(
+                workdir=self.workdir,
+                case_id=self.request.case_id,
+                repos=repos_meta,
+                upstream_name=upstream_name,
+                downstream_name=downstream_name,
+                upstream_resp=upstream_resp,
+                downstream_resp=downstream_resp,
+                handoffs=[h.model_dump(exclude_none=True) for h in handoffs],
+                integrator_meta=integrator_meta,
+                integrator_md_path=Path(integration.get("final_hypothesis_report_md", "")) if integration.get("final_hypothesis_report_md") else None,
+                geneagent_md_path=Path((downstream_resp.get("artifacts") or {}).get("geneagent_report_md", "")) if (downstream_resp.get("artifacts") or {}).get("geneagent_report_md") else None,
+                topology_artifacts=topology_artifacts,
+                env_report=env_dump,
+                elapsed_s=elapsed,
+                status=status,
+                raw_artifacts_root=self.workdir,
+                notes=self.notes,
+            )
+        except Exception as exc:
+            self.notes.append(f"collab_report: final report write failed — {exc}")
+            final_report_path = None
+
+        if collab_log_path:
+            artifacts["collaboration_log_md"] = str(collab_log_path)
+        if final_report_path:
+            artifacts["final_report_md"] = str(final_report_path)
+        for k, v in topology_artifacts.items():
+            artifacts[k] = v
+        if env_dump is not None:
+            artifacts["env_manifest"] = str(self.workdir / "manifests" / "env_manifest.json")
+
         manifest = {
             "case_id": self.request.case_id,
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - elapsed)),
@@ -399,15 +522,7 @@ class RepoCollaborationOrchestrator:
             "elapsed_s": round(elapsed, 2),
             "status": status,
             "no_docker": self.no_docker,
-            "repos": {
-                name: {
-                    "url": prof.repo_url,
-                    "commit": prof.commit_sha,
-                    "container": self.registry.get(name).container,
-                    "wrapper_strategy": prof.preferred_wrapper_strategy,
-                }
-                for name, prof in self.profiles.items()
-            },
+            "repos": repos_meta,
             "dataset": self.request.dataset,
             "task": self.request.task,
             "main_results": integration.get("main_results", {}),
@@ -415,6 +530,15 @@ class RepoCollaborationOrchestrator:
             "notes": self.notes,
             "artifacts": artifacts,
             "sandbox_report": sandbox_report,
+            "env_report": env_dump,
+            "integrator_meta": integrator_meta,
+            "topology": topology_artifacts,
+            "structured_outputs": {
+                "collaboration_log": str(collab_log_path) if collab_log_path else None,
+                "final_report": str(final_report_path) if final_report_path else None,
+                "topology_png": topology_artifacts.get("topology_png"),
+                "topology_dot": topology_artifacts.get("topology_dot"),
+            },
         }
         (self.workdir / "run_manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
@@ -582,6 +706,12 @@ class RepoCollaborationOrchestrator:
                 "downstream_summary": downstream_resp.get("summary", ""),
                 "model": usage.get("model"),
                 "tokens": (usage.get("tokens_in", 0) or 0) + (usage.get("tokens_out", 0) or 0),
+            },
+            "integrator_meta": {
+                "model": usage.get("model") or model,
+                "reasoning_effort": reasoning_effort,
+                "tokens_in": int(usage.get("tokens_in") or 0),
+                "tokens_out": int(usage.get("tokens_out") or 0),
             },
         }
 

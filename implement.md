@@ -669,3 +669,58 @@ request YAML, run READMEs, and the doc files were touched. None of
 the Sessions 4–6 protective files (`workflows/*.json`, runtime,
 gates, schema, prompts, python_sandbox, profiler, runner, compiler)
 changed.
+
+### Session 7.2 — internalised env config + structured outputs (2026-05-01)
+
+User asked for three additions:
+
+1. **All preparatory work — including environment configuration —
+   handled internally by AgentCo-Op**, not via separate `pip install`.
+2. A clear explanation of the current external-agent collaboration
+   mechanism.
+3. Structured final outputs (collaboration log + topology
+   visualisation + a single standalone report).
+
+NEW modules (additive only):
+
+| Module | Role |
+|---|---|
+| `agentcoop/core/env_manager.py` | Wrapper modules declare PyPI deps via `register_required_packages("Name", [...])`. The orchestrator calls `ensure_env_for_agents(...)` before invoking adapters; missing packages are pip-installed in `--no-docker` mode (skipped in `--docker` mode where the SandboxBuilder weaves them into the Dockerfile). Per-package install/already-present state is recorded in `manifests/env_manifest.json`. |
+| `agentcoop/core/topology_viz.py` | Renders `compiled_workflow_graph.json` as both `topology.png` (matplotlib + networkx, hierarchical, color-by-kind) and `topology.dot` (Graphviz source). |
+| `agentcoop/core/collab_report.py` | Writes `collaboration_log.md` (per-stage narrative) and `final_report.md` (single-file standalone, embeds topology, env table, stage table, GeneAgent biology verbatim, integrator hypothesis verbatim, every artifact path, reproduce block). |
+| `docs/external_agent_collaboration.md` | Design + mechanism walkthrough — every stage explained, file map of one run, generalisation recipe. |
+
+Surgical edits (additive only):
+
+| File | Edit |
+|---|---|
+| `agentcoop/core/repo_collaboration.py` | Wires `_ensure_env()` between AgentRegistry and adapter invocation, calls `render_topology()` after the compiled graph is written, and emits `collaboration_log.md` + `final_report.md` after the run completes. The integrator's `_integrate()` returns an `integrator_meta` dict so the reporter can attribute model + reasoning_effort + tokens. `run_manifest.json` gains `env_report`, `integrator_meta`, `topology`, and `structured_outputs` blocks. |
+| `agentcoop/wrappers/tissueagent/__init__.py` | Calls `register_required_packages("TissueAgent", [...])` with numpy/pandas/scipy/matplotlib/anndata/scanpy/h5py/PyYAML. |
+| `agentcoop/wrappers/geneagent_local/__init__.py` | Calls `register_required_packages("GeneAgent", ["httpx"])`. |
+
+Tests added:
+
+- `tests/unit/test_env_topology_report.py` — 6 tests covering
+  package registration, env-manager already-present detection, docker
+  skip path, manifest persistence, topology PNG/DOT render, and
+  collaboration_log + final_report emission with embedded reports.
+
+After the additions: **107 / 107 unit tests pass**. No edits to the
+Session 4–6 protective files (workflows, runtime, gates, schema,
+prompts, python_sandbox, profiler, runner, compiler).
+
+### Session 7.2 run results
+
+Re-ran CS1 end-to-end on the real Farah MERFISH (`status: success`,
+98.6 s wall time, 5 547 LLM tokens for the GeneAgent + integrator
+calls). All four structured outputs appear at the workdir root:
+
+- `runs/case1/heart_merfish/final_report.md` — standalone report.
+- `runs/case1/heart_merfish/collaboration_log.md` — per-stage narrative.
+- `runs/case1/heart_merfish/topology.png` — 1438 × 1183 PNG.
+- `runs/case1/heart_merfish/topology.dot` — Graphviz source.
+
+Plus `runs/case1/heart_merfish/manifests/env_manifest.json` listing
+the 9 declared Python packages auto-resolved by the EnvManager (all
+already present on this host; the install path is exercised when a
+package is missing).

@@ -441,3 +441,55 @@ field in the request YAML.
   comparison.
 - `implement.md`, `findings.md`, `progress.md` — Session 7.1 entries.
 
+---
+
+### Session 7.2 — internalised env config + structured outputs (2026-05-01)
+
+User asks (1) all preparatory work — including environment
+configuration — handled internally by AgentCo-Op, (2) explanation of
+the external-agent collaboration mechanism, (3) structured final
+output (logs of how collaboration was executed + topology
+visualisation), (4) re-run CS1 with a standalone report and clear
+paths to raw + final outputs, (5) the previous run was already
+deleted by the user.
+
+NEW modules + tests (additive only — no Sessions 4–6 protective
+files touched):
+
+| File | Role |
+|---|---|
+| `agentcoop/core/env_manager.py` | Auto pip install per registered wrapper; writes `manifests/env_manifest.json`. |
+| `agentcoop/core/topology_viz.py` | Renders `topology.png` + `topology.dot` from the compiled L7 graph. |
+| `agentcoop/core/collab_report.py` | Emits `collaboration_log.md` + `final_report.md` (single-file standalone). |
+| `docs/external_agent_collaboration.md` | Mechanism walkthrough. |
+| `tests/unit/test_env_topology_report.py` | 6 tests for the new modules. |
+| `agentcoop/wrappers/tissueagent/__init__.py` | Declares numpy/pandas/scipy/matplotlib/anndata/scanpy/h5py/PyYAML. |
+| `agentcoop/wrappers/geneagent_local/__init__.py` | Declares httpx. |
+| `agentcoop/core/repo_collaboration.py` | Wires `_ensure_env()` + `render_topology()` + collab_report into `run()`; integrator returns `integrator_meta`; `run_manifest.json` gains `env_report` + `integrator_meta` + `topology` + `structured_outputs` blocks. |
+
+Re-ran CS1 end-to-end on real Farah MERFISH:
+
+| Property | Value |
+|---|---|
+| Status | `success` (real data) |
+| Wall time | 98.6 s |
+| n_target / n_control | 576 / 5 685 |
+| Welch t markers | 53 |
+| Mann-Whitney U markers | 46 (exact manuscript match) |
+| Expected example overlap | 6 / 6 |
+| GeneAgent process label | "AV Ring Fibroblast Developmental Program" (5 subprocesses) |
+| Total LLM tokens | 5 547 (gpt-5, reasoning_effort=medium) |
+| EnvManager packages | 9 declared / 9 auto-resolved (all already present this run) |
+
+User-facing path summary:
+- **Raw outputs root**: `runs/case1/heart_merfish/`.
+- **Standalone processed report**: `runs/case1/heart_merfish/final_report.md`.
+- **Per-stage narrative**: `runs/case1/heart_merfish/collaboration_log.md`.
+- **Topology PNG / DOT**: `runs/case1/heart_merfish/topology.png`, `topology.dot`.
+- **Mechanism doc**: `docs/external_agent_collaboration.md`.
+
+Tests: **107 / 107 pass** (101 prior + 6 new for env / topology /
+report). No edits to runtime, gates, schema, prompts, python_sandbox,
+profiler, runner, compiler, or `workflows/*.json` — Sessions 4–6
+benchmark numbers remain reproducible.
+

@@ -272,12 +272,24 @@ COL9A2, CD34. The presence of HCN4 + TBX3 + NKX2-5 + IRX4 + TBX5 (top
 transcription-factor signature.
 
 Artifacts at `runs/case1/heart_merfish/` (see its `README.md` for the
-full tree). A previous synthetic-fallback exercise of the same
-pipeline, before the Dryad download was on disk, is preserved at
-`runs/case1/heart_merfish_synthetic_fallback_v1/`. The legacy
-synthetic airway / single-repo flow remains at `runs/case1/airway/`
-and is referenced from `case_study.md` §2.1.b as the simpler fallback
-when only a single repo + bulk RNA-seq is needed.
+full tree). The run produces four **structured outputs at the workdir
+root** (added in Session 7.2):
+
+- `final_report.md` — single self-contained Markdown report (the
+  user-facing deliverable); embeds `topology.png`, the env table, the
+  per-stage status table, GeneAgent's biology report (verbatim), the
+  integrator's hypothesis report (verbatim), and every artifact path.
+- `collaboration_log.md` — per-stage narrative (env / profile /
+  sandbox / registry / upstream / broker / downstream / integrator).
+- `topology.png` — multi-agent topology, hierarchical layout,
+  color-by-kind.
+- `topology.dot` — Graphviz source for the same diagram.
+
+The mechanism is documented in `docs/external_agent_collaboration.md`.
+The legacy synthetic airway / single-repo flow remains at
+`runs/case1/airway/` and is referenced from `case_study.md` §2.1.b as
+the simpler fallback when only a single repo + bulk RNA-seq is
+needed.
 
 ### 8.2 Case Study 2 — parallel single-cell perturbation specialists
 
