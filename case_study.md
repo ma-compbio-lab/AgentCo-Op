@@ -295,9 +295,60 @@ The final report should include:
 9. Uncertainty and failure notes.
 10. Reproducibility block with package versions, seeds, commits, and artifact hashes.
 
-## 3. Case Study 2: Parallel single-cell foundation-model collaboration
+## 3. Case Study 2: Cross-modal external-tool collaboration — Seurat × Signac
 
-### 3.1 Goal
+> **Spec.** Detailed protocol lives in **`case_study_2.md`** (the
+> Session-7.3 update). This section is the high-level overview kept
+> inside `case_study.md` so the three case studies stay in one
+> document. The earlier "parallel single-cell foundation-model
+> collaboration" framing remains in §3.1.b–§3.6 below as the
+> *baseline / fallback* design — useful when the user only wants a
+> GPU-foundation-model parallel-prediction flow.
+
+### 3.1 Goal (Session-7.3 update)
+
+Demonstrate that AgentCo-Op can take **two external bioinformatics
+tool GitHub URLs** (Seurat for scRNA, Signac for scATAC) plus a
+multiome dataset + cell-type labels + a reference marker database,
+and autonomously:
+
+1. profile each tool repo and emit per-tool `RepoProfile` JSON;
+2. render Dockerfile + docker-compose + smoke tests for each tool
+   (per `case_study_2.md` §8);
+3. **auto-install every declared PyPI package** before invoking the
+   adapters (no manual `pip install` from the user);
+4. run **two parallel branches** — Seurat for RNA marker discovery,
+   Signac for ATAC peak markers + peak-to-mm10-gene mapping;
+5. broker the two typed top-N marker JSONs;
+6. invoke a `join_agent` (CellMarker 2.0 evaluator) that builds gold
+   marker sets, computes per-cell-type intersection / union, and
+   reports precision / recall / collaboration-gain;
+7. wrap everything with an LLM (`gpt-5`) integrator into one
+   evidence-linked Markdown report.
+
+```text
+SHARE-seq mm10 multiome + labels + CellMarker 2.0
+  ↓                                ↓
+Seurat sandbox (scRNA marker)    Signac sandbox (scATAC marker → mm10 nearest gene)
+  ↓                                ↓
+        ArtifactBroker (gene-set / CSV validators)
+                       ↓
+          CellMarkerEvaluator (join_agent)
+                       ↓
+              gpt-5 integrator
+                       ↓
+        final_report + collaboration_log + topology PNG/DOT
+```
+
+The central CS2 hypothesis is that **set intersection of RNA + ATAC
+marker genes improves precision** relative to either modality alone,
+even when single-modality recall already dominates. The
+inaugural run on real Ma 2020 SHARE-seq mouse skin data confirms this
+at the macro level (mean `precision_intersection = 0.083` vs
+`precision_rna = 0.051` vs `precision_atac = 0.003`) — see
+`runs/case2/shareseq_skin/README.md`.
+
+### 3.1.b Baseline / fallback flow (legacy parallel foundation-model collaboration)
 
 Demonstrate a parallel specialist collaboration pattern:
 

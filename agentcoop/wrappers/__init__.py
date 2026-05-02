@@ -13,5 +13,8 @@ Each subpackage / module ships:
 from __future__ import annotations
 
 # Side-effect imports register adapters with `repo_collaboration._ADAPTERS`.
-from agentcoop.wrappers import tissueagent  # noqa: F401
-from agentcoop.wrappers import geneagent_local  # noqa: F401
+from agentcoop.wrappers import tissueagent  # noqa: F401  CS1
+from agentcoop.wrappers import geneagent_local  # noqa: F401  CS1
+from agentcoop.wrappers import seurat_local  # noqa: F401  CS2
+from agentcoop.wrappers import signac_local  # noqa: F401  CS2
+from agentcoop.wrappers import cellmarker_evaluator_local  # noqa: F401  CS2 join-agent

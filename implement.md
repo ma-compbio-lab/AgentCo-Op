@@ -670,6 +670,86 @@ the Sessions 4–6 protective files (`workflows/*.json`, runtime,
 gates, schema, prompts, python_sandbox, profiler, runner, compiler)
 changed.
 
+---
+
+## Session 7.3 — `parallel_then_join` topology + CS2 (Seurat × Signac × CellMarker) (2026-05-02)
+
+### Goal
+
+User updated `case_study_2.md` to require AgentCo-Op to take the
+Seurat / Signac GitHub URLs, the SHARE-seq mouse skin RNA/ATAC GEO
+files, the cell-type label file, and CellMarker 2.0 mouse markers,
+then **autonomously sandbox both R tools, register them as agent
+nodes, run them in parallel on real data, and evaluate the
+intersection / union of their per-cell-type marker sets against
+CellMarker 2.0**. Same constraints as Sessions 7 / 7.1 / 7.2:
+
+- preparation entirely internal to AgentCo-Op (env config + sandbox);
+- structured outputs (logs + topology PNG/DOT + standalone report);
+- generalisable framework changes only;
+- minimal blast radius — Sessions 4–6 benchmark numbers must remain
+  reproducible.
+
+### What's new (NEW files only)
+
+| Module | Role |
+|---|---|
+| `agentcoop/wrappers/seurat_local/{__init__, manifest, Dockerfile, adapter}` | Python local Seurat-equivalent: scanpy Wilcoxon RNA marker discovery from a comma-id dense TSV; mirrors the R wrapper in `case_study_2.md` §10. |
+| `agentcoop/wrappers/signac_local/{__init__, manifest, Dockerfile, adapter}` | Python local Signac-equivalent: scanpy Wilcoxon DA on MatrixMarket peak counts + lazy-fetched GENCODE vM25 mm10 nearest-gene mapping; mirrors §11. Also bundles a `data_cache/` dir for the auto-downloaded GTF + parsed gene-coord TSV. |
+| `agentcoop/wrappers/cellmarker_evaluator_local/{__init__, adapter}` | Python join-agent: parses `Cell_marker_Mouse.xlsx`, applies primary `Skin` + extended `Skin/Hair follicle/Epidermis/Dermis/Hair` filters, builds gold marker sets, computes per-cell-type set ops + precision / recall + collaboration_gain + heatmap + barplot; mirrors §13–§14. |
+| `case_study_2.request.yaml` | User-facing inaugural CS2 request fixture (loads with the same generic `agentcoop collaborate` CLI as CS1). |
+| `tests/unit/test_parallel_then_join.py` | 5 new unit tests: wrapper registration, request-YAML loading, parallel-then-join orchestration, linear-handoff regression guard, CellMarker P/R helpers. |
+
+### Surgical edits to existing files (additive only)
+
+| File | Edit |
+|---|---|
+| `agentcoop/core/repo_collaboration.py` | Added `topology` (default `"linear_handoff"`), `join_agent`, and `parameters` fields to `CollaborationRequest`. Extracted CS1's inline body into `_execute_linear_handoff()`. Added `_execute_parallel_then_join()` that runs every repo in parallel via a `ThreadPoolExecutor`, brokers per-branch typed artifacts, optionally invokes a registered `join_agent` adapter, and feeds the join response into the existing `_integrate(...)`. Added `_compile_graph_parallel()` so the topology PNG renders the parallel branches. `_ensure_env()` now also resolves the `join_agent` deps. `run_manifest.json` gained `topology`, `branch_responses`, `parameters`, `join_agent`, `topology_artifacts` blocks. |
+| `agentcoop/wrappers/__init__.py` | Side-effect imports for the three new wrappers so the registry resolves them when the CLI imports `agentcoop.wrappers`. |
+
+### Run results
+
+| Outcome | Value |
+|---|---|
+| `agentcoop collaborate --request case_study_2.request.yaml --workdir runs/case2/shareseq_skin --no-docker --model gpt-5 --reasoning-effort medium` | end-to-end success |
+| Wall time | 648 s (10.8 min) |
+| EnvManager packages auto-resolved | 8 (e.g. `openpyxl 3.1.5` was actually pip-installed on this run; the rest already present) |
+| Cells / cell types | 32 231 / 22 (after `Mix` removed; min 20 cells/type) |
+| RNA / ATAC matrix shapes | 32 231 × 23 296 / 32 231 × 344 592 |
+| Seurat marker rows | 147 057 |
+| Signac peak markers → mm10 gene rows | 10 776 → 8 843 |
+| Cell types mapped to CellMarker | 19 / 22 |
+| Mean precision (RNA / ATAC / **intersection**) | 0.051 / 0.003 / **0.083** |
+| Mean recall (RNA / ATAC / union) | 0.122 / 0.009 / 0.122 |
+| Strict intersection wins | 1 (Basal: 0.333 vs RNA 0.04 vs ATAC 0.02) |
+| Total LLM tokens (integrator) | 5 679 (`gpt-5`, `reasoning_effort=medium`) |
+
+`runs/case2/shareseq_skin/` carries the full artifact tree per
+`case_study_2.md` §19 (run_manifest, compiled_workflow_graph,
+agent_registry, env_manifest, broker.jsonl, repo profiles,
+Dockerfiles, smoke tests, full marker tables, peak-to-gene mapping,
+gold marker sets, label mapping, P/R per-celltype + summary,
+collaboration_gain table, heatmap PNG, barplot PNG, integrator
+report MD/JSON, collaboration_log, topology PNG/DOT, final_report).
+
+### Regression check
+
+| Test | Result |
+|---|---|
+| `pytest tests/unit -q` | **112 / 112 pass** (107 prior + 5 new in `test_parallel_then_join.py`) |
+| `git diff HEAD` on workflows/, runtime, gates, schema, prompts, python_sandbox, profiler, runner, compiler, benchmarks/ | NO changes (Sessions 4–6 numbers remain reproducible) |
+| CS1 path | guarded by `test_orchestrator_linear_handoff_still_runs` |
+
+### Generalisation
+
+- The `topology: parallel_then_join` field + `join_agent` block work
+  for any N-branch fan-out + evaluator pattern. Just register a
+  local adapter per branch and one for the join_agent, then write a
+  request YAML — no framework code edits needed.
+- The `case_study_2.md` Seurat/Signac specifics live entirely under
+  `agentcoop/wrappers/{seurat,signac,cellmarker_evaluator}_local/`;
+  none of the framework code names them.
+
 ### Session 7.2 — internalised env config + structured outputs (2026-05-01)
 
 User asked for three additions:

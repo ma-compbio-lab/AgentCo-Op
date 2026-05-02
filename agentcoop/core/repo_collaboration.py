@@ -67,6 +67,16 @@ class CollaborationRequest:
     mode: str = "autonomous_repo_wrapping"
     max_replans: int = 2
     raw: dict[str, Any] = field(default_factory=dict)
+    # Topology selector. Two patterns are supported today:
+    #   - "linear_handoff" (default; CS1):
+    #       repos[0] (upstream) → broker → repos[1] (downstream) → integrator
+    #   - "parallel_then_join" (CS2):
+    #       repos[0..N-1] run in parallel; an optional `join_agent` consumes
+    #       all upstream responses + extra `join_inputs`; then the integrator
+    #       wraps the join result.
+    topology: str = "linear_handoff"
+    join_agent: dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "CollaborationRequest":
@@ -80,6 +90,9 @@ class CollaborationRequest:
             success_targets=dict(data.get("success_targets", {}) or {}),
             mode=str(data.get("mode", "autonomous_repo_wrapping")),
             max_replans=int(data.get("max_replans", 2)),
+            topology=str(data.get("topology", "linear_handoff")),
+            join_agent=dict(data.get("join_agent", {}) or {}),
+            parameters=dict(data.get("parameters", {}) or {}),
             raw=data,
         )
 
@@ -270,6 +283,11 @@ class RepoCollaborationOrchestrator:
         is a no-op (the SandboxBuilder handles deps inside images)."""
         names = [r.get("name") or _infer_name(r["url"])
                  for r in self.request.repositories]
+        # Include the optional join_agent so its declared deps get the
+        # same auto-install treatment as the repo agents.
+        join_name = (self.request.join_agent or {}).get("name")
+        if join_name and join_name not in names:
+            names.append(join_name)
         # Skip silently when no requirements are declared at all — keeps
         # the manifest tidy for repos that ship their own bootstrap.
         any_declared = any(required_packages_for(n) for n in names)
@@ -289,6 +307,212 @@ class RepoCollaborationOrchestrator:
                     f"adapter may degrade. error_tail={(pkg.error or '')[:140]!r}"
                 )
         return report
+
+    # ---- topology executors -------------------------------------------------
+
+    def _execute_linear_handoff(self) -> dict[str, Any]:
+        """CS1-style upstream → broker → downstream → integrator.
+
+        Returns a dict with `upstream_name`, `downstream_name`,
+        `upstream_resp`, `downstream_resp`, `handoffs`, `integration`,
+        and an empty `branch_responses` for parity with the parallel
+        topology.
+        """
+        upstream_name, downstream_name = self.registry.names()[:2]
+
+        upstream_dir = self.workdir / "artifacts" / f"{upstream_name.lower()}_run"
+        upstream_dir.mkdir(parents=True, exist_ok=True)
+        upstream_req = {
+            "task_id": f"{self.request.case_id}_{upstream_name.lower()}",
+            "capability": "run_primary_analysis",
+            "input": {
+                "task_description": self.request.task.get("description", ""),
+                "task_meta": self.request.task,
+                "dataset": self.request.dataset,
+                "success_targets": self.request.success_targets,
+                "parameters": self.request.parameters,
+            },
+            "output_dir": str(upstream_dir),
+        }
+        upstream_resp = self._run_adapter(upstream_name, upstream_req)
+        (upstream_dir / "response.json").write_text(
+            json.dumps(upstream_resp, indent=2), encoding="utf-8"
+        )
+
+        handoffs: list[HandoffResult] = []
+        gene_set = (upstream_resp.get("artifacts") or {}).get("gene_set") or []
+        marker_csv = (upstream_resp.get("artifacts") or {}).get("marker_genes_csv")
+        downstream_input_path = self.workdir / "artifacts" / f"{downstream_name.lower()}_input.json"
+        h_genes = self.broker.handoff_gene_set(
+            producer=upstream_name,
+            consumer=downstream_name,
+            genes=gene_set,
+            organism=str(self.request.task.get("organism", "human")),
+            biological_context=str(self.request.task.get("description", "")),
+            contrast_description=str(upstream_resp.get("summary", "")),
+            write_to=downstream_input_path,
+        )
+        handoffs.append(h_genes)
+        if marker_csv and Path(marker_csv).exists():
+            handoffs.append(
+                self.broker.handoff_csv(
+                    producer=upstream_name,
+                    consumer=downstream_name,
+                    path=marker_csv,
+                )
+            )
+
+        downstream_dir = self.workdir / "artifacts" / f"{downstream_name.lower()}_run"
+        downstream_dir.mkdir(parents=True, exist_ok=True)
+        downstream_req = {
+            "task_id": f"{self.request.case_id}_{downstream_name.lower()}",
+            "capability": "interpret_handoff",
+            "input": (h_genes.artifact.payload or {}) | {
+                "task_description": self.request.task.get("description", ""),
+                "biological_context": self.request.task.get("description", ""),
+            },
+            "output_dir": str(downstream_dir),
+        }
+        downstream_resp = self._run_adapter(downstream_name, downstream_req)
+        (downstream_dir / "response.json").write_text(
+            json.dumps(downstream_resp, indent=2), encoding="utf-8"
+        )
+
+        integration_dir = self.workdir / "artifacts" / "integration"
+        integration_dir.mkdir(parents=True, exist_ok=True)
+        integration = self._integrate(
+            upstream_name, upstream_resp,
+            downstream_name, downstream_resp,
+            out_dir=integration_dir,
+        )
+
+        return {
+            "upstream_name": upstream_name,
+            "downstream_name": downstream_name,
+            "upstream_resp": upstream_resp,
+            "downstream_resp": downstream_resp,
+            "handoffs": handoffs,
+            "integration": integration,
+            "branch_responses": {},
+        }
+
+    def _execute_parallel_then_join(self) -> dict[str, Any]:
+        """Generic N-way fan-out + join + integrator.
+
+        - Every registered repo runs in parallel (each with its own
+          output dir).
+        - The `request.join_agent.name` adapter consumes all branch
+          responses + extra `join_inputs` (e.g. CellMarker file path),
+          and is treated as the conceptual "downstream" for the
+          existing finalize / report pipeline.
+        - The LLM integrator wraps the join output as in CS1.
+
+        Backwards-compatible: if no `join_agent` is declared the join
+        step is skipped and we treat the second registered repo as the
+        downstream for reporting parity.
+        """
+        names = self.registry.names()
+        upstream_name = names[0]
+
+        # ---- run every branch in parallel via a thread pool -------------
+        from concurrent.futures import ThreadPoolExecutor
+
+        branch_dirs: dict[str, Path] = {}
+        branch_requests: dict[str, dict[str, Any]] = {}
+        for name in names:
+            d = self.workdir / "artifacts" / f"{name.lower()}_run"
+            d.mkdir(parents=True, exist_ok=True)
+            branch_dirs[name] = d
+            branch_requests[name] = {
+                "task_id": f"{self.request.case_id}_{name.lower()}",
+                "capability": "run_branch_analysis",
+                "input": {
+                    "task_description": self.request.task.get("description", ""),
+                    "task_meta": self.request.task,
+                    "dataset": self.request.dataset,
+                    "success_targets": self.request.success_targets,
+                    "parameters": self.request.parameters,
+                    "branch_index": names.index(name),
+                    "n_branches": len(names),
+                },
+                "output_dir": str(d),
+            }
+
+        branch_responses: dict[str, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=max(2, len(names))) as pool:
+            futs = {
+                name: pool.submit(self._run_adapter, name, branch_requests[name])
+                for name in names
+            }
+            for name, fut in futs.items():
+                resp = fut.result()
+                branch_responses[name] = resp
+                (branch_dirs[name] / "response.json").write_text(
+                    json.dumps(resp, indent=2), encoding="utf-8"
+                )
+
+        # ---- broker handoffs (one per branch's primary marker output) ---
+        handoffs: list[HandoffResult] = []
+        for name, resp in branch_responses.items():
+            arts = resp.get("artifacts") or {}
+            for key in ("rna_top_markers_json", "atac_top_marker_genes_json", "marker_genes_csv"):
+                p = arts.get(key)
+                if p and Path(p).exists():
+                    kind = "json_path" if str(p).endswith(".json") else "csv_path"
+                    handoffs.append(
+                        self.broker.handoff_file(
+                            producer=name,
+                            consumer=self.request.join_agent.get("name") or "join",
+                            path=p,
+                            kind=kind,
+                        )
+                    )
+
+        # ---- join agent --------------------------------------------------
+        join_name = (self.request.join_agent or {}).get("name") or ""
+        downstream_name = join_name or names[-1]
+        downstream_resp: dict[str, Any]
+        if join_name:
+            join_dir = self.workdir / "artifacts" / f"{join_name.lower()}_run"
+            join_dir.mkdir(parents=True, exist_ok=True)
+            join_req = {
+                "task_id": f"{self.request.case_id}_{join_name.lower()}",
+                "capability": "join_branches",
+                "input": {
+                    "task_description": self.request.task.get("description", ""),
+                    "task_meta": self.request.task,
+                    "dataset": self.request.dataset,
+                    "parameters": self.request.parameters,
+                    "join_inputs": (self.request.join_agent or {}).get("inputs", {}) or {},
+                    "branch_responses": branch_responses,
+                },
+                "output_dir": str(join_dir),
+            }
+            downstream_resp = self._run_adapter(join_name, join_req)
+            (join_dir / "response.json").write_text(
+                json.dumps(downstream_resp, indent=2), encoding="utf-8"
+            )
+        else:
+            downstream_resp = branch_responses[names[-1]]
+
+        # ---- integration: LLM wraps the join (or the last branch) -------
+        integration_dir = self.workdir / "artifacts" / "integration"
+        integration_dir.mkdir(parents=True, exist_ok=True)
+        integration = self._integrate(
+            upstream_name, branch_responses.get(upstream_name, {}),
+            downstream_name, downstream_resp,
+            out_dir=integration_dir,
+        )
+
+        return {
+            "upstream_name": upstream_name,
+            "downstream_name": downstream_name,
+            "upstream_resp": branch_responses.get(upstream_name, {}),
+            "downstream_resp": downstream_resp,
+            "handoffs": handoffs,
+            "integration": integration,
+            "branch_responses": branch_responses,
+        }
 
     # ---- main run --------------------------------------------------------
 
@@ -317,10 +541,11 @@ class RepoCollaborationOrchestrator:
             self.notes.append(f"topology_viz: render failed — {exc}")
             topology_artifacts = {}
 
-        # Pick upstream / downstream agent in declared order.
+        # Topology dispatch. Linear-handoff is the CS1 default; the
+        # parallel-then-join pattern adds CS2 and any future N-way fan-out
+        # collaborations without rewriting the surrounding scaffolding.
         if len(self.registry.names()) < 2:
             self.notes.append("expected ≥2 agents; got fewer")
-            status = "failed"
             return CollaborationResult(
                 case_id=self.request.case_id,
                 workdir=self.workdir,
@@ -329,89 +554,40 @@ class RepoCollaborationOrchestrator:
                 handoffs=[],
                 artifacts={},
                 notes=self.notes,
-                status=status,
+                status="failed",
             )
 
-        upstream_name, downstream_name = self.registry.names()[:2]
+        if self.request.topology == "parallel_then_join":
+            exec_out = self._execute_parallel_then_join()
+        else:
+            exec_out = self._execute_linear_handoff()
 
-        # ---- upstream invocation -----------------------------------------
-        upstream_dir = self.workdir / "artifacts" / f"{upstream_name.lower()}_run"
-        upstream_dir.mkdir(parents=True, exist_ok=True)
-        upstream_req = {
-            "task_id": f"{self.request.case_id}_{upstream_name.lower()}",
-            "capability": "run_primary_analysis",
-            "input": {
-                "task_description": self.request.task.get("description", ""),
-                "task_meta": self.request.task,
-                "dataset": self.request.dataset,
-                "success_targets": self.request.success_targets,
-            },
-            "output_dir": str(upstream_dir),
-        }
-        upstream_resp = self._run_adapter(upstream_name, upstream_req)
-        (upstream_dir / "response.json").write_text(
-            json.dumps(upstream_resp, indent=2), encoding="utf-8"
-        )
-
-        # ---- broker handoff ----------------------------------------------
-        handoffs: list[HandoffResult] = []
-        gene_set = (upstream_resp.get("artifacts") or {}).get("gene_set") or []
-        marker_csv = (upstream_resp.get("artifacts") or {}).get("marker_genes_csv")
-        downstream_input_path = self.workdir / "artifacts" / f"{downstream_name.lower()}_input.json"
-        h_genes = self.broker.handoff_gene_set(
-            producer=upstream_name,
-            consumer=downstream_name,
-            genes=gene_set,
-            organism=str(self.request.task.get("organism", "human")),
-            biological_context=str(self.request.task.get("description", "")),
-            contrast_description=str(upstream_resp.get("summary", "")),
-            write_to=downstream_input_path,
-        )
-        handoffs.append(h_genes)
-        if marker_csv and Path(marker_csv).exists():
-            handoffs.append(
-                self.broker.handoff_csv(
-                    producer=upstream_name,
-                    consumer=downstream_name,
-                    path=marker_csv,
-                )
-            )
-
-        # ---- downstream invocation ---------------------------------------
-        downstream_dir = self.workdir / "artifacts" / f"{downstream_name.lower()}_run"
-        downstream_dir.mkdir(parents=True, exist_ok=True)
-        downstream_req = {
-            "task_id": f"{self.request.case_id}_{downstream_name.lower()}",
-            "capability": "interpret_handoff",
-            "input": (h_genes.artifact.payload or {}) | {
-                "task_description": self.request.task.get("description", ""),
-                "biological_context": self.request.task.get("description", ""),
-            },
-            "output_dir": str(downstream_dir),
-        }
-        downstream_resp = self._run_adapter(downstream_name, downstream_req)
-        (downstream_dir / "response.json").write_text(
-            json.dumps(downstream_resp, indent=2), encoding="utf-8"
-        )
-
-        # ---- integration: bring the responses together via the LLM client
-        integration_dir = self.workdir / "artifacts" / "integration"
-        integration_dir.mkdir(parents=True, exist_ok=True)
-        integration = self._integrate(
-            upstream_name, upstream_resp,
-            downstream_name, downstream_resp,
-            out_dir=integration_dir,
-        )
+        upstream_name = exec_out["upstream_name"]
+        downstream_name = exec_out["downstream_name"]
+        upstream_resp = exec_out["upstream_resp"]
+        downstream_resp = exec_out["downstream_resp"]
+        handoffs = exec_out["handoffs"]
+        integration = exec_out["integration"]
+        branch_responses = exec_out.get("branch_responses", {})
 
         # ---- final manifest ----------------------------------------------
         elapsed = time.monotonic() - t0
+        upstream_response_path = (
+            self.workdir / "artifacts" / f"{upstream_name.lower()}_run" / "response.json"
+        )
+        downstream_response_path = (
+            self.workdir / "artifacts" / f"{downstream_name.lower()}_run" / "response.json"
+        )
+        downstream_input_path = (
+            self.workdir / "artifacts" / f"{downstream_name.lower()}_input.json"
+        )
         artifacts = {
             "compiled_workflow_graph": str(self.workdir / "compiled_workflow_graph.json"),
             "agent_registry": str(self.workdir / "agent_registry.json"),
             "sandbox_report": str(self.workdir / "manifests" / "docker_build_report.json"),
-            "upstream_response": str(upstream_dir / "response.json"),
+            "upstream_response": str(upstream_response_path),
             "downstream_input": str(downstream_input_path),
-            "downstream_response": str(downstream_dir / "response.json"),
+            "downstream_response": str(downstream_response_path),
             "final_hypothesis_report_md": integration.get("final_hypothesis_report_md", ""),
             "final_hypothesis_report_json": integration.get("final_hypothesis_report_json", ""),
         }
@@ -420,20 +596,33 @@ class RepoCollaborationOrchestrator:
             artifacts[f"upstream__{k}"] = str(v)
         for k, v in (downstream_resp.get("artifacts") or {}).items():
             artifacts[f"downstream__{k}"] = str(v)
+        # Per-branch responses (parallel_then_join only) — surface them so
+        # the manifest enumerates every external agent that ran.
+        for branch_name, branch_resp in branch_responses.items():
+            if branch_name in (upstream_name, downstream_name):
+                continue
+            artifacts[f"branch_{branch_name.lower()}_response"] = str(
+                self.workdir / "artifacts" / f"{branch_name.lower()}_run" / "response.json"
+            )
+            for k, v in (branch_resp.get("artifacts") or {}).items():
+                artifacts[f"branch_{branch_name.lower()}__{k}"] = str(v)
 
         # Status decision: any failure → status reflects it.
         any_failed = (
             upstream_resp.get("status") == "failed"
             or downstream_resp.get("status") == "failed"
             or not all(h.ok for h in handoffs)
+            or any((r or {}).get("status") == "failed" for r in branch_responses.values())
         )
         any_partial = (
             upstream_resp.get("status") == "partial"
             or downstream_resp.get("status") == "partial"
+            or any((r or {}).get("status") == "partial" for r in branch_responses.values())
         )
         synthetic = bool(
             upstream_resp.get("synthetic_fallback")
             or downstream_resp.get("synthetic_fallback")
+            or any((r or {}).get("synthetic_fallback") for r in branch_responses.values())
         )
         status = (
             "failed" if any_failed
@@ -517,6 +706,7 @@ class RepoCollaborationOrchestrator:
 
         manifest = {
             "case_id": self.request.case_id,
+            "topology": self.request.topology,
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - elapsed)),
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "elapsed_s": round(elapsed, 2),
@@ -525,14 +715,27 @@ class RepoCollaborationOrchestrator:
             "repos": repos_meta,
             "dataset": self.request.dataset,
             "task": self.request.task,
+            "parameters": self.request.parameters,
+            "join_agent": self.request.join_agent,
             "main_results": integration.get("main_results", {}),
             "handoffs": [h.model_dump(exclude_none=True) for h in handoffs],
+            "branch_responses": {
+                name: {
+                    "status": (r or {}).get("status"),
+                    "summary": (r or {}).get("summary"),
+                    "main_results": (r or {}).get("main_results"),
+                    "synthetic_fallback": (r or {}).get("synthetic_fallback", False),
+                    "warnings": (r or {}).get("warnings", []),
+                    "n_artifacts": len((r or {}).get("artifacts", {}) or {}),
+                }
+                for name, r in branch_responses.items()
+            },
             "notes": self.notes,
             "artifacts": artifacts,
             "sandbox_report": sandbox_report,
             "env_report": env_dump,
             "integrator_meta": integrator_meta,
-            "topology": topology_artifacts,
+            "topology_artifacts": topology_artifacts,
             "structured_outputs": {
                 "collaboration_log": str(collab_log_path) if collab_log_path else None,
                 "final_report": str(final_report_path) if final_report_path else None,
@@ -573,11 +776,16 @@ class RepoCollaborationOrchestrator:
     # ---- compiled graph (deterministic; not LLM-driven) ------------------
 
     def _compile_graph(self) -> dict[str, Any]:
+        if self.request.topology == "parallel_then_join":
+            return self._compile_graph_parallel()
+        return self._compile_graph_linear()
+
+    def _compile_graph_linear(self) -> dict[str, Any]:
         names = list(self.registry.names()) or ["upstream_agent", "downstream_agent"]
         upstream, downstream = (names + names)[:2]
         return {
             "case_id": self.request.case_id,
-            "topology_type": "external_repo_collaboration_l7",
+            "topology_type": "external_repo_collaboration_l7_linear_handoff",
             "nodes": [
                 {"id": "repo_profiler", "kind": "agentcoop_internal",
                  "role": "inspect external repositories"},
@@ -609,6 +817,76 @@ class RepoCollaborationOrchestrator:
             ],
             "gated_repairs": {
                 "broker": ["gene_set_validation_repair"],
+                "integrator": ["evidence_completion_repair"],
+            },
+        }
+
+    def _compile_graph_parallel(self) -> dict[str, Any]:
+        """Parallel-then-join graph: every repo runs in its own branch,
+        the join_agent (if declared) consumes all branch outputs, and
+        the LLM integrator wraps the join result.
+        """
+        names = list(self.registry.names()) or ["agent_a", "agent_b"]
+        join_name = (self.request.join_agent or {}).get("name") or ""
+        join_role = (self.request.join_agent or {}).get("role_hint") or "join + evaluation"
+        nodes: list[dict[str, Any]] = [
+            {"id": "repo_profiler", "kind": "agentcoop_internal",
+             "role": "inspect external repositories"},
+            {"id": "sandbox_builder", "kind": "agentcoop_internal",
+             "role": "render Dockerfile + compose per repo"},
+            {"id": "agent_registry", "kind": "agentcoop_internal",
+             "role": "register AgentCards"},
+            {"id": "data_inspector", "kind": "agentcoop_internal",
+             "role": "schema inspection + barcode/cell-type alignment"},
+        ]
+        for name in names:
+            nodes.append({
+                "id": f"{name}_run", "kind": "sandboxed_external_agent",
+                "agent": name,
+                "role": (self.registry.get(name).role if name in self.registry.cards else ""),
+            })
+        nodes.append({
+            "id": "broker", "kind": "agentcoop_internal",
+            "role": "validate per-branch typed artifacts before join",
+        })
+        if join_name:
+            nodes.append({
+                "id": "join_agent", "kind": "evaluator_gate",
+                "agent": join_name, "role": join_role,
+            })
+        nodes.append({
+            "id": "integrator", "kind": "llm_backed_agent_node",
+            "role": "synthesize per-branch + join evidence into one report",
+        })
+        nodes.append({
+            "id": "reporter", "kind": "agentcoop_internal",
+            "role": "package artifacts + manifest",
+        })
+
+        edges: list[list[str]] = [
+            ["repo_profiler", "sandbox_builder"],
+            ["sandbox_builder", "agent_registry"],
+            ["agent_registry", "data_inspector"],
+        ]
+        for name in names:
+            edges.append(["data_inspector", f"{name}_run"])
+            edges.append([f"{name}_run", "broker"])
+        if join_name:
+            edges.append(["broker", "join_agent"])
+            edges.append(["join_agent", "integrator"])
+        else:
+            edges.append(["broker", "integrator"])
+        edges.append(["integrator", "reporter"])
+
+        return {
+            "case_id": self.request.case_id,
+            "topology_type": "external_repo_collaboration_l7_parallel_then_join",
+            "nodes": nodes,
+            "edges": edges,
+            "gated_repairs": {
+                "data_inspector": ["barcode_alignment_repair", "label_alias_repair"],
+                "broker": ["typed_artifact_validation_repair"],
+                **({"join_agent": ["alias_mapping_repair", "tissue_filter_repair"]} if join_name else {}),
                 "integrator": ["evidence_completion_repair"],
             },
         }

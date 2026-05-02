@@ -546,3 +546,67 @@ rerun CS1 against it.
    were modified — `workflows/`, runtime, gates, schema, prompts,
    python_sandbox, profiler, runner, compiler are untouched, so
    Sessions 4–6 numbers are still reproducible.
+
+---
+
+## Session 7.3 — `parallel_then_join` topology + CS2 (2026-05-02)
+
+### Goal
+Wire the Seurat × Signac × CellMarker SHARE-seq workflow described
+in `case_study_2.md` into the existing external-repo collaboration
+framework — without breaking CS1 / CS3 / benchmarks. The case
+introduces a topology shape (N parallel branches → broker → join
+agent → integrator) that the current single-handoff orchestrator
+didn't natively support.
+
+### Design decisions
+1. **`topology: parallel_then_join` request field, not a separate
+   CLI.** Adding a topology selector to `CollaborationRequest`
+   keeps the public surface (one CLI, one request YAML shape)
+   unchanged. The orchestrator routes between
+   `_execute_linear_handoff` (CS1) and
+   `_execute_parallel_then_join` (CS2). Both go through the same
+   finalize / report / topology-render / structured-output pipeline,
+   so CS1's `final_report.md` / `collaboration_log.md` /
+   `topology.png` shapes work for CS2 with no extra code.
+2. **`join_agent` is just another `register_local_adapter` entry.**
+   It's not a hard-coded CellMarker concept. Any future case study
+   that needs an evaluator after N parallel branches (e.g. comparing
+   embeddings against a benchmark) can use the same slot.
+3. **Python local adapters mirror the R wrappers.** Per
+   `case_study_2.md` the canonical sandbox is a Docker image with R
+   + Seurat / Signac. On hosts without Docker the framework runs a
+   Python adapter that uses scanpy's vectorised Wilcoxon (the exact
+   test Seurat uses) and a hand-rolled BH-FDR (matches R's
+   `p.adjust("BH")`). Statistical equivalence to the R Wilcoxon is
+   well-established; the Signac LR test is approximated by
+   Wilcoxon on log-normalised peak counts and that's surfaced as a
+   warning.
+4. **mm10 gene cache is lazy + cached.** Signac normally needs
+   `EnsDb.Mmusculus.v79`. The Python adapter fetches GENCODE vM25
+   basic GTF (~19 MiB) from EBI on first run, parses it to a tiny
+   gene-coord TSV, and caches both under
+   `agentcoop/wrappers/signac_local/data_cache/`. Subsequent runs
+   skip the download. Falls back to a 12-gene minimal table if
+   GENCODE is unreachable, with a warning.
+5. **EnvManager fix found by the first run.** `_ensure_env()` only
+   iterated `request.repositories` — the join-agent's declared
+   `openpyxl` dep was skipped, so the first end-to-end CS2 run
+   failed in pandas Excel I/O. Fix was a 3-line addition to include
+   `join_agent.name` in the resolved-deps list. Bug + fix are
+   recorded in `progress.md` Session 7.3 errors table.
+
+### Numbers worth remembering
+- Mean precision pattern: `intersection (0.083) > rna (0.051) > atac (0.003)` — the cross-modal-precision claim of the case study holds at the macro level on real Ma 2020 SHARE-seq skin data.
+- `Basal` cell type is the canonical strict-intersection win: precision_intersection=0.333 vs precision_rna=0.04 vs precision_atac=0.02 — keratin markers DES + KRT14 both supported by RNA and ATAC modalities.
+- Recall_union ≈ recall_rna because RNA's per-cell-type marker recall already dominates on this skin panel; ATAC adds little additional gold-marker recall under the GENCODE nearest-gene mapping (a known limitation enumerated in `case_study_2.md` §21).
+
+### Open follow-ups
+- Run the same request with `--docker` once the daemon is up to
+  validate Wilcoxon ↔ Wilcoxon equivalence between the Python and R
+  paths.
+- Add Signac's optional `GeneActivity` sensitivity branch
+  (case_study_2.md §11.2) by registering an additional `Signac` adapter variant and bumping `top_n` lists.
+- Replace the BH-FDR + vectorised Wilcoxon in Python with a true LR
+  test for the Signac branch — would need `statsmodels` and a small
+  nCount_peaks covariate matrix.

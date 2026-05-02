@@ -1,0 +1,123 @@
+# Case Study 2 request — Seurat × Signac SHARE-seq skin multiome
+# collaboration. Loaded by `agentcoop collaborate --request case_study_2.request.yaml`.
+# Same generic CLI as CS1; the topology and join_agent fields select the
+# parallel_then_join pattern added in Session 7.3.
+
+case_id: shareseq_skin_seurat_signac_collaboration
+mode: autonomous_tool_wrapping
+topology: parallel_then_join
+model: gpt-5
+reasoning_effort: medium
+
+repositories:
+  - name: Seurat
+    url: https://github.com/satijalab/seurat
+    role_hint: scRNA-seq marker discovery specialist
+    docs:
+      - https://satijalab.org/seurat/articles/pbmc3k_tutorial
+      - https://satijalab.org/seurat/reference/findmarkers
+  - name: Signac
+    url: https://github.com/stuart-lab/signac
+    role_hint: scATAC-seq marker-gene discovery specialist
+    docs:
+      - https://stuartlab.org/signac/articles/pbmc_multiomic
+      - https://stuartlab.org/signac/articles/mouse_brain_vignette
+      - https://stuartlab.org/signac/reference/geneactivity
+
+join_agent:
+  name: CellMarkerEvaluator
+  role_hint: CellMarker 2.0 reference marker database evaluation specialist
+  inputs:
+    cellmarker_file: data/shareseq_skin/Cell_marker_Mouse.xlsx
+    organism: Mouse
+    tissue_filter_primary: [Skin]
+    tissue_filter_extended: [Skin, Epidermis, Dermis, Hair follicle, Hair]
+
+dataset:
+  name: shareseq_mouse_skin_late_anagen
+  organism: Mus musculus
+  genome: mm10
+  tissue: skin
+  geo_series: GSE140203
+  rna_sample: GSM4156608
+  atac_sample: GSM4156597
+  local_cache_dir: data/shareseq_skin
+  files:
+    rna_counts: GSM4156608_skin.late.anagen.rna.counts.txt.gz
+    atac_counts: GSM4156597_skin.late.anagen.counts.txt.gz
+    atac_peaks: GSM4156597_skin.late.anagen.peaks.bed.gz
+    atac_barcodes: GSM4156597_skin.late.anagen.barcodes.txt.gz
+    celltype_labels: GSM4156597_skin_celltype.txt.gz
+    cellmarker: Cell_marker_Mouse.xlsx
+
+task:
+  title: SHARE-seq mouse skin multiome cross-modal marker collaboration
+  description: >
+    Identify cell-type marker genes for mouse skin from two molecular
+    modalities. Use Seurat on the scRNA-seq count matrix to compute the
+    top-N RNA markers per cell type. Use Signac on the scATAC-seq peak
+    matrix to compute the top-N ATAC marker genes per cell type via
+    differential accessibility followed by peak-to-nearest-gene
+    mapping. For every cell type, compute the intersection and union
+    of the RNA and ATAC marker sets. Evaluate every set against
+    CellMarker 2.0 mouse skin markers, reporting precision (RNA, ATAC,
+    intersection) and recall (RNA, ATAC, union) per cell type plus
+    macro / micro summaries.
+  organism: Mus musculus
+
+parameters:
+  top_n: 50
+  min_cells_per_type: 20
+  remove_cell_types: [Mix, Mixed]
+  rna_marker_method:
+    test_use: wilcoxon
+    only_pos: true
+    min_pct: 0.10
+    logfc_threshold: 0.25
+  atac_marker_method:
+    test_use: wilcoxon
+    only_pos: true
+    min_pct: 0.05
+    peak_to_gene: closest_feature
+    extend_upstream_bp: 2000
+    max_dist_bp: 100000
+
+required_outputs:
+  - compiled_workflow_graph.json
+  - agent_registry.json
+  - manifests/docker_build_report.json
+  - manifests/repo_profile_Seurat.json
+  - manifests/repo_profile_Signac.json
+  - manifests/env_manifest.json
+  - artifacts/seurat_run/seurat_rna_markers_all.csv
+  - artifacts/seurat_run/rna_top_markers_by_celltype.json
+  - artifacts/seurat_run/celltype_distribution.csv
+  - artifacts/signac_run/signac_atac_peak_markers_all.csv
+  - artifacts/signac_run/peak_to_gene_mapping.csv
+  - artifacts/signac_run/signac_atac_marker_genes_all.csv
+  - artifacts/signac_run/atac_top_marker_genes_by_celltype.json
+  - artifacts/cellmarkerevaluator_run/marker_set_operations_by_celltype.json
+  - artifacts/cellmarkerevaluator_run/marker_set_sizes_by_celltype.csv
+  - artifacts/cellmarkerevaluator_run/cellmarker_gold_markers_by_celltype.json
+  - artifacts/cellmarkerevaluator_run/cellmarker_label_mapping.csv
+  - artifacts/cellmarkerevaluator_run/precision_recall_by_celltype.csv
+  - artifacts/cellmarkerevaluator_run/precision_recall_summary.csv
+  - artifacts/cellmarkerevaluator_run/collaboration_gain_table.csv
+  - artifacts/cellmarkerevaluator_run/marker_overlap_heatmap.png
+  - artifacts/cellmarkerevaluator_run/precision_recall_barplot.png
+  - artifacts/integration/final_hypothesis_report.md
+  - run_manifest.json
+  - collaboration_log.md
+  - final_report.md
+  - topology.png
+  - topology.dot
+  - traces/execution_trace.jsonl
+
+success_criteria:
+  docker_sandboxes_built: false  # Docker daemon not running on this host
+  seurat_node_called: true
+  signac_node_called: true
+  cellmarker_evaluation_completed: true
+  top_marker_sets_created_for_minimum_cell_types: 10
+  required_collaboration: true
+  max_replans: 2

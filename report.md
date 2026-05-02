@@ -291,23 +291,60 @@ The legacy synthetic airway / single-repo flow remains at
 the simpler fallback when only a single repo + bulk RNA-seq is
 needed.
 
-### 8.2 Case Study 2 — parallel single-cell perturbation specialists
+### 8.2 Case Study 2 — Seurat × Signac SHARE-seq cross-modal marker collaboration (Session 7.3)
 
-Synthetic Norman-like dataset (50 genes × 12 perturbations, seed 42)
-through 4 simple baselines + 3 GPU-stub models in parallel, then
-ensemble + LLM-driven `BiologicalPatternAnalyzer`:
+Inaugural test of the **`parallel_then_join`** topology added in
+Session 7.3. The framework now lets a user feed N parallel external
+agents + an optional `join_agent` into the existing `agentcoop
+collaborate --request <yaml>` CLI; every preparation step (cloning,
+profiling, Dockerfile rendering, **auto-installing every declared
+PyPI package via the EnvManager**, sandboxing, branch invocation,
+typed handoff, joining, integration, structured reporting) happens
+inside AgentCo-Op without manual intervention.
 
 ```
-synth → 4 baselines + GEARS / scGPT / scFoundation stubs (84 predictions)
-  → MetricEvaluator → 3 ensemble strategies
-  → LLM analyzer → final_report.md
+clone repos
+  → RepoProfile × 2 (Seurat, Signac)
+  → SandboxBuilder writes Dockerfile.* + docker-compose.yml + smoke tests
+  → AgentRegistry (cards built from RepoProfile)
+  → EnvManager (auto-installs e.g. openpyxl on first run)
+  → ParallelBranches:
+      Seurat   local adapter — scanpy Wilcoxon RNA markers (32 231 cells × 23 296 genes)
+      Signac   local adapter — scanpy Wilcoxon ATAC peak markers + mm10 peak→gene mapping (32 231 × 344 592 peaks)
+  → ArtifactBroker validates per-branch top-N marker JSONs
+  → CellMarkerEvaluator join-agent — parses Cell_marker_Mouse.xlsx, builds gold sets, computes P/R/Jaccard + collaboration_gain
+  → Integrator — gpt-5 reasoning, evidence-linked Markdown report
 ```
 
-Artifacts at `runs/case2/synth/` (see its `README.md`). The analyzer
-correctly notes that on this synthetic data foundation models and
-simple baselines tie on `pearson_delta_top20` and that
-`crispr_informed_mean` has the highest `precision@k` despite zero
-correlation. Token usage: 1 776 in / 915 out.
+Result on the **real Ma et al. 2020 SHARE-seq mouse skin late-anagen
+multiome** (`data/shareseq_skin/`):
+
+| Outcome | Value |
+|---|---|
+| Status | **success** (real data; not synthetic_fallback) |
+| Wall time | 648 s (10.8 min) |
+| Cells / cell types | 32 231 / 22 (after dropping `Mix`) |
+| RNA marker rows (Seurat) | 147 057 |
+| ATAC marker peaks → unique gene rows (Signac) | 10 776 → 8 843 |
+| Cell types mapped to CellMarker 2.0 | **19 / 22** |
+| Mean precision (RNA / ATAC / **intersection**) | 0.051 / 0.003 / **0.083** |
+| Mean recall (RNA / ATAC / union) | 0.122 / 0.009 / 0.122 |
+| Strict intersection-precision wins | 1 / 19 (e.g. `Basal`: 0.333 vs RNA 0.04 vs ATAC 0.02) |
+| Total LLM tokens (integrator) | 5 679 (`gpt-5`, `reasoning_effort=medium`) |
+
+The **intersection's mean precision (0.083) is 1.6× the RNA-only
+precision (0.051) and ~25× the ATAC-only precision (0.003)** — the
+cross-modal-precision pattern the case study targets. Honest caveats
+about ATAC-only's low precision (peak → nearest-gene mapping noise),
+the 3 unmapped-to-CellMarker labels, and the Wilcoxon Python
+substitution for Seurat's `wilcox` / Signac's `LR` are documented in
+the integrator report and the per-run README.
+
+Artifacts at `runs/case2/shareseq_skin/` (see its `README.md` for the
+full tree). The legacy synthetic Norman-like CS2 (Session 3) is
+preserved at `runs/case2/synth/` as the simpler GPU-foundation-model
+ablation flow when only single-modality perturbation prediction is
+needed.
 
 ### 8.3 Case Study 3 — AFlow dynamic topology refinement on MBPP (50 tasks)
 

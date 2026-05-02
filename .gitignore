@@ -20,6 +20,8 @@ runs/case*/**
 !runs/case*/**/
 !runs/case*/**/README.md
 !runs/case*/**/summary.json
+# Wrapper data caches are lazy-fetched on first run; keep out of VCS.
+agentcoop/wrappers/*/data_cache/
 data/*
 !data/.gitkeep
 # Keep the dataset manifest for reproducibility even though the raw data is ignored.

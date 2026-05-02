@@ -443,6 +443,91 @@ field in the request YAML.
 
 ---
 
+## Session 7.3 — `parallel_then_join` topology + CS2 (Seurat × Signac × CellMarker) (2026-05-02)
+
+### Objective
+User updated `case_study_2.md` to require AgentCo-Op to take Seurat
++ Signac GitHub URLs + the SHARE-seq mouse skin RNA/ATAC GEO files
+(real, in `data/shareseq_skin/`) + CellMarker 2.0 mouse markers and
+**autonomously sandbox both R tools, register them as agent nodes,
+run them in parallel, and evaluate the cross-modal intersection /
+union of their marker sets** end-to-end. Same hard constraints as
+Sessions 7 / 7.1 / 7.2: internal env config, structured outputs,
+generalisable changes only, minimal blast radius.
+
+### NEW modules (additive)
+- `agentcoop/wrappers/seurat_local/{__init__, manifest, Dockerfile,
+  adapter}` — Python local Seurat-equivalent; scanpy Wilcoxon RNA
+  marker discovery from a comma-id dense TSV.
+- `agentcoop/wrappers/signac_local/{__init__, manifest, Dockerfile,
+  adapter}` — Python local Signac-equivalent; scanpy Wilcoxon DA on
+  MatrixMarket peak counts + lazy-fetched GENCODE vM25 mm10
+  nearest-gene mapping (cached at
+  `agentcoop/wrappers/signac_local/data_cache/`).
+- `agentcoop/wrappers/cellmarker_evaluator_local/{__init__, adapter}`
+  — Python join-agent; parses Cell_marker_Mouse.xlsx, builds gold
+  marker sets, computes per-cell-type set ops + precision / recall +
+  collaboration_gain + heatmap + barplot.
+- `case_study_2.request.yaml` — user-facing inaugural CS2 fixture.
+- `tests/unit/test_parallel_then_join.py` — 5 new unit tests.
+- `runs/case2/shareseq_skin/` — first real-data CS2 run + per-run README.
+
+### Surgical edits (additive only)
+- `agentcoop/core/repo_collaboration.py` — added `topology` (default
+  `linear_handoff`), `join_agent`, `parameters` to
+  `CollaborationRequest`; extracted CS1's body into
+  `_execute_linear_handoff()`; added `_execute_parallel_then_join()`
+  (ThreadPoolExecutor branches + join-agent invocation +
+  integration); added `_compile_graph_parallel()` so the topology
+  PNG renders the parallel branches; `_ensure_env()` now also
+  resolves the join-agent's deps. `run_manifest.json` gained
+  `topology`, `branch_responses`, `parameters`, `join_agent`,
+  `topology_artifacts` blocks.
+- `agentcoop/wrappers/__init__.py` — side-effect imports for the
+  three new wrappers.
+
+### Run summary
+- `agentcoop collaborate --request case_study_2.request.yaml
+  --workdir runs/case2/shareseq_skin --no-docker --model gpt-5
+  --reasoning-effort medium` — completes end-to-end in 10.8 min.
+- 32 231 cells × 22 cell types after filters.
+- Seurat (RNA): 23 296 genes, 147 057 marker rows (Wilcoxon).
+- Signac (ATAC): 344 592 peaks → 10 776 marker peaks → 8 843
+  unique-(celltype, gene) marker rows after mm10 nearest-gene
+  mapping (peak midpoint, ≤ 100 kb, GENCODE vM25 basic, 55 401
+  genes auto-fetched).
+- CellMarker evaluator (skin filter): 19 / 22 cell types mapped;
+  mean P_rna=0.051, P_atac=0.003, **P_intersection=0.083**,
+  R_rna=R_union=0.122, R_atac=0.009.
+- 1 strict intersection-precision win (Basal 0.333 vs 0.04 vs 0.02);
+  cross-modal-precision pattern confirms the central CS2 hypothesis.
+- gpt-5 integrator: 5 679 tokens.
+- EnvManager auto-installed `openpyxl` (state: `installed`); the
+  other 7 declared packages were already present.
+
+User-facing path summary:
+- Raw outputs root: `runs/case2/shareseq_skin/`.
+- Standalone processed report: `runs/case2/shareseq_skin/final_report.md`.
+- Per-stage narrative: `runs/case2/shareseq_skin/collaboration_log.md`.
+- Topology PNG / DOT: `runs/case2/shareseq_skin/topology.{png,dot}`.
+- Mechanism doc updated: `docs/external_agent_collaboration.md`
+  (new "Topology variants" section).
+
+### Errors this session
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| First run failed in CellMarker evaluator: `ImportError: openpyxl` | 1 | `_ensure_env()` only iterated `request.repositories` — missed `join_agent`'s declared deps. Added `join_agent.name` to the EnvManager's input list; re-ran, openpyxl auto-installed and run completed. |
+
+### Regression check
+- `pytest tests/unit -q` — **112 / 112 pass** (107 prior + 5 new).
+- `git diff HEAD` on `workflows/`, runtime, gates, schema, prompts,
+  python_sandbox, profiler, runner, compiler, benchmarks/ shows NO
+  changes — Sessions 4–6 benchmark numbers remain reproducible.
+- CS1 (linear_handoff) path explicitly guarded by
+  `test_orchestrator_linear_handoff_still_runs`.
+
+---
+
 ### Session 7.2 — internalised env config + structured outputs (2026-05-01)
 
 User asks (1) all preparatory work — including environment

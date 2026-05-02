@@ -297,6 +297,73 @@ The framework code (`agentcoop/core/repo_profile.py`, `sandbox_build.py`,
 `agentcoop/cli.py::collaborate`) does not mention TissueAgent or
 GeneAgent — those names appear only inside `agentcoop/wrappers/`.
 
+## Topology variants
+
+The orchestrator supports two topology patterns today (request YAML
+field `topology:`, default `linear_handoff`):
+
+### `linear_handoff` (default; CS1)
+
+```
+repo_profiler → sandbox_builder → agent_registry → env_manager
+   → repos[0] (upstream) → broker → repos[1] (downstream) → integrator → reporter
+```
+
+The two agents are wired sequentially with the broker validating the
+typed handoff between them. Inaugural use: TissueAgent → GeneAgent
+(`runs/case1/heart_merfish/`).
+
+### `parallel_then_join` (Session 7.3; CS2)
+
+```
+repo_profiler → sandbox_builder → agent_registry → env_manager → data_inspector
+                                                                    │
+                       ┌───────────────────────────────────────────┴───────────────────────────────────────────┐
+                       ↓                                                                                       ↓
+                 repos[0] branch                                                                         repos[1] branch
+                       │                                                                                       │
+                       └─────────────→  broker  ←─────────────────────────────────────────────────────────────┘
+                                          │
+                                          ↓
+                         join_agent (e.g. CellMarkerEvaluator)
+                                          │
+                                          ↓
+                                    integrator → reporter
+```
+
+Add `topology: parallel_then_join` and a `join_agent` block to the
+request YAML:
+
+```yaml
+topology: parallel_then_join
+
+repositories:
+  - {name: AgentA, url: ..., role_hint: ...}
+  - {name: AgentB, url: ..., role_hint: ...}
+
+join_agent:
+  name: MyJoinAgent           # must match a `register_local_adapter("MyJoinAgent")`
+  role_hint: ...               # one-line description for the AgentCard
+  inputs:                      # arbitrary JSON-serialisable extras forwarded to the adapter
+    cellmarker_file: data/.../Cell_marker_Mouse.xlsx
+```
+
+The orchestrator runs every repo in parallel via a `ThreadPoolExecutor`,
+then invokes the registered `join_agent` adapter with all branch
+responses + the YAML-declared `inputs`. The join-agent's response is
+treated as the "downstream" for finalize / report parity, so the
+existing `final_report.md`, `collaboration_log.md`, `topology.png`,
+and `run_manifest.json` shapes work unchanged.
+
+If you don't declare a `join_agent`, the parallel-then-join topology
+still runs each branch in parallel but then treats the *last*
+branch's response as the conceptual downstream — useful for
+cross-modal experiments where the two outputs are independently
+useful and the LLM integrator does the comparison.
+
+Inaugural use: Seurat || Signac → CellMarkerEvaluator → integrator
+(`runs/case2/shareseq_skin/`).
+
 ## What's NOT in scope (yet)
 
 - Live image build + smoke test inside the orchestrator runs with

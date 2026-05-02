@@ -1,0 +1,20 @@
+# Container build for the Signac case-study-2 wrapper. Generated to
+# match `case_study_2.md` §8.3. The Python local-Python adapter mirrors
+# the same logic for hosts without a Docker daemon.
+FROM timoast/signac:latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git wget curl ca-certificates build-essential \
+    libcurl4-openssl-dev libssl-dev libxml2-dev \
+    libhdf5-dev libz-dev libbz2-dev liblzma-dev \
+    libpng-dev libjpeg-dev libfreetype6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN R -e "install.packages(c('data.table','Matrix','jsonlite','dplyr','ggplot2','GenomicRanges'), repos='https://cloud.r-project.org')" || true
+RUN R -e "if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org'); BiocManager::install(c('EnsDb.Mmusculus.v79','GenomeInfoDb','org.Mm.eg.db'), ask=FALSE, update=FALSE)" || true
+
+WORKDIR /workspace
+COPY wrappers/signac_local/signac_atac_marker_agent.R /workspace/signac_atac_marker_agent.R
+ENTRYPOINT ["Rscript", "/workspace/signac_atac_marker_agent.R"]
