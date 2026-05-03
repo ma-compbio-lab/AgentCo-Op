@@ -220,6 +220,64 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             warnings.append(f"PR barplot failed: {exc}")
 
+        # ---- PanglaoDB independent evaluation (additive per case_study_2.md
+        # user-prose addendum: "CellMarker 2.0 + PanglaoDB independently
+        # filter for mouse skin markers and report precision/recall
+        # separately rather than aggregated"). Skips silently if no
+        # panglaodb_file is supplied or the file isn't readable.
+        panglaodb_metrics: dict[str, Any] | None = None
+        panglaodb_artifacts: dict[str, str] = {}
+        panglaodb_path = _resolve_panglaodb_file(join_inputs, log)
+        if panglaodb_path is not None:
+            try:
+                pdb_raw = _read_panglaodb_file(panglaodb_path, log)
+                gold_pdb, label_map_pdb = _build_panglaodb_gold_sets(
+                    pdb_raw, organism=organism,
+                    dataset_cell_types=all_cts, aliases=aliases, log=log,
+                )
+                gold_pdb_path = out_dir / "panglaodb_gold_markers_by_celltype.json"
+                gold_pdb_path.write_text(
+                    json.dumps({k: sorted(v) for k, v in gold_pdb.items()}, indent=2),
+                    encoding="utf-8",
+                )
+                pdb_label_csv = out_dir / "panglaodb_label_mapping.csv"
+                pd.DataFrame(label_map_pdb).to_csv(pdb_label_csv, index=False)
+                pdb_rows, pdb_summary, pdb_int_w, pdb_uni_w, pdb_n_mapped = \
+                    _eval_against_gold(rna, atac, gold_pdb, all_cts, db_label="panglaodb")
+                pdb_pr_csv = out_dir / "precision_recall_panglaodb_by_celltype.csv"
+                pd.DataFrame(pdb_rows).to_csv(pdb_pr_csv, index=False)
+                pdb_summary_csv = out_dir / "precision_recall_panglaodb_summary.csv"
+                pd.DataFrame(pdb_summary).to_csv(pdb_summary_csv, index=False)
+                panglaodb_artifacts = {
+                    "panglaodb_gold_markers_by_celltype_json": str(gold_pdb_path),
+                    "panglaodb_label_mapping_csv": str(pdb_label_csv),
+                    "precision_recall_panglaodb_by_celltype_csv": str(pdb_pr_csv),
+                    "precision_recall_panglaodb_summary_csv": str(pdb_summary_csv),
+                }
+                panglaodb_metrics = {
+                    "n_cell_types_mapped": pdb_n_mapped,
+                    "n_intersection_strict_wins": pdb_int_w,
+                    "n_union_strict_wins": pdb_uni_w,
+                    "summary_metrics": pdb_summary,
+                }
+                log.info(f"PanglaoDB eval: mapped={pdb_n_mapped}, "
+                          f"int_wins={pdb_int_w}, uni_wins={pdb_uni_w}")
+            except Exception as exc:
+                warnings.append(f"PanglaoDB evaluation skipped: {type(exc).__name__}: {exc}")
+                log.error(f"PanglaoDB eval failed: {type(exc).__name__}: {exc}")
+
+        pdb_summary_msg = ""
+        if panglaodb_metrics:
+            pm = panglaodb_metrics["summary_metrics"]
+            pdb_summary_msg = (
+                f" | PanglaoDB: {panglaodb_metrics['n_cell_types_mapped']} mapped, "
+                f"int_wins={panglaodb_metrics['n_intersection_strict_wins']}, "
+                f"uni_wins={panglaodb_metrics['n_union_strict_wins']}; "
+                f"means: P_rna={pm[0]['mean']!r}, P_atac={pm[1]['mean']!r}, "
+                f"P_int={pm[2]['mean']!r}, R_rna={pm[3]['mean']!r}, "
+                f"R_atac={pm[4]['mean']!r}, R_union={pm[5]['mean']!r}"
+            )
+
         result = {
             "status": "success",
             "summary": (
@@ -228,6 +286,7 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
                 f"means: P_rna={summary[0]['mean']!r}, P_atac={summary[1]['mean']!r}, "
                 f"P_int={summary[2]['mean']!r}, R_rna={summary[3]['mean']!r}, "
                 f"R_atac={summary[4]['mean']!r}, R_union={summary[5]['mean']!r}."
+                f"{pdb_summary_msg}"
             ),
             "warnings": warnings,
             "artifacts": {
@@ -243,6 +302,7 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
                 "marker_overlap_heatmap_png": fig_paths[0] if fig_paths else "",
                 "precision_recall_barplot_png": fig_paths[1] if len(fig_paths) > 1 else "",
                 "run_log": str(log_path),
+                **panglaodb_artifacts,
             },
             "main_results": {
                 "cellmarker_filter_mode": filter_mode,
@@ -251,6 +311,7 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
                 "n_intersection_strict_wins": n_strict_int,
                 "n_union_strict_wins": n_strict_uni,
                 "summary_metrics": summary,
+                "panglaodb": panglaodb_metrics,
             },
         }
         (out_dir / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -357,6 +418,185 @@ def _resolve_cellmarker_file(join_inputs: dict[str, Any], log: "_Logger") -> Pat
         "Cell_marker_Mouse.xlsx not found; declare it via "
         "join_agent.inputs.cellmarker_file in the request YAML"
     )
+
+
+def _resolve_panglaodb_file(join_inputs: dict[str, Any], log: "_Logger") -> Path | None:
+    """Locate a PanglaoDB markers TSV. Returns None if not declared and
+    no canonical fallback exists — the evaluator silently skips PanglaoDB
+    eval in that case."""
+    p = join_inputs.get("panglaodb_file")
+    if p:
+        path = Path(p).expanduser()
+        if path.is_file():
+            return path
+        log.info(f"  panglaodb_file declared but missing: {p}")
+    candidates = [
+        Path("data/panglaodb/PanglaoDB_markers_27_Mar_2020.tsv"),
+        Path("data/panglaodb/PanglaoDB_markers.tsv"),
+        Path("external/SpatialAgent/data/PanglaoDB_markers_27_Mar_2020.tsv"),
+    ]
+    for c in candidates:
+        if c.is_file():
+            log.info(f"  panglaodb_file fallback: {c}")
+            return c
+    return None
+
+
+def _read_panglaodb_file(path: Path, log: "_Logger") -> pd.DataFrame:
+    """Read PanglaoDB markers TSV. Schema (canonical):
+       species, official gene symbol, cell type, nicknames, ...
+    species is space-separated tokens like "Mm Hs" or "Mm".
+    """
+    if path.suffix == ".gz":
+        df = pd.read_csv(path, sep="\t", compression="gzip")
+    else:
+        df = pd.read_csv(path, sep="\t")
+    log.info(f"  PanglaoDB columns: {list(df.columns)[:14]}")
+    return df
+
+
+def _build_panglaodb_gold_sets(
+    pdb: pd.DataFrame,
+    *,
+    organism: str,
+    dataset_cell_types: list[str],
+    aliases: dict[str, list[str]],
+    log: "_Logger",
+) -> tuple[dict[str, set[str]], list[dict[str, Any]]]:
+    """Build per-dataset-celltype gold marker sets from PanglaoDB.
+
+    PanglaoDB doesn't tag tissue at the cell-type level the way
+    CellMarker does, so we filter by species and let the cell-type
+    alias mapping handle skin scoping (matching dataset labels like
+    `Basal` → `Basal cells`, `Sebocyte` → `Sebocytes`, etc.).
+    """
+    species_col = _find_col(pdb, ["species", "Species"])
+    cell_col    = _find_col(pdb, ["cell type", "cell_type", "celltype", "Cell type"])
+    sym_col     = _find_col(pdb, ["official gene symbol", "Symbol", "gene_symbol", "marker"])
+    if not (species_col and cell_col and sym_col):
+        raise RuntimeError(
+            f"PanglaoDB schema not recognised; columns={list(pdb.columns)[:10]}"
+        )
+
+    # Species in PanglaoDB is space-separated; "Mm" must appear as a token.
+    organism_token = "mm" if organism.lower().startswith("m") else "hs"
+    def _has_species(s: Any) -> bool:
+        if not isinstance(s, str):
+            return False
+        toks = [t.lower() for t in re.split(r"\s+", s.strip()) if t]
+        return organism_token in toks
+
+    df = pdb[pdb[species_col].apply(_has_species)].copy()
+    log.info(f"  PanglaoDB filtered to species={organism}: {len(df)} rows")
+
+    gold_by_pdb: dict[str, set[str]] = {}
+    for _, row in df.iterrows():
+        ct_raw = str(row[cell_col])
+        sym_raw = row[sym_col]
+        if isinstance(sym_raw, str):
+            tokens = re.split(r"[,;|/]+", sym_raw)
+        elif isinstance(sym_raw, (list, tuple)):
+            tokens = [str(s) for s in sym_raw]
+        else:
+            tokens = [str(sym_raw)]
+        norm_ct = _norm_label(ct_raw)
+        bucket = gold_by_pdb.setdefault(norm_ct, set())
+        for t in tokens:
+            sym = _norm_symbol(t)
+            if sym:
+                bucket.add(sym)
+
+    out: dict[str, set[str]] = {}
+    mapping_records: list[dict[str, Any]] = []
+    for ct in dataset_cell_types:
+        merged: set[str] = set()
+        used_aliases: list[str] = []
+        for alias in [ct] + list(aliases.get(ct, [])):
+            norm = _norm_label(alias)
+            if norm in gold_by_pdb:
+                merged |= gold_by_pdb[norm]
+                used_aliases.append(alias)
+                continue
+            for pdb_label, genes in gold_by_pdb.items():
+                if norm and (norm in pdb_label or pdb_label in norm):
+                    merged |= genes
+                    used_aliases.append(alias)
+                    break
+        out[ct] = merged
+        mapping_records.append({
+            "cell_type_dataset": ct,
+            "panglaodb_aliases_used": ";".join(used_aliases) if used_aliases else "",
+            "n_panglaodb_markers": len(merged),
+            "include_in_macro_eval": bool(merged),
+        })
+    return out, mapping_records
+
+
+def _eval_against_gold(
+    rna: dict[str, list[str]],
+    atac: dict[str, list[str]],
+    gold: dict[str, set[str]],
+    all_cts: list[str],
+    *,
+    db_label: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int, int]:
+    """Compute per-cell-type precision/recall + collaboration-gain wins
+    against a gold-set dict. Returns (rows, summary, n_int_wins,
+    n_uni_wins, n_mapped). Used for both CellMarker and PanglaoDB —
+    each evaluation is independent (no aggregation across DBs)."""
+    rows: list[dict[str, Any]] = []
+    n_int_wins = 0
+    n_uni_wins = 0
+    for ct in all_cts:
+        R = set(_norm_symbol(g) for g in rna.get(ct, []) if _norm_symbol(g))
+        A = set(_norm_symbol(g) for g in atac.get(ct, []) if _norm_symbol(g))
+        I = R & A
+        U = R | A
+        G = set(gold.get(ct, []))
+        row: dict[str, Any] = {
+            "cell_type": ct,
+            f"mapped_to_{db_label}": ct in gold and len(G) > 0,
+            "n_gold": len(G),
+            "n_rna": len(R), "n_atac": len(A),
+            "n_intersection": len(I), "n_union": len(U),
+        }
+        if G:
+            row.update({
+                "precision_rna": _precision(R, G),
+                "precision_atac": _precision(A, G),
+                "precision_intersection": _precision(I, G),
+                "recall_rna": _recall(R, G),
+                "recall_atac": _recall(A, G),
+                "recall_union": _recall(U, G),
+                "hits_rna": len(R & G), "hits_atac": len(A & G),
+                "hits_intersection": len(I & G), "hits_union": len(U & G),
+            })
+            int_w = _strict_win(row.get("precision_intersection"),
+                                row.get("precision_rna"), row.get("precision_atac"))
+            uni_w = _strict_win(row.get("recall_union"),
+                                row.get("recall_rna"), row.get("recall_atac"))
+            if int_w:
+                n_int_wins += 1
+            if uni_w:
+                n_uni_wins += 1
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    metric_cols = [
+        "precision_rna", "precision_atac", "precision_intersection",
+        "recall_rna", "recall_atac", "recall_union",
+    ]
+    mapped = df[df[f"mapped_to_{db_label}"] == True].copy()
+    summary: list[dict[str, Any]] = []
+    for metric in metric_cols:
+        vals = pd.to_numeric(mapped[metric], errors="coerce").dropna()
+        summary.append({
+            "metric": metric, "db": db_label,
+            "mean": float(vals.mean()) if len(vals) else None,
+            "median": float(vals.median()) if len(vals) else None,
+            "std": float(vals.std()) if len(vals) else None,
+            "n_cell_types": int(vals.shape[0]),
+        })
+    return rows, summary, n_int_wins, n_uni_wins, int(len(mapped))
 
 
 def _read_cellmarker_file(path: Path, log: "_Logger") -> pd.DataFrame:

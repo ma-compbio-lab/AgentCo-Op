@@ -638,3 +638,78 @@ Tests after the additions: **144 / 144 pass** (was 112). No edits to
 runtime, gates, schema, prompts, python_sandbox, profiler, runner,
 compiler, or `workflows/*.json` — Sessions 4–7 numbers remain
 reproducible.
+
+---
+
+## Session 9 — Docker-mode CS1/CS2 with R Seurat + R Signac + dual-DB eval (2026-05-03)
+
+### Objective
+
+User installed colima locally and asked to re-run CS1 and CS2 inside Docker
+sandboxes (the prior runs had `no_docker: true`). For CS2: independent
+PanglaoDB precision/recall alongside CellMarker 2.0; real R Seurat / R Signac
+backends; end-to-end single-command reproduction.
+
+### Path B — CS1 + CS2 in the generic Python sandbox image
+
+| Run dir | Wall | Status | Numbers |
+|---|---:|---|---|
+| `runs/case1/heart_merfish_docker_b/` | 2:46 | success | identical to baseline (53 markers, 6/6 expected gene overlap) |
+| `runs/case2/shareseq_skin_docker_b/` | 31:06 | success | 32 231 cells × 23 296 genes, 22 cell types, 147 057 RNA marker rows, 8 843 ATAC gene marker rows. PanglaoDB: int_wins=4, uni_wins=4. CellMarker: int_wins=1, uni_wins=0. |
+
+### Path C — CS2 with real R Seurat + R Signac
+
+| Run dir | Wall | Status | Numbers |
+|---|---:|---|---|
+| `runs/case2/shareseq_skin_docker_c/` | 58:00 | success | Seurat (R) 15 396 marker rows, Signac (R, peak-to-gene) 35 487 marker rows; CellMarker int_wins=2 / uni_wins=3; PanglaoDB int_wins=2 / uni_wins=7 |
+
+### Path-C iteration log (16 attempts before success)
+
+| # | Failure point | Fix |
+|---:|---|---|
+| 1 | Container worked but adapters fell back to synthetic data (relative-path resolved against workdir, not repo root) | `-w` repo_root |
+| 2 | Build-tag mixed-case rejected by Docker | lowercase tag |
+| 3 | `R.utils` missing for `data.table::fread` of .gz | added to leaf layer |
+| 4 | Seurat OOM at 10 GB colima | bumped to 12 GB |
+| 5 | dense-TSV `fread` 24 GB transient | `scripts/dense_tsv_to_mtx.py` + `Seurat::ReadMtx` |
+| 6 | ATAC `.txt.gz` was already MatrixMarket — my converter mangled it | special-case: copy + features from peaks.bed + barcodes from barcodes.txt.gz |
+| 7 | Signac picked `atac.bc` (zero overlap with MTX cols which use rna.bc-style barcodes) | overlap-based column selection |
+| 8 | R `else` on new line | brace-wrapped |
+| 9 | `biovizBase` Bioconductor pkg missing | added to leaf layer |
+| 10 | Fragments-vs-MTX barcode mismatch (P1.0X vs P1.5X) | `cells = setNames()` mapping via celltype.txt |
+| 11 | data.table `[, atac_col]` literal-column gotcha | `[[col]]` indexing |
+| 12 | `Signac::GeneActivity` OOM at 14 GB colima ("extracting reads overlapping genomic regions") | doc-defined fallback to peak-to-gene as `signac_method=peak_to_gene` (case_study_2.md §11 primary) |
+| 13 | Orchestrator 30 min timeout hit | bumped to 7 200 s + env override |
+| 14 | `FindAllMarkers` on 344 k peaks single-thread > 2 h | `FindTopFeatures(min.cutoff="q75")` → 86 k variable peaks |
+| 15 | Still slow on 32 k cells × 86 k peaks | added `presto` to image |
+| 16 | Stratified 4 k-cell subsample + presto → marker discovery completes; downstream dplyr `filter` ambiguity | use `dplyr::filter(...)` explicitly |
+| **17** | — | **success: 22 cell types, dual-DB eval, end-to-end manifest** |
+
+### Files added (Session 9)
+
+| Path | Purpose |
+|---|---|
+| `agentcoop/wrappers/__main__.py` | Generic Docker entrypoint — `python -m agentcoop.wrappers <agent> <invoke.json>` |
+| `agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R` | Real R Seurat wrapper (sparse MTX path + dense TSV fallback) |
+| `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R` | Real R Signac wrapper (cells-mapping + variable-peak filter + stratified subsample) |
+| `docker/agentcoop-runtime.Dockerfile` | Generic Python sandbox |
+| `docker/agentcoop-r-runtime.Dockerfile` | rocker/r-ver 4.3.3 + Bioc 3.18 + Seurat 5.0.3 + Signac 1.13.0 + presto |
+| `docker/agentcoop-r-dispatch.sh` | R-image entrypoint dispatcher |
+| `scripts/dense_tsv_to_mtx.py` | Streaming dense-TSV → 10X-style MTX trio |
+| `scripts/cs2_setup.sh` | Idempotent end-to-end setup (downloads, MTX trios, fragments bgzip+tabix, image builds) |
+| `runs/case1/heart_merfish_docker_b/README.md` | Path-B CS1 writeup |
+| `runs/case2/shareseq_skin_docker_b/README.md` | Path-B CS2 writeup (with PanglaoDB block) |
+| `runs/case2/shareseq_skin_docker_c/README.md` | Path-C CS2 writeup (R Seurat + R Signac, dual-DB) |
+
+### Files modified (surgical, additive)
+
+| Path | Change |
+|---|---|
+| `agentcoop/core/repo_collaboration.py` | Drop `dry_run=True` hardcode; build runtime image; rewrite `_run_adapter_in_docker` to `docker run --rm` per call; honour `runtime_image` override + `AGENTCOOP_BRANCH_CONCURRENCY` + `AGENTCOOP_DOCKER_RUN_TIMEOUT_S` env vars |
+| `agentcoop/core/sandbox_build.py` | Lowercase tags so per-repo image build doesn't reject mixed-case repo names |
+| `agentcoop/wrappers/cellmarker_evaluator_local/adapter.py` | Add PanglaoDB block (4 new artifacts) — fully additive, doesn't touch CellMarker code path |
+| `case_study_2.request.yaml` | Per-repo `sandbox_overrides.runtime_image: agentcoop-r-runtime:case-study` for Seurat/Signac; new `panglaodb_file` join input; `signac_method: peak_to_gene` + `peak_marker_max_cells: 4000` (defaults are also fine) |
+
+### Tests after Session 9
+
+`pytest tests/` → **144 / 144 pass** (was 144 before; no regressions).

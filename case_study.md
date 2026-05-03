@@ -8,6 +8,21 @@ This document reformulates the specialized experiments into three case studies:
 
 The case studies are designed to demonstrate capabilities that are hard to see in standard QA, math, and code benchmarks: typed artifact exchange, sandboxed bioinformatics tools, GPU-model orchestration, specialist disagreement handling, and local graph mutation.
 
+### Session-9 Docker-mode rerun snapshot (2026-05-03)
+
+Both CS1 and CS2 now have Docker-mode runs alongside the original `--no-docker` baselines:
+
+| Case study | Run dir | Backend | Status | Wall |
+|---|---|---|---|---:|
+| CS1 (heart MERFISH × GeneAgent) | `runs/case1/heart_merfish/` | local Python (Session 7.1 baseline) | success | 1:38 |
+| CS1 | `runs/case1/heart_merfish_docker_b/` | Python sandbox in Docker | success | 2:46 |
+| CS2 (SHARE-seq Seurat × Signac × CellMarker) | `runs/case2/shareseq_skin/` | local Python (Session 7.3 baseline) | success | 10:48 |
+| CS2 | `runs/case2/shareseq_skin_docker_b/` | Python sandbox in Docker + new PanglaoDB block | success | 31:06 |
+| CS2 | `runs/case2/shareseq_skin_docker_c/` | **R/Seurat 5.0.3 + R/Signac 1.13.0** in rocker/Bioconductor sandbox + dual-DB eval | success | 58:00 |
+
+Reproduction is single-command after one-time host setup — see
+`case_study_1.md` end matter for CS1 and `case_study_2.md` §25 for CS2.
+
 ## 1. Literature basis and design principles
 
 ### 1.1 Why upstream/downstream biological workflows are useful

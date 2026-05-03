@@ -875,3 +875,68 @@ After the additions: **144 / 144 unit tests pass** (was 112). No edits
 to runtime, gates, schema, prompts, python_sandbox, profiler, runner,
 compiler, or `workflows/*.json` — Sessions 4–7 numbers remain
 reproducible.
+
+---
+
+## Session 9 — Docker-mode CS1/CS2 with R Seurat + R Signac + dual-DB eval (2026-05-03)
+
+### Goal
+
+Re-run CS1 and CS2 inside Docker (the prior runs had `no_docker: true`)
+after the user installed colima, and add independent PanglaoDB
+precision/recall to the CellMarker evaluator. Strictly minimal /
+generalised code changes.
+
+### Code changes (all additive or guarded by a YAML knob defaulting to
+prior behaviour)
+
+#### `agentcoop/core/repo_collaboration.py`
+
+| Edit | Why |
+|---|---|
+| Drop `dry_run=True` hardcode in `_build_sandboxes()` → `dry_run=self.no_docker` | Without this, even `--docker` ran in dry-run mode and per-repo Dockerfiles never built. |
+| New `_build_runtime_image()` — builds (or reuses cached) `agentcoop-runtime:case-study` once per orchestrator run | The default Python sandbox for any repo that doesn't override `runtime_image`. |
+| Rewrite `_run_adapter_in_docker()` — `docker run --rm` per call with workdir bind-mounted at the same absolute path inside the container; honours per-spec `runtime_image` overrides + env var `AGENTCOOP_DOCKER_RUN_TIMEOUT_S` (default 7 200 s) | The old code did `docker exec` on a non-existent container. |
+| New env var `AGENTCOOP_BRANCH_CONCURRENCY` in `_execute_parallel_then_join()` (default = `max(2, n_branches)`) | Lets memory-constrained hosts serialise R-heavy branches without code change. |
+| New helper `_runtime_image_for(spec)` | Reads `spec.model_extra["runtime_image"]` so `case_study_2.request.yaml` can route Seurat/Signac to the R image while keeping CellMarkerEvaluator on the Python image. |
+
+#### `agentcoop/core/sandbox_build.py`
+
+| Edit | Why |
+|---|---|
+| Lowercase image tags in the per-repo build path | Docker rejects mixed-case tags like `agentcoop-TissueAgent:case-study`; without normalisation the per-repo build silently failed. |
+
+#### `agentcoop/wrappers/cellmarker_evaluator_local/adapter.py`
+
+Additive PanglaoDB block — does NOT modify the CellMarker code path:
+
+- `_resolve_panglaodb_file(join_inputs, log)` — declared file or fallback to `external/SpatialAgent/data/PanglaoDB_markers_27_Mar_2020.tsv`.
+- `_read_panglaodb_file(path, log)` — handles the canonical 14-column TSV.
+- `_build_panglaodb_gold_sets(pdb, ..., aliases, log)` — species-token-aware (PanglaoDB `species` column has values like `"Mm Hs"`); reuses the same per-dataset-celltype alias mapping the CellMarker block uses.
+- `_eval_against_gold(rna, atac, gold, all_cts, db_label)` — DRY helper for the per-DB precision/recall + collaboration-gain win counts.
+- `invoke_cellmarker_evaluator_local()` — appends a PanglaoDB block after the existing CellMarker block, writes 4 new artifacts (`panglaodb_gold_markers_by_celltype.json`, `panglaodb_label_mapping.csv`, `precision_recall_panglaodb_by_celltype.csv`, `precision_recall_panglaodb_summary.csv`), and surfaces PanglaoDB metrics in `result.summary` and `result.main_results.panglaodb`.
+
+#### New files
+
+| File | Purpose |
+|---|---|
+| `agentcoop/wrappers/__main__.py` | Generic Docker entrypoint. `python -m agentcoop.wrappers <agent_name> <invoke.json>` reads the request, dispatches to the registered adapter, writes `<stem>.response.json`, and echoes the response to stdout. Used by every Python adapter inside the runtime image. |
+| `agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R` | Real R wrapper. Reads sparse 10X-style MTX trio if present (`<cache>/rna_mtx/`); falls back to `data.table::fread` on the dense GEO TSV otherwise. `Seurat::FindAllMarkers` with `presto` acceleration. Writes the same artifact filenames the Python adapter writes so downstream nodes don't care which backend produced them. |
+| `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R` | Real R wrapper. Same MTX-first pattern. Picks the celltype-table column with maximum overlap against MTX cell IDs. Builds the named-cells vector that `CreateFragmentObject` needs (handles SHARE-seq's rna.bc-vs-atac.bc quirk). Two methods: `peak_to_gene` (default) or `gene_activity` (opt-in, requires colima ≥ 22 GB). Stratified subsample `peak_marker_max_cells` (default 4 000) keeps `FindAllMarkers` tractable. |
+| `docker/agentcoop-runtime.Dockerfile` | Generic Python sandbox. python:3.11-slim + agentcoop pkg + scientific stack (numpy, pandas, scipy, matplotlib, anndata, scanpy, statsmodels, openpyxl, seaborn). `ENTRYPOINT ["python", "-m", "agentcoop.wrappers"]`. |
+| `docker/agentcoop-r-runtime.Dockerfile` | rocker/r-ver:4.3.3 base + Bioconductor 3.18 (GenomicRanges, IRanges, GenomeInfoDb, Rsamtools, EnsDb.Mmusculus.v79, org.Mm.eg.db, biovizBase) + Seurat 5.0.3 + Signac 1.13.0 + presto + R.utils + tidyr. `ENTRYPOINT ["/usr/local/bin/agentcoop-r-dispatch"]` so the orchestrator's invocation contract is identical to the Python image. Build cost: 30–60 min on aarch64 first time, ~3 min for incremental leaf-layer changes. |
+| `docker/agentcoop-r-dispatch.sh` | Shell dispatcher: takes `<agent> <invoke.json>`, routes `Seurat`/`Signac` to the correct Rscript. Allows the universal `<agent_name> <invoke.json>` orchestrator contract to work with R-based agents. |
+| `scripts/dense_tsv_to_mtx.py` | Streaming dense-TSV → 10X-style sparse MTX trio. Used once during `cs2_setup.sh`. Critical because `data.table::fread` on the dense gzipped 32 k-cell × 23 k-gene matrix transiently allocates ~24 GB and blows the colima memory ceiling. |
+| `scripts/cs2_setup.sh` | Idempotent end-to-end setup. Downloads GEO files, downloads PanglaoDB (with `external/SpatialAgent/` fallback), builds the RNA MTX trio via the converter, assembles the ATAC MTX trio (the GEO `.txt.gz` is already MatrixMarket — we just rename + supply features.tsv.gz from peaks.bed.gz and barcodes.tsv.gz from barcodes.txt.gz), sorts + bgzips + tabix-indexes the 5 GB fragments BED with comma → dot barcode normalisation, builds both Docker images (skips on cache hit). |
+
+### Run-dir manifests
+
+| Run dir | Topology | Status | Notes |
+|---|---|---|---|
+| `runs/case1/heart_merfish_docker_b/` | linear_handoff | success | TissueAgent → broker → GeneAgent → integrator. Identical biology to `runs/case1/heart_merfish/`. |
+| `runs/case2/shareseq_skin_docker_b/` | parallel_then_join | success | Seurat ‖ Signac → CellMarkerEvaluator → integrator. Adds PanglaoDB block (4 new artifacts). Same biology as Session-7.3. |
+| `runs/case2/shareseq_skin_docker_c/` | parallel_then_join | success | Same topology, but Seurat & Signac route to the R image via `sandbox_overrides.runtime_image`. Real R Seurat 5.0.3 / R Signac 1.13.0 with `signac_method: peak_to_gene` and stratified subsample. |
+
+### Tests
+
+`pytest tests/` → **144 / 144 pass** (was 144 before; no regressions). The orchestrator changes are exercised by `tests/unit/test_repo_collaboration.py` and `tests/unit/test_parallel_then_join.py` which still pass.

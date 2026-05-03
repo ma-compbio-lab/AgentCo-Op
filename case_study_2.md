@@ -1983,3 +1983,119 @@ A concise paper-style description could be:
 - CellMarker 2.0 paper: Hu et al., *CellMarker 2.0: an updated database of manually curated cell markers in human/mouse and web tools based on scRNA-seq data*, Nucleic Acids Research, 2023.
 - CellMarker 2.0 download page: `http://www.bio-bigdata.center/CellMarker_download.html`
 - CellMarker mirror: `https://xteam.xbio.top/CellMarker/download.jsp`
+
+---
+
+## 25. End-to-end reproduction (Session 9)
+
+This case study is reproducible from a fresh clone of `clean-dev` with the
+following sequence. The runs land at:
+
+- **Path B** — Python sandbox image, fastest:
+  `runs/case2/shareseq_skin_docker_b/`
+- **Path C** — real R Seurat + R Signac in rocker/Bioconductor image:
+  `runs/case2/shareseq_skin_docker_c/`
+
+### 25.1 One-time host setup
+
+```bash
+brew install colima docker docker-compose docker-buildx htslib coreutils
+colima start --runtime docker --cpu 6 --memory 14 --disk 120
+docker context use colima
+```
+
+(A 12 GB colima is enough for Path B; **Path C needs 14 GB** because
+`Signac::FindAllMarkers` peaks at ~ 8 GB resident on the SHARE-seq dataset.
+`Signac::GeneActivity` needs ≥ 22 GB and is opt-in — see §25.5.)
+
+Drop the OpenAI key the integrator step uses:
+
+```bash
+mkdir -p .secrets && echo "OPENAI_API_KEY=sk-..." > .secrets/api-key
+```
+
+### 25.2 One-time data + image setup (`scripts/cs2_setup.sh`)
+
+```bash
+bash scripts/cs2_setup.sh
+```
+
+The script is **idempotent** — re-runs skip every step whose outputs already
+exist. It will:
+
+1. download the 5 GEO files (`GSM4156608_*.rna.counts.txt.gz`,
+   `GSM4156597_*.counts.txt.gz`, `peaks.bed.gz`, `barcodes.txt.gz`,
+   `celltype.txt.gz`) plus the optional 5 GB
+   `GSM4156597_*.atac.fragments.bed.gz`;
+2. fetch PanglaoDB markers (with `external/SpatialAgent/data/`
+   fallback if the live URL 403s);
+3. convert the dense gzipped RNA TSV into a 10X-style sparse MTX trio
+   (`scripts/dense_tsv_to_mtx.py`) — without this step `Seurat` blows up
+   R's heap by ~24 GB transient on the 32 k-cell matrix;
+4. assemble the ATAC MTX trio from the GEO sparse counts (the
+   `.txt.gz` is already MatrixMarket — we rename it to `matrix.mtx.gz`
+   and supply `features.tsv.gz` from `peaks.bed.gz` and
+   `barcodes.tsv.gz` from `barcodes.txt.gz`);
+5. sort + bgzip + tabix-index the fragments BED with the comma → dot
+   barcode normalisation Signac expects (~ 22 min on aarch64 with
+   GNU `gsort --parallel=8`);
+6. build the two Docker images (`agentcoop-runtime:case-study` ≈ 2 min,
+   `agentcoop-r-runtime:case-study` ≈ 50 min on first build, seconds on
+   incremental rebuilds via leaf-layer caching).
+
+### 25.3 Path B — fastest end-to-end run (Python sandbox)
+
+```bash
+set -a; source .secrets/api-key; set +a
+python -m agentcoop.cli collaborate \
+    --request case_study_2.request.yaml \
+    --workdir runs/case2/shareseq_skin_docker_b \
+    --docker
+```
+
+Wall time: ~ 31 min (parallel Seurat + Signac Python adapters in two
+containers). Outputs include `precision_recall_panglaodb_*.csv` alongside
+the original `precision_recall_*.csv` files.
+
+### 25.4 Path C — real R Seurat + R Signac (default end-to-end)
+
+The shipped `case_study_2.request.yaml` already routes Seurat/Signac through
+`agentcoop-r-runtime:case-study` via `sandbox_overrides.runtime_image`. Just
+launch with branch concurrency = 1 (so both R containers fit on a 14 GB
+colima):
+
+```bash
+set -a; source .secrets/api-key; set +a
+export AGENTCOOP_BRANCH_CONCURRENCY=1
+python -m agentcoop.cli collaborate \
+    --request case_study_2.request.yaml \
+    --workdir runs/case2/shareseq_skin_docker_c \
+    --docker
+```
+
+Wall time: ~ 55–60 min (Seurat 14 min + Signac 41 min + integrator 1.5 min).
+
+### 25.5 Optional sensitivity analysis — `Signac::GeneActivity`
+
+`case_study_2.md` §11 declares peak-to-gene as the **primary** ATAC
+marker-gene method, with `Signac::GeneActivity` (§11.2) as an optional
+sensitivity analysis. The `signac_method` knob in
+`case_study_2.request.yaml`'s `parameters.atac_marker_method` block selects
+between them. To run GeneActivity-primary you need:
+
+- colima ≥ 22 GB memory (the "extracting reads overlapping genomic regions"
+  step OOMs at 14 GB on this dataset)
+- the fragments file at `data/shareseq_skin/GSM4156597_*.atac.fragments.tsv.bgz`
+  with a tabix index next to it (the setup script produces both)
+
+Then change one line in the YAML:
+
+```yaml
+parameters:
+  atac_marker_method:
+    signac_method: gene_activity   # was: peak_to_gene
+```
+
+and re-run the Path C command. Path C produces the same artifact filenames
+in either mode, so downstream nodes (CellMarkerEvaluator + integrator)
+don't change.

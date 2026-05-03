@@ -360,7 +360,9 @@ class SandboxBuilder:
                 notes=notes,
             )
         # Real build path (only reached when Docker is up + dry_run=False).
-        tag = f"{self.project_name}-{spec.name}:case-study"
+        # Docker tags must be lowercase — repo names like `TissueAgent`
+        # need normalising before being used as a tag component.
+        tag = f"{self.project_name}-{spec.name.lower()}:case-study"
         try:
             subprocess.run(
                 ["docker", "build", "-f", str(df_path), "-t", tag, str(self.out_dir.parent)],

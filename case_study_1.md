@@ -1593,3 +1593,36 @@ This design is based on the following source facts:
 - Farah et al. Dryad dataset: `https://datadryad.org/dataset/doi:10.5061/dryad.w0vt4b8vp`
 - UCSC Cell Browser entry: `https://cells.ucsc.edu/?ds=hoc`
 - TissueAgent manuscript uploaded in this project: `TissueAgent_manuscript.pdf`
+
+---
+
+## End-to-end reproduction (Session 9, 2026-05-03)
+
+CS1 reproduces with a single command after one-time host setup. Lands at
+`runs/case1/heart_merfish_docker_b/` (Path B uses the generic Python
+sandbox image — there is no Path C for CS1 because TissueAgent and
+GeneAgent are Python tools, not R).
+
+```bash
+# One-time host setup
+brew install colima docker docker-compose docker-buildx
+colima start --runtime docker --cpu 6 --memory 14 --disk 120
+docker context use colima
+mkdir -p .secrets && echo "OPENAI_API_KEY=sk-..." > .secrets/api-key
+
+# Build the generic Python runtime image (~2 min)
+docker build -f docker/agentcoop-runtime.Dockerfile -t agentcoop-runtime:case-study .
+
+# Run
+set -a; source .secrets/api-key; set +a
+python -m agentcoop.cli collaborate \
+    --request case_study_1.request.yaml \
+    --workdir runs/case1/heart_merfish_docker_b \
+    --docker
+```
+
+Wall time ≈ 2:46. Status: `success` with biology identical to the prior
+no-docker baseline (53 markers, 6/6 expected gene overlap on aFibro
+AVN/AV-ring vs Left + Right Atria). See
+`runs/case1/heart_merfish_docker_b/README.md` for the full numbers and
+provenance.

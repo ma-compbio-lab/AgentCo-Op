@@ -515,7 +515,88 @@ dataset's biggest negative contributor.
 Full data: `runs/ablations/{ablation_results,component_effects,cost_latency,gate_rescue}.csv`,
 `runs/ablations/summary.json`, narrative in `runs/ablations/README.md`.
 
-## 10. Key takeaways
+## 10. Docker-mode CS1 / CS2 with R Seurat + R Signac (Session 9)
+
+After installing colima locally the user asked to re-run CS1 and CS2 in
+Docker (the prior runs had `no_docker: true` because the Python orchestrator
+silently fell back to in-process Python). This session:
+
+1. Made the Docker code path actually exercise `docker build` + `docker run`
+   end-to-end. The change is generic (works for any external repo) and
+   surgical — guarded by a per-spec `runtime_image` override and the
+   `AGENTCOOP_BRANCH_CONCURRENCY` / `AGENTCOOP_DOCKER_RUN_TIMEOUT_S` env
+   vars; defaults preserve the old behaviour.
+2. Added independent **PanglaoDB** precision / recall to the CellMarker
+   evaluator. Fully additive — the original CellMarker block is untouched
+   and produces the same outputs as in Session 7.3.
+3. Wrote real R wrappers for `Seurat::FindAllMarkers` and `Signac` peak-
+   to-gene marker discovery and packaged them in an
+   `agentcoop-r-runtime:case-study` image (rocker/r-ver:4.3.3 + Bioc 3.18 +
+   Seurat 5.0.3 + Signac 1.13.0 + presto + R.utils + biovizBase).
+
+### 10.1 Run dirs
+
+| Case | Dir | Backend | Status | Wall |
+|---|---|---|---|---:|
+| CS1 | `runs/case1/heart_merfish_docker_b/` | Python sandbox | success | 2:46 |
+| CS2 | `runs/case2/shareseq_skin_docker_b/` | Python sandbox + PanglaoDB block | success | 31:06 |
+| CS2 | `runs/case2/shareseq_skin_docker_c/` | **R/Seurat + R/Signac** + dual-DB | success | 58:00 |
+
+CS1 numbers are identical to the Session-7.1 baseline (53 markers, 6/6
+expected gene overlap on aFibro AVN/AV-ring vs Left + Right Atria) — the
+container is just an isolation boundary; biology is unchanged.
+
+### 10.2 CS2 dual-DB cross-modal collaboration metrics
+
+| Backend | DB | n mapped | int_wins | uni_wins | mean P_rna | mean P_int |
+|---|---|---:|---:|---:|---:|---:|
+| Python (Path B) | CellMarker | 19 | 1 | 0 | 0.0505 | 0.0833 |
+| Python (Path B) | PanglaoDB  | 15 | **4** | **4** | 0.1120 | **0.3900** |
+| **R / Seurat 5 + Signac 1.13** (Path C) | CellMarker | 19 | **2** | **3** | 0.0674 | 0.0893 |
+| **R / Seurat 5 + Signac 1.13** (Path C) | PanglaoDB  | 15 | 2 | **7** | 0.1253 | 0.1637 |
+
+Two takeaways:
+
+- **PanglaoDB and CellMarker give complementary signals.** PanglaoDB has
+  denser per-cell-type catalogs → more union (recall) wins on both
+  backends. CellMarker keeps tighter precision because its `Skin`-tagged
+  entries are biology-curated to skin specifically.
+- **Switching from Python proxies to real R Seurat / R Signac changes
+  intermediates substantially** (15 396 vs 147 057 RNA marker rows because
+  Seurat applies its `min.pct` + `logfc.threshold` filters; 35 487 vs 8 843
+  ATAC marker rows after Signac's variable-peak prefilter and stratified
+  subsample) but the cross-modal collaboration story holds on both paths.
+
+### 10.3 Honest caveats for Path C
+
+- `Signac::GeneActivity` was the user's preferred primary ATAC method but
+  hits a hard memory wall on a 16 GB Mac (> 14 GB RAM at the
+  "extracting reads overlapping genomic regions" step). The wrapper
+  defaults to `signac_method: peak_to_gene` (which `case_study_2.md` §11
+  also names as the primary) and exposes GeneActivity as opt-in for hosts
+  with colima ≥ 22 GB.
+- ATAC marker discovery uses a stratified 4 000-cell subsample
+  (`peak_marker_max_cells`, default 4 000, knob in the request YAML) so
+  `FindAllMarkers` on 86 k variable peaks × 22 cell types finishes in
+  ~ 35 min instead of the > 2 hr it would take on the full 32 k cells
+  even with presto. Every cell type is preserved (~180 cells / type).
+- `dense TSV → sparse MTX` preprocessing (`scripts/dense_tsv_to_mtx.py`)
+  is mandatory because `data.table::fread` on the dense GEO TSV transiently
+  allocates ~24 GB on this dataset.
+
+### 10.4 Reproduction
+
+Single-command after one-time host setup. See `case_study_2.md` §25 for the
+full Path-B and Path-C recipes; `runs/case2/shareseq_skin_docker_c/README.md`
+documents the exact run that produced the numbers above.
+
+### 10.5 Tests after Session 9
+
+`pytest tests/` → **144 / 144 pass**. Sessions 4–8 numbers remain
+reproducible — the orchestrator changes are additive and the wrapper
+changes only land for the new R-image path.
+
+## 11. Key takeaways
 
 1. **Simplicity-first compilation works.** GSM8K's 50-pt jump came from
    *removing* the `math_specialist_route` verifier; CS3 likewise showed
@@ -543,7 +624,7 @@ Full data: `runs/ablations/{ablation_results,component_effects,cost_latency,gate
    HumanEval (where we trail by 5 pt) and MATH (where we lead by 2 pt
    but could push further).
 
-## 11. Limitations
+## 12. Limitations
 
 - **HumanEval gap (−4.5 pt)** — gpt-4o-mini's first-attempt code
   passes ~90 % of edge-case tests; the residual ~5 % gap to AFlow's
@@ -591,7 +672,7 @@ Full data: `runs/ablations/{ablation_results,component_effects,cost_latency,gate
   `force_topology_level` / `disable_gates` / `disable_reviewer`
   flags, but were not run for budget reasons.
 
-## 12. Reproducibility
+## 13. Reproducibility
 
 Run directories under `runs/full_v6/{dataset}/` (Session 6 reruns),
 `runs/full/math/` (Session 5 carried over), and `runs/case*/` carry:
@@ -648,7 +729,7 @@ asyncio.run(run_blueprint(bp, config=cfg, payload={'task': 'Janet has 16 eggs...
 "
 ```
 
-## 13. References
+## 14. References
 
 - AFlow paper — https://arxiv.org/abs/2410.10762
 - AFlow code — https://github.com/FoundationAgents/AFlow

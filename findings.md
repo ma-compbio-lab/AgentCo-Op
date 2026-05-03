@@ -690,3 +690,81 @@ HumanEval / MBPP) before drawing harder conclusions.
   computable on > 1 / 6 datasets.
 - The negative DROP interaction is interesting enough to warrant a
   per-row diagnostic — which 41 net flips drove the −1.07 pp delta?
+
+---
+
+## Session 9 — Docker-mode CS1/CS2 with R Seurat + R Signac (2026-05-03)
+
+### Headline numbers
+
+CS1 Path B (`runs/case1/heart_merfish_docker_b/`): identical biology to the
+Session-7.3 baseline. 53 markers (Welch t-test), 6/6 expected-gene overlap.
+Docker-mode confirmed via `no_docker: false`.
+
+CS2 Path B (`runs/case2/shareseq_skin_docker_b/`): identical biology to the
+Session-7.3 baseline (32 231 cells × 23 296 genes, 22 cell types,
+147 057 RNA marker rows, 8 843 ATAC marker rows). **Now also has independent
+PanglaoDB precision/recall**: int_wins=4 / 15, uni_wins=4 / 15.
+
+CS2 Path C (`runs/case2/shareseq_skin_docker_c/`): real R Seurat 5.0.3 +
+real R Signac 1.13.0. **15 396 RNA marker rows / 35 487 ATAC peak-to-gene
+marker rows.** PanglaoDB int_wins=2 / 15, uni_wins=7 / 15. CellMarker
+int_wins=2 / 19, uni_wins=3 / 19.
+
+### What we proved
+
+1. **The Docker code path actually works now.** Prior CS1/CS2 runs had the
+   orchestrator hardcoding `dry_run=True` so even with the daemon up the
+   adapters fell back to in-process Python. The surgical fix (drop the
+   hardcode + rewrite `_run_adapter_in_docker` to `docker run --rm` with a
+   bind-mounted workdir) is generic — applies to any external repo, not
+   just CS1/CS2. Per-spec `runtime_image` lets one orchestrator drive
+   heterogeneous sandboxes (Python + R + future GPU) without code change.
+
+2. **PanglaoDB and CellMarker are complementary, not redundant.** PanglaoDB
+   shows more union wins (denser per-cell-type catalogs → recall lift),
+   CellMarker keeps tighter precision (skin-tagged entries are biology-
+   curated to skin specifically). Reporting them separately (per the user's
+   case_study_2.md update) surfaces both signals; aggregating would hide
+   the asymmetry.
+
+3. **Real R Seurat / R Signac runs end-to-end on a 16 GB Mac**, but only
+   with three concessions, all clearly documented in code + YAML knobs:
+   - sparse MTX preprocessing (dense `fread` blows up R RAM by ~24 GB
+     transient on the dense GEO TSV)
+   - `signac_method: peak_to_gene` (`Signac::GeneActivity` needs colima
+     ≥ 22 GB, which a 16 GB host can't safely provide)
+   - stratified 4 000-cell subsample for `FindAllMarkers`
+     (`peak_marker_max_cells` knob, default 4 000) — keeps cell-type
+     diversity, makes wall-time tractable
+
+### Numbers worth remembering
+
+- `Signac::GeneActivity` peak RAM on this dataset: > 14 GiB at the
+  "extracting reads overlapping genomic regions" step — not a colima
+  ceiling we can budget for on a 16 GB host.
+- `data.table::fread` on the dense gzipped genes×cells TSV: ~ 24 GB
+  transient peak (3–4 GB compressed → 6–8 GB uncompressed → 12 GB
+  data.table → 12 GB matrix → bowel of as.matrix conversion).
+- `Seurat::FindAllMarkers` with `presto` on 32 k cells × 23 k genes
+  × 22 cell types: ~ 12 min single-thread.
+- Same call on 4 000 cells × 86 k peaks × 22 cell types: ~ 35 min
+  (presto + variable-peak prefilter).
+- Without `presto` and without a peak prefilter, the ATAC FindAllMarkers
+  blows past 2 hours and never finishes.
+
+### Operational lessons
+
+- **Always smoke-test the package set inside the image, not just a hello-
+  world `cat()`.** Two packages (`R.utils` and `biovizBase`) needed two
+  separate rebuild iterations because the original sanity step only
+  loaded the headline packages (Seurat, Signac, EnsDb).
+- **macOS BSD `sort` silently ignores `--parallel`.** GNU `gsort` (via
+  `brew install coreutils`) was 4× faster on the 5 GB fragments BED.
+- **Docker requires lowercase image tags.** Mixed-case repo names like
+  `TissueAgent` need normalising before they go into a tag.
+- **SHARE-seq quirk worth saving**: the ATAC matrix columns from
+  `barcodes.txt.gz` use `rna.bc`-style barcodes (P1.5X). The fragment
+  file uses `atac.bc`-style barcodes (P1.0X). The `celltype.txt` table
+  has BOTH columns, and the right move is `cells = setNames(atac.bc,
+  rna.bc)` to `Signac::CreateFragmentObject` so the validator passes.

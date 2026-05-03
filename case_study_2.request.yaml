@@ -16,6 +16,12 @@ repositories:
     docs:
       - https://satijalab.org/seurat/articles/pbmc3k_tutorial
       - https://satijalab.org/seurat/reference/findmarkers
+    # Path C: route Seurat through the R/Bioconductor runtime image so
+    # Seurat::FindAllMarkers runs natively (instead of the scanpy Python
+    # adapter used in Path B). Comment out / remove this block to fall
+    # back to the generic Python runtime.
+    sandbox_overrides:
+      runtime_image: agentcoop-r-runtime:case-study
   - name: Signac
     url: https://github.com/stuart-lab/signac
     role_hint: scATAC-seq marker-gene discovery specialist
@@ -23,12 +29,15 @@ repositories:
       - https://stuartlab.org/signac/articles/pbmc_multiomic
       - https://stuartlab.org/signac/articles/mouse_brain_vignette
       - https://stuartlab.org/signac/reference/geneactivity
+    sandbox_overrides:
+      runtime_image: agentcoop-r-runtime:case-study
 
 join_agent:
   name: CellMarkerEvaluator
-  role_hint: CellMarker 2.0 reference marker database evaluation specialist
+  role_hint: CellMarker 2.0 + PanglaoDB reference marker evaluation specialist
   inputs:
     cellmarker_file: data/shareseq_skin/Cell_marker_Mouse.xlsx
+    panglaodb_file: data/panglaodb/PanglaoDB_markers_27_Mar_2020.tsv
     organism: Mouse
     tissue_filter_primary: [Skin]
     tissue_filter_extended: [Skin, Epidermis, Dermis, Hair follicle, Hair]
@@ -48,6 +57,10 @@ dataset:
     atac_peaks: GSM4156597_skin.late.anagen.peaks.bed.gz
     atac_barcodes: GSM4156597_skin.late.anagen.barcodes.txt.gz
     celltype_labels: GSM4156597_skin_celltype.txt.gz
+    # Sorted + bgzip + tabix-indexed fragments file produced from the
+    # GEO download (the raw .bed.gz isn't tabixed). Mandatory for
+    # Signac::GeneActivity which is the primary ATAC method in Path C.
+    atac_fragments: GSM4156597_skin.late.anagen.atac.fragments.tsv.bgz
     cellmarker: Cell_marker_Mouse.xlsx
 
 task:
@@ -81,6 +94,13 @@ parameters:
     peak_to_gene: closest_feature
     extend_upstream_bp: 2000
     max_dist_bp: 100000
+    # Method selector. case_study_2.md §11 declares peak-to-nearest-gene
+    # as the primary ATAC marker-gene method, with GeneActivity (§11.2)
+    # as an optional sensitivity analysis. peak_to_gene is the default
+    # for end-to-end runs because it fits on a 16 GB host; switch to
+    # gene_activity only on a host with colima memory ≥ 22 GB.
+    signac_method: peak_to_gene
+    allow_peak_to_gene_fallback: true
 
 required_outputs:
   - compiled_workflow_graph.json

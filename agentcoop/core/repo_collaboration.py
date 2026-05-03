@@ -45,9 +45,18 @@ from agentcoop.core.repo_profile import RepoProfile, profile_repo
 from agentcoop.core.sandbox_build import (
     SandboxBuilder,
     SandboxSpec,
+    _docker_available,
     spec_from_profile,
 )
 from agentcoop.core.topology_viz import render_topology
+
+
+# Default tag for the generic Python runtime image (built from
+# docker/agentcoop-runtime.Dockerfile). Adapters that need a non-Python
+# toolchain — e.g. R/Bioconductor for Seurat & Signac — override this by
+# setting `runtime_image` on the request's per-repo `sandbox_overrides`.
+DEFAULT_RUNTIME_IMAGE = "agentcoop-runtime:case-study"
+RUNTIME_DOCKERFILE = Path(__file__).resolve().parents[2] / "docker" / "agentcoop-runtime.Dockerfile"
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +202,12 @@ class RepoCollaborationOrchestrator:
     def _build_sandboxes(self) -> dict[str, dict[str, Any]]:
         report: dict[str, dict[str, Any]] = {}
         specs: list[SandboxSpec] = []
+        # In Docker mode build a single generic Python runtime image
+        # once; per-repo R/bioconductor images are built lazily by
+        # `_ensure_image()` only when a spec overrides `runtime_image`.
+        if not self.no_docker:
+            rt = self._build_runtime_image()
+            report["__runtime__"] = rt
         for name, prof in self.profiles.items():
             override = next(
                 (r.get("sandbox_overrides", {}) or {}
@@ -203,7 +218,9 @@ class RepoCollaborationOrchestrator:
             res = self.builder.build(
                 spec,
                 profile=prof,
-                dry_run=True,  # always dry-run; let user run docker build manually
+                # Docker-mode wires the build path; --no-docker keeps the
+                # historical dry-run behaviour (artifacts + spec only).
+                dry_run=self.no_docker,
             )
             specs.append(spec)
             report[name] = {
@@ -212,6 +229,7 @@ class RepoCollaborationOrchestrator:
                 "dockerfile": str(res.dockerfile_path),
                 "smoke_test": str(res.smoke_test_path),
                 "notes": res.notes,
+                "runtime_image": _runtime_image_for(spec),
             }
         # Compose for both services together.
         compose_path = self.builder.write_compose(specs)
@@ -220,6 +238,54 @@ class RepoCollaborationOrchestrator:
             json.dumps(report, indent=2), encoding="utf-8"
         )
         return report
+
+    def _build_runtime_image(self) -> dict[str, Any]:
+        """Build (or skip if cached) the generic Python runtime image.
+
+        Returns a small dict the caller drops into the docker-build
+        report so the manifest records what got built.
+        """
+        info: dict[str, Any] = {
+            "image": DEFAULT_RUNTIME_IMAGE,
+            "dockerfile": str(RUNTIME_DOCKERFILE),
+            "built": False,
+            "cached": False,
+            "notes": [],
+        }
+        if not _docker_available():
+            info["notes"].append("docker daemon not available; skipping runtime image build")
+            return info
+        if not RUNTIME_DOCKERFILE.is_file():
+            info["notes"].append(f"runtime Dockerfile not found at {RUNTIME_DOCKERFILE}")
+            return info
+        # Check cache.
+        try:
+            r = subprocess.run(
+                ["docker", "image", "inspect", DEFAULT_RUNTIME_IMAGE],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                info["cached"] = True
+                info["notes"].append(f"image already present: {DEFAULT_RUNTIME_IMAGE}")
+                return info
+        except Exception as exc:
+            info["notes"].append(f"docker image inspect failed: {exc}")
+        repo_root = RUNTIME_DOCKERFILE.parent.parent
+        try:
+            r = subprocess.run(
+                ["docker", "build", "-f", str(RUNTIME_DOCKERFILE),
+                 "-t", DEFAULT_RUNTIME_IMAGE, str(repo_root)],
+                capture_output=True, text=True, timeout=1800,
+            )
+            if r.returncode == 0:
+                info["built"] = True
+                info["notes"].append(f"image built: {DEFAULT_RUNTIME_IMAGE}")
+            else:
+                tail = (r.stderr or r.stdout or "").splitlines()[-12:]
+                info["notes"].append("docker build failed; tail=" + " | ".join(tail))
+        except subprocess.TimeoutExpired:
+            info["notes"].append("docker build timed out after 30 min")
+        return info
 
     # ---- Phase 2 — register agent cards -----------------------------------
 
@@ -246,9 +312,19 @@ class RepoCollaborationOrchestrator:
         card_name: str,
         invocation: dict[str, Any],
     ) -> dict[str, Any]:
-        """Invoke the agent's adapter function. In `--no-docker` mode we look
-        for a registered local adapter; with Docker we'd `docker exec` into
-        the container's wrapper."""
+        """Invoke the agent's adapter.
+
+        `--no-docker`:    call the in-process Python adapter registered with
+                          `register_local_adapter`.
+        `--docker`:       `docker run --rm` the runtime image (default
+                          `agentcoop-runtime:case-study` or whatever
+                          `SandboxSpec.runtime_image` overrides for that
+                          agent), bind-mount the host workdir at the
+                          identical path so the request JSON's absolute
+                          paths resolve unchanged inside the container,
+                          then read back the response file written by
+                          `python -m agentcoop.wrappers <name> <invoke>`.
+        """
         if self.no_docker:
             adapter = get_local_adapter(card_name)
             if adapter is None:
@@ -259,20 +335,122 @@ class RepoCollaborationOrchestrator:
                     "warnings": [f"register_local_adapter('{card_name}') is missing"],
                 }
             return adapter(invocation)
-        # Docker mode (left for future Session): call docker exec.
-        container = self.registry.get(card_name).container
-        cmd = ["docker", "exec", container, "python",
-               f"/workspace/wrappers/{card_name.lower()}_worker.py",
-               "--invoke-json", json.dumps(invocation)]
+        return self._run_adapter_in_docker(card_name, invocation)
+
+    def _run_adapter_in_docker(
+        self,
+        card_name: str,
+        invocation: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not _docker_available():
+            return {
+                "status": "failed",
+                "summary": "docker daemon not reachable",
+                "artifacts": {},
+                "warnings": ["start colima/docker and rerun with --docker"],
+            }
+        # Drop the request file under the workdir so it shares the
+        # bind-mount with the rest of the run artifacts.
+        invoke_dir = self.workdir / "_invoke"
+        invoke_dir.mkdir(parents=True, exist_ok=True)
+        ts = str(int(time.time() * 1000))
+        invoke_path = invoke_dir / f"{card_name}_{ts}.json"
+        invoke_path.write_text(json.dumps(invocation, indent=2), encoding="utf-8")
+        response_path = invoke_path.with_name(invoke_path.stem + ".response.json")
+
+        # Resolve which image to run: prefer per-spec override, fall
+        # back to the generic Python runtime image.
+        repo_meta = next(
+            (r for r in self.request.repositories if r.get("name") == card_name),
+            None,
+        )
+        image_override = (
+            (repo_meta or {}).get("sandbox_overrides", {}).get("runtime_image")
+            or (self.request.join_agent or {}).get("runtime_image")
+            if card_name == (self.request.join_agent or {}).get("name") else None
+        )
+        # Per-repo override wins over join_agent lookup if both apply.
+        if repo_meta is not None:
+            image = (repo_meta.get("sandbox_overrides") or {}).get("runtime_image") or DEFAULT_RUNTIME_IMAGE
+        else:
+            image = image_override or DEFAULT_RUNTIME_IMAGE
+
+        # Bind-mount the workdir AND the dataset/external roots at the
+        # same absolute path so the host paths in `invocation` work
+        # inside the container without translation. Also mount HOME so
+        # cached datasets under e.g. ~/Documents/... resolve.
+        repo_root = Path(__file__).resolve().parents[2]
+        mounts = [
+            f"-v={repo_root}:{repo_root}",
+            f"-v={self.workdir}:{self.workdir}",
+        ]
+        # Optional data + external roots (skip if outside the repo to
+        # minimise the container's view of the host filesystem).
+        for extra in (self.external_root, repo_root / "data"):
+            try:
+                p = Path(extra).resolve()
+            except Exception:
+                continue
+            if p.exists() and str(p).startswith(str(repo_root)):
+                mounts.append(f"-v={p}:{p}")
+        env_args: list[str] = []
+        for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "HF_TOKEN"):
+            if os.environ.get(var):
+                env_args.extend(["-e", f"{var}={os.environ[var]}"])
+        # Adapters resolve dataset paths like `data/<name>/...` relative to
+        # the repo root (this is how the --no-docker path runs them too).
+        # Set the container cwd to repo_root so relative paths resolve
+        # identically inside the container.
+        cmd = [
+            "docker", "run", "--rm",
+            "-w", str(repo_root),
+            *mounts,
+            *env_args,
+            image,
+            card_name, str(invoke_path),
+        ]
+        # 2 h timeout: case-study adapters that read 100M-fragment ATAC
+        # files (e.g. Signac peak-to-gene on 32 k cells × 344 k peaks)
+        # routinely run 60-90 min. Override per-call via the env var
+        # `AGENTCOOP_DOCKER_RUN_TIMEOUT_S` if a wrapper is even slower.
         try:
-            r = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=900)
+            timeout_s = int(os.environ.get("AGENTCOOP_DOCKER_RUN_TIMEOUT_S", "7200"))
+        except ValueError:
+            timeout_s = 7200
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "failed",
+                "summary": f"docker run timed out (>{timeout_s}s)",
+                "artifacts": {},
+                "warnings": [" ".join(shlex.quote(c) for c in cmd)],
+            }
+        # Prefer the response file (always JSON-valid, indented). Fall
+        # back to parsing stdout's last line if the adapter crashed
+        # before writing the file.
+        if response_path.exists():
+            try:
+                return json.loads(response_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.notes.append(f"docker adapter response parse error: {exc}")
+        if r.returncode != 0:
+            tail = (r.stderr or r.stdout or "").splitlines()[-15:]
+            return {
+                "status": "failed",
+                "summary": f"docker run rc={r.returncode}",
+                "artifacts": {},
+                "warnings": tail,
+            }
+        # Best-effort stdout parse.
+        try:
             return json.loads(r.stdout.strip().splitlines()[-1])
         except Exception as exc:
             return {
                 "status": "failed",
-                "summary": f"docker invocation failed: {exc}",
+                "summary": f"could not parse adapter response: {exc}",
                 "artifacts": {},
-                "warnings": [str(exc)],
+                "warnings": [r.stdout[-500:], r.stderr[-500:]],
             }
 
     # ---- env manager ------------------------------------------------------
@@ -438,8 +616,18 @@ class RepoCollaborationOrchestrator:
                 "output_dir": str(d),
             }
 
+        # Branch concurrency: default = max(2, n_branches). Memory-
+        # constrained hosts (e.g. CS2 Path C with R Seurat + R Signac
+        # each ≥4 GB on a 10 GB colima) can override via the env var
+        # `AGENTCOOP_BRANCH_CONCURRENCY` to serialise.
+        env_cap = os.environ.get("AGENTCOOP_BRANCH_CONCURRENCY")
+        try:
+            cap = int(env_cap) if env_cap else max(2, len(names))
+        except ValueError:
+            cap = max(2, len(names))
+        max_workers = max(1, min(cap, len(names)))
         branch_responses: dict[str, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=max(2, len(names))) as pool:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futs = {
                 name: pool.submit(self._run_adapter, name, branch_requests[name])
                 for name in names
@@ -1001,6 +1189,18 @@ class RepoCollaborationOrchestrator:
 
 def _infer_name(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1].replace(".git", "")
+
+
+def _runtime_image_for(spec: SandboxSpec) -> str:
+    """Pick the Docker image to invoke for a given spec.
+
+    Honours `spec.model_extra["runtime_image"]` (set via the request's
+    per-repo `sandbox_overrides`) so R-based or GPU-based agents can
+    swap images without touching the orchestrator. Defaults to the
+    generic Python runtime.
+    """
+    extra = getattr(spec, "model_extra", None) or {}
+    return str(extra.get("runtime_image") or DEFAULT_RUNTIME_IMAGE)
 
 
 def _build_integration_prompt(
