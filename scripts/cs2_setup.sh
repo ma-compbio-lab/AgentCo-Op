@@ -69,19 +69,26 @@ dl() {
 
 step() { echo; echo "=== $* ==="; }
 
-step "1) GEO files"
+step "1) GEO files (downloads run in parallel; each skips if already on disk)"
+# Downloads are independent — fan out and `wait`. The 5 GB fragments BED is
+# the long pole; the 5 small files together (~440 MB) finish well before it,
+# so parallelising shaves a few minutes off the cold-start path.
+PIDS=()
 dl "$DATA/${RNA_GSM}_skin.late.anagen.rna.counts.txt.gz" \
-   "${GEO_BASE}/?acc=${RNA_GSM}&file=${RNA_GSM}_skin.late.anagen.rna.counts.txt.gz&format=file"
+   "${GEO_BASE}/?acc=${RNA_GSM}&file=${RNA_GSM}_skin.late.anagen.rna.counts.txt.gz&format=file" & PIDS+=($!)
 dl "$DATA/${ATAC_GSM}_skin.late.anagen.counts.txt.gz" \
-   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.counts.txt.gz&format=file"
+   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.counts.txt.gz&format=file" & PIDS+=($!)
 dl "$DATA/${ATAC_GSM}_skin.late.anagen.peaks.bed.gz" \
-   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.peaks.bed.gz&format=file"
+   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.peaks.bed.gz&format=file" & PIDS+=($!)
 dl "$DATA/${ATAC_GSM}_skin.late.anagen.barcodes.txt.gz" \
-   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.barcodes.txt.gz&format=file"
+   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.barcodes.txt.gz&format=file" & PIDS+=($!)
 dl "$DATA/${ATAC_GSM}_skin_celltype.txt.gz" \
-   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin_celltype.txt.gz&format=file"
+   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin_celltype.txt.gz&format=file" & PIDS+=($!)
 dl "$DATA/${ATAC_GSM}_skin.late.anagen.atac.fragments.bed.gz" \
-   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.atac.fragments.bed.gz&format=file"
+   "${GEO_BASE}/?acc=${ATAC_GSM}&file=${ATAC_GSM}_skin.late.anagen.atac.fragments.bed.gz&format=file" & PIDS+=($!)
+fail=0
+for pid in "${PIDS[@]}"; do wait "$pid" || fail=1; done
+[[ $fail -eq 0 ]] || { echo "ERR one or more GEO downloads failed; check above"; exit 1; }
 
 step "2) PanglaoDB markers"
 PDB_TSV="$PDB/PanglaoDB_markers_27_Mar_2020.tsv"

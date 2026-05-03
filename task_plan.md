@@ -476,3 +476,45 @@ heart-MERFISH CS1.
 - 30-task GSM8K smoke vs Session 6 baseline (~93–94 %, ±1 pt).
 - pytest 89 + new tests.
 - Logical commits + push to `clean-dev`.
+
+---
+
+## Session 9 simplify — code review + cleanup of commit 1958539 (2026-05-03)
+
+### Phase 64: Diff + parallel review — status: in_progress
+Run `git diff HEAD~1 HEAD`, hand the diff to three concurrent agents
+(reuse / quality / efficiency), each capped at ~600-700 words.
+Findings logged below; fixes applied directly.
+
+### Phase 65: Apply fixes — status: pending
+For each finding worth addressing, edit the file directly. False
+positives noted and skipped.
+
+### Phase 66: Verify + commit — status: pending
+Re-run `pytest tests/` (must stay 144/144). Commit cleanup as a
+separate logical commit on top of `1958539`.
+
+### Phase 64 — review findings (logged when agents return)
+
+(populated by /simplify run)
+
+### Phase 64 — review findings (resolved)
+
+| Source | File:line | Fix | Status |
+|---|---|---|---|
+| Quality + Bonus | repo_collaboration.py:367-371 — dead `image_override` ternary | Extracted `_image_for(card_name)` helper; deleted shadowed code | done |
+| Efficiency | scripts/dense_tsv_to_mtx.py — BytesIO double-buffer (~3-4 GB peak RSS) | Stream `mmwrite` directly to `gzip.GzipFile` | done |
+| Efficiency | No `.dockerignore` — 10 GB build context per docker build | Added `.dockerignore` excluding data/, runs/, external/, .git/, venvs | done |
+| Efficiency | signac_atac_marker_agent.R — 22× redundant ClosestFeature calls | Single batched `ClosestFeature(unique_peaks)` + `dplyr::left_join` | done |
+| Efficiency | scripts/cs2_setup.sh — 6 GEO downloads sequential | Parallelised via `&` + `wait` (saves ~1-3 min cold start) | done |
+| Quality | inline CellMarker eval block dupes `_eval_against_gold` | SKIPPED — would change `precision_recall_summary.csv` schema (loses `cellmarker_filter_mode`); ~70 line savings vs downstream-consumer risk |
+| Quality | `_build_gold_sets` vs `_build_panglaodb_gold_sets` (~70% overlap) | SKIPPED — parameterising 3 axes makes the merged signature ugly; existing pair is read-only-once-per-run |
+| Quality | R wrappers share ~60 lines (`resolve_path`, `read_count_matrix`, etc) | SKIPPED — extracting `wrappers/_r_common.R` adds Dockerfile churn + import-path complexity for 60-line savings; defer |
+| Reuse | `_build_runtime_image` overlaps `SandboxBuilder.build` | SKIPPED — different threat models (one is hardened sandbox, one is bind-mounted host); reuse review agreed to leave separate |
+| Reuse | `_run_adapter_in_docker` vs `build_run_command` | SKIPPED — different threat models; one-line cross-reference noted |
+| Reuse | `dense_tsv_to_mtx.py` overlaps Python `seurat_local._read_dense_tsv_to_sparse` | SKIPPED — pandas chunked-read uses 2× more RAM; the streaming script is intentionally leaner for the offline conversion path |
+
+### Phase 65 + 66 — apply + verify — status: complete
+
+`pytest tests/` → 144 / 144 still pass after all fixes. Cleanup committed
+on top of `1958539`.

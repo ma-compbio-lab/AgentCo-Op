@@ -337,6 +337,25 @@ class RepoCollaborationOrchestrator:
             return adapter(invocation)
         return self._run_adapter_in_docker(card_name, invocation)
 
+    def _image_for(self, card_name: str) -> str:
+        """Resolve which Docker image to run for `card_name`.
+
+        Per-repo `sandbox_overrides.runtime_image` wins; falls back to
+        `join_agent.runtime_image` for the join card; defaults to the
+        generic Python runtime.
+        """
+        repo_meta = next(
+            (r for r in self.request.repositories if r.get("name") == card_name),
+            None,
+        )
+        if repo_meta is not None:
+            override = (repo_meta.get("sandbox_overrides") or {}).get("runtime_image")
+            return override or DEFAULT_RUNTIME_IMAGE
+        join = self.request.join_agent or {}
+        if card_name == join.get("name"):
+            return join.get("runtime_image") or DEFAULT_RUNTIME_IMAGE
+        return DEFAULT_RUNTIME_IMAGE
+
     def _run_adapter_in_docker(
         self,
         card_name: str,
@@ -358,22 +377,7 @@ class RepoCollaborationOrchestrator:
         invoke_path.write_text(json.dumps(invocation, indent=2), encoding="utf-8")
         response_path = invoke_path.with_name(invoke_path.stem + ".response.json")
 
-        # Resolve which image to run: prefer per-spec override, fall
-        # back to the generic Python runtime image.
-        repo_meta = next(
-            (r for r in self.request.repositories if r.get("name") == card_name),
-            None,
-        )
-        image_override = (
-            (repo_meta or {}).get("sandbox_overrides", {}).get("runtime_image")
-            or (self.request.join_agent or {}).get("runtime_image")
-            if card_name == (self.request.join_agent or {}).get("name") else None
-        )
-        # Per-repo override wins over join_agent lookup if both apply.
-        if repo_meta is not None:
-            image = (repo_meta.get("sandbox_overrides") or {}).get("runtime_image") or DEFAULT_RUNTIME_IMAGE
-        else:
-            image = image_override or DEFAULT_RUNTIME_IMAGE
+        image = self._image_for(card_name)
 
         # Bind-mount the workdir AND the dataset/external roots at the
         # same absolute path so the host paths in `invocation` work

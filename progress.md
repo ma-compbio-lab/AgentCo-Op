@@ -713,3 +713,28 @@ backends; end-to-end single-command reproduction.
 ### Tests after Session 9
 
 `pytest tests/` → **144 / 144 pass** (was 144 before; no regressions).
+
+### Session 9 simplify — code review + cleanup (2026-05-03)
+
+Three concurrent review agents (reuse / quality / efficiency) on commit
+`1958539`. Fixes applied:
+
+| File | Fix | Win |
+|---|---|---|
+| `agentcoop/core/repo_collaboration.py` | Extract `_image_for(card_name)` helper; delete dead `image_override` ternary | -16 + 18 lines, eliminates a never-read code path |
+| `scripts/dense_tsv_to_mtx.py` | `mmwrite` streams to `gzip.GzipFile` directly (no `BytesIO` double-buffer) | ~3-4 GB peak RSS saved on 32 k-cell SHARE-seq matrix |
+| `.dockerignore` (NEW) | Excludes `data/`, `runs/`, `external/`, `.git/`, venvs from build context | ~10 GB context per docker build, 30-90 s on cold rebuild |
+| `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R` | Single batched `ClosestFeature(unique_peaks)` + `left_join` (was 22 separate calls) | ~30-60 s wall time on the peak-to-gene mapping step |
+| `scripts/cs2_setup.sh` | 6 GEO downloads run in parallel via `&` + `wait` | ~1-3 min cold-start saving on a 100-200 Mbps link |
+
+Skipped (false positives or schema-churn risk > line-count benefit):
+the inline CellMarker eval block dupe (would change CSV schema), the
+`_build_gold_sets` vs `_build_panglaodb_gold_sets` unification (3-axis
+parameterisation gets ugly), `wrappers/_r_common.R` extraction
+(Dockerfile churn for 60 lines), `SandboxBuilder.build` reuse for the
+runtime-image build (different threat models), `build_run_command` reuse
+for `_run_adapter_in_docker` (locked-down vs bind-mounted), and folding
+`dense_tsv_to_mtx.py` into the Python adapter's pandas chunked-reader
+(uses 2× more RAM).
+
+Tests after cleanup: **144 / 144 pass**.

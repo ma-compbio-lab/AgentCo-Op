@@ -20,7 +20,6 @@ Output (10X v3 layout):
 from __future__ import annotations
 
 import gzip
-import io
 import sys
 from pathlib import Path
 
@@ -85,10 +84,11 @@ def main() -> int:
     ).tocsc()
 
     print("writing matrix.mtx.gz ...", flush=True)
-    buf = io.BytesIO()
-    mmwrite(buf, M, field="integer", precision=0, symmetry="general")
+    # Stream `mmwrite` straight into the gzip file — buffering the whole
+    # MTX text in a `BytesIO` first would peak at 3-4 GB of RAM for a
+    # 140 M-nnz matrix.
     with gzip.open(out_dir / "matrix.mtx.gz", "wb") as f:
-        f.write(buf.getvalue())
+        mmwrite(f, M, field="integer", precision=0, symmetry="general")
     print("writing features.tsv.gz ...", flush=True)
     with gzip.open(out_dir / "features.tsv.gz", "wt", encoding="utf-8") as f:
         for fid in feature_ids:

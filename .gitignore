@@ -35,3 +35,4 @@ data/*
 # External repos (cloned for reference / image builds; commit SHAs pinned in configs/external_commits.yaml)
 external/
 .secrets/
+runs/

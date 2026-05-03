@@ -363,15 +363,23 @@ if (!gene_act_used) {
                   nrow(peak_markers), length(cell_types)))
   peak_csv <- file.path(out_dir, "signac_atac_peak_markers_all.csv")
   data.table::fwrite(peak_markers, peak_csv)
-  closest_list <- list()
-  for (ct in names(all_peak_markers)) {
-    cf <- tryCatch(ClosestFeature(obj_for_markers, regions = all_peak_markers[[ct]]$peak),
-                   error = function(e) NULL)
-    if (is.null(cf)) next
-    cf$peak <- all_peak_markers[[ct]]$peak; cf$cluster <- ct
-    closest_list[[ct]] <- cf
+  # One ClosestFeature call on the unique peak set, then split by cluster.
+  # The per-cluster loop used to call ClosestFeature 22× over the same
+  # mm10 EnsDb annotation — each call rebuilds GRanges overlaps from
+  # scratch, ~22× redundant work.
+  unique_peaks <- unique(peak_markers$peak)
+  cf_all <- tryCatch(ClosestFeature(obj_for_markers, regions = unique_peaks),
+                     error = function(e) {
+                       log_msg(sprintf("ClosestFeature failed: %s", e$message)); NULL
+                     })
+  if (is.null(cf_all)) {
+    peak_to_gene <- data.frame()
+  } else {
+    cf_all$peak <- unique_peaks
+    peak_to_gene <- peak_markers %>%
+      dplyr::select(cluster, peak) %>%
+      dplyr::left_join(cf_all, by = "peak")
   }
-  peak_to_gene <- dplyr::bind_rows(closest_list)
   data.table::fwrite(peak_to_gene, file.path(out_dir, "peak_to_gene_mapping.csv"))
   merged <- peak_markers %>%
     left_join(peak_to_gene, by = c("cluster", "peak"))
