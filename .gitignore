@@ -20,6 +20,11 @@ runs/case*/**
 !runs/case*/**/
 !runs/case*/**/README.md
 !runs/case*/**/summary.json
+# Ablation deliverable — README narrative + the four §6 tables.
+!runs/ablations/
+!runs/ablations/README.md
+!runs/ablations/*.csv
+!runs/ablations/summary.json
 # Wrapper data caches are lazy-fetched on first run; keep out of VCS.
 agentcoop/wrappers/*/data_cache/
 data/*

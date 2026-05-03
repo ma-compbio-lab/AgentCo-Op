@@ -56,6 +56,29 @@ variants:
     disable_gates: false
     description: "AFlow topology + AgentCo-Op skills + gated local repair (Case Study 3 main)"
 
+  # ----- Session 8 ablation variants (per `ablation.md` §1) ---------------
+  # 2 × 2 factorial: skills+tools (on/off) × gate_repair (on/off).
+  # Implemented purely via the wired `_apply_variant` knobs
+  # (`disable_gates`, `disable_reviewer`) — NO core-code edits.
+  # `AC-NoSkillsTools` is a *proxy* ablation: it removes reviewer /
+  # verifier specialist nodes (which ARE the principal skill-driven
+  # post-generation specialists for math/code/QA workflows) but
+  # cannot drop tool / sandbox nodes without core-code changes. The
+  # ablation report (`runs/ablations/README.md`) documents this
+  # honestly.
+  AC-Full:
+    description: "Ablation AC-Full — skills+tools on, gate_repair on (alias for AC-Gated)"
+  AC-NoGate:
+    disable_gates: true
+    description: "Ablation AC-NoGate — skills+tools on, gate_repair off"
+  AC-NoSkillsTools:
+    disable_reviewer: true
+    description: "Ablation AC-NoSkillsTools — skills+tools off (proxy: drop reviewer/verifier specialist nodes), gate_repair on"
+  AC-Minimal:
+    disable_gates: true
+    disable_reviewer: true
+    description: "Ablation AC-Minimal — both skills+tools and gate_repair off"
+
 budget:
   max_tokens: 20000
   max_cost_usd: 1.0

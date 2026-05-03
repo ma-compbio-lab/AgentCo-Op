@@ -578,3 +578,63 @@ report). No edits to runtime, gates, schema, prompts, python_sandbox,
 profiler, runner, compiler, or `workflows/*.json` — Sessions 4–6
 benchmark numbers remain reproducible.
 
+
+## Session 8 — `ablation.md` 2 × 2 factorial (2026-05-02 / 03)
+
+User asked for the ablation declared in `ablation.md`:
+two factors × two levels = four variants, each on the full AFlow
+splits of all six benchmarks. Hard constraint from the user:
+**YAML configuration changes only — no edits to core code.**
+
+Variant grid:
+
+| Variant            | skills + tools | gate repair |
+|--------------------|:--:|:--:|
+| `AC-Full`          | ✓ | ✓ |
+| `AC-NoGate`        | ✓ | ✗ |
+| `AC-NoSkillsTools` | ✗ | ✓ |
+| `AC-Minimal`       | ✗ | ✗ |
+
+Implementation (additive only):
+
+| File | Role |
+|---|---|
+| `configs/benchmarks/_base.yaml` | Adds the four variant blocks; `_apply_variant` already honours `disable_gates` / `disable_reviewer` so no runner edit needed. |
+| `configs/ablations/{ac_full,ac_nogate,ac_noskillstools,ac_minimal}.yaml` | Per-variant method configs documenting the 2×2 factor levels and the proxy nature of `AC-NoSkillsTools`. |
+| `scripts/aggregate_ablation.py` | Pure-Python aggregator producing the four §6 tables (`ablation_results.csv`, `component_effects.csv`, `cost_latency.csv`, `gate_rescue.csv`, `summary.json`). |
+| `tests/unit/test_ablation_variants.py` | 32 tests: 24 inheritance × variant × dataset, 4 `_apply_variant` behaviour tests, 4 method-config-file format tests. |
+| `runs/ablations/README.md` | Narrative report with all four §6 tables filled in plus rescue-rate caveat. |
+| `report.md` §9 | Ablation chapter inserted between Case studies and Key takeaways; §10–§13 renumbered. |
+
+`AC-Full` reuses the Sessions 4–6 `AC-Gated` runs so only 18 fresh runs
+were needed (3 ablation variants × 6 datasets). Wall-clock under the
+final parallel-launch plan was ≈ 45 min (math was the bottleneck;
+hotpotqa / humaneval / mbpp / gsm8k each ≈ 20 min, drop ≈ 30 min).
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---|---|
+| HTTPX connection-pool starvation (~12 procs × c=6 = 72 in-flight stalled) | 1 | Killed stuck procs; reduced parallelism to ≤ 5 procs at c=6 (≤ 30 in-flight). |
+| Initial slow throughput at concurrency=6 with 2 procs (19 tasks/min vs S6's 133/min) | 2 | Bumped to concurrency=12 → 100 tasks/min for drop, 36 tasks/min for math. |
+| Sequential rounds wasting time (waiting on math AC-NoGate before launching others) | 3 | Killed orchestrator script; launched all 4 remaining drop+math variants in parallel alongside the still-running math AC-NoGate. |
+| Window closed by accident mid-run | — | Background processes survived (PIDs 76280 / 76282 detached). Resumed by checking metrics.json count + trace counts; no work lost. |
+
+### Result snapshots (full tables in `runs/ablations/README.md`)
+
+Average-normalised score: AC-Full 0.8059 > AC-NoGate 0.7974 >
+AC-NoSkillsTools 0.7943 > AC-Minimal 0.7886. AC-Full wins 5/6 columns;
+DROP is the lone exception (AC-NoSkillsTools wins by ~+1 F1). MATH
+shows the largest near-additive contributions from both factors
+(skills/tools ≈ +4.9 pp, gates ≈ +1.6 pp). HumanEval and GSM8K show
+positive interaction. DROP is the only negative-interaction case.
+
+Gate caveat: `gate_totals` is empty for 5/6 datasets — only DROP has
+material trigger activity (13 / 800). Per-task rescue/harm counts on
+the other datasets reflect non-gate variance and should not be
+attributed to the gate mechanism.
+
+Tests after the additions: **144 / 144 pass** (was 112). No edits to
+runtime, gates, schema, prompts, python_sandbox, profiler, runner,
+compiler, or `workflows/*.json` — Sessions 4–7 numbers remain
+reproducible.

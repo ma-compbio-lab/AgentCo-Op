@@ -1,0 +1,7 @@
+dataset,AC-Full,AC-Full__n,AC-Full__source,AC-NoGate,AC-NoGate__n,AC-NoGate__source,AC-NoSkillsTools,AC-NoSkillsTools__n,AC-NoSkillsTools__source,AC-Minimal,AC-Minimal__n,AC-Minimal__source
+hotpotqa,0.7648,800,runs/full_v6/hotpotqa/metrics.json,0.7662,800,runs/ablations/hotpotqa/AC-NoGate/metrics.json,0.7615,800,runs/ablations/hotpotqa/AC-NoSkillsTools/metrics.json,0.7604,800,runs/ablations/hotpotqa/AC-Minimal/metrics.json
+drop,0.7723,800,runs/full_v6/drop/metrics.json,0.7739,800,runs/ablations/drop/AC-NoGate/metrics.json,0.783,800,runs/ablations/drop/AC-NoSkillsTools/metrics.json,0.7695,800,runs/ablations/drop/AC-Minimal/metrics.json
+humaneval,0.9015,132,runs/full_v6/humaneval/metrics.json,0.8788,132,runs/ablations/humaneval/AC-NoGate/metrics.json,0.8864,132,runs/ablations/humaneval/AC-NoSkillsTools/metrics.json,0.8864,132,runs/ablations/humaneval/AC-Minimal/metrics.json
+mbpp,0.8713,342,runs/full_v6/mbpp/metrics.json,0.8684,342,runs/ablations/mbpp/AC-NoGate/metrics.json,0.8626,342,runs/ablations/mbpp/AC-NoSkillsTools/metrics.json,0.8596,342,runs/ablations/mbpp/AC-Minimal/metrics.json
+gsm8k,0.9441,1056,runs/full_v6/gsm8k/metrics.json,0.9318,1056,runs/ablations/gsm8k/AC-NoGate/metrics.json,0.9403,1056,runs/ablations/gsm8k/AC-NoSkillsTools/metrics.json,0.9394,1056,runs/ablations/gsm8k/AC-Minimal/metrics.json
+math,0.5816,478,runs/full/math/metrics.json,0.5655,481,runs/ablations/math/AC-NoGate/metrics.json,0.5322,481,runs/ablations/math/AC-NoSkillsTools/metrics.json,0.5166,482,runs/ablations/math/AC-Minimal/metrics.json

@@ -804,3 +804,74 @@ Plus `runs/case1/heart_merfish/manifests/env_manifest.json` listing
 the 9 declared Python packages auto-resolved by the EnvManager (all
 already present on this host; the install path is exercised when a
 package is missing).
+
+## Session 8 — `ablation.md` 2 × 2 factorial (2026-05-02 / 03)
+
+User asked for the ablation declared in `ablation.md` — two factors
+(skills+tools, gate repair) × two levels = four variants, run on the
+full AFlow splits of all six benchmarks. Hard constraint:
+**YAML configuration changes only — no edits to core code.**
+
+### Variant grid
+
+| Variant            | skills + tools | gate repair | YAML knobs applied |
+|---|:--:|:--:|---|
+| `AC-Full`          | ✓ | ✓ | (none — alias for `AC-Gated`) |
+| `AC-NoGate`        | ✓ | ✗ | `disable_gates: true` |
+| `AC-NoSkillsTools` | ✗ | ✓ | `disable_reviewer: true` (proxy) |
+| `AC-Minimal`       | ✗ | ✗ | both |
+
+`AC-NoSkillsTools` is the **proxy form** — `_apply_variant` only
+honours `disable_gates` / `disable_reviewer` today. Wiring a true
+"disable skill registry / force llm-only backend" knob is the
+canonical follow-up; documented openly in `configs/ablations/*.yaml`
+notes so the proxy nature is visible to anyone running the ablation.
+
+### Files added (additive only — no Sessions 4–7 protective files touched)
+
+| File | Role |
+|---|---|
+| `configs/benchmarks/_base.yaml` | Adds the 4 variant blocks at the end of `variants:`. Inherits into every per-dataset config via `extends: _base` deep-merge in `agentcoop/benchmarks/runner.py::_merge`. |
+| `configs/ablations/ac_full.yaml` | Documentation-only method config: `method: ac_full`, `skills_tools: true`, `gate_repair: true`, `yaml_implementation` block pointing at `_base.yaml`. |
+| `configs/ablations/ac_nogate.yaml` | Same shape; `gate_repair: false`. |
+| `configs/ablations/ac_noskillstools.yaml` | Same shape; `skills_tools: false`. Note explains the proxy. |
+| `configs/ablations/ac_minimal.yaml` | Same shape; both factors off. |
+| `scripts/aggregate_ablation.py` | Pure-Python aggregator (~250 lines, only depends on pandas + stdlib). Produces `ablation_results.csv` (§6.1), `component_effects.csv` (§6.2), `cost_latency.csv` (§6.3), `gate_rescue.csv` (§6.4), `summary.json`. Reuses `runs/full_v6/<dataset>/metrics.json` for AC-Full (and `runs/full/math/metrics.json` for MATH AC-Full). |
+| `tests/unit/test_ablation_variants.py` | 32 tests: 24 inheritance × variant × dataset, 4 `_apply_variant` behaviour tests (AC-Full keeps blueprint; AC-NoGate zeroes max_activations; AC-NoSkillsTools drops reviewer nodes + dangling edges; AC-Minimal combines both), 4 method-config-file format tests. |
+| `runs/ablations/README.md` | Narrative report with all four §6 tables filled in plus the rescue-rate caveat (gates rarely fire on AFlow-aligned splits — only DROP has material activity). |
+| `report.md` §9 | New ablation chapter inserted between Case studies and Key takeaways; §10–§13 renumbered. |
+
+### Run invocation
+
+```bash
+# 18 fresh runs: 3 ablation variants × 6 datasets
+for ds in hotpotqa drop humaneval mbpp gsm8k math; do
+  for v in AC-NoGate AC-NoSkillsTools AC-Minimal; do
+    python -m agentcoop.cli run-benchmark --dataset $ds --limit 99999 \
+      -v $v --concurrency 6 --out runs/ablations/$ds/$v
+  done
+done
+
+# Aggregate the four §6 tables
+python scripts/aggregate_ablation.py
+```
+
+The actual S8 sweep parallel-launched per-benchmark groups under
+≤ 30-in-flight ceiling (≤ 5 procs × c=6 or 2 procs × c=12). Wall-clock
+≈ 45 min total, math being the bottleneck (≈ 12–17 tasks/min/proc),
+hotpotqa / humaneval / mbpp / gsm8k each ≈ 20 min, drop ≈ 30 min.
+
+### Result snapshots (full numbers in `runs/ablations/README.md`)
+
+Average normalised score: AC-Full 0.8059 > AC-NoGate 0.7974 >
+AC-NoSkillsTools 0.7943 > AC-Minimal 0.7886. AC-Full wins 5/6 columns;
+DROP is the lone exception. MATH shows the largest near-additive
+contributions from both factors. HumanEval & GSM8K show positive
+interaction. DROP is the only negative-interaction case.
+
+### Tests
+
+After the additions: **144 / 144 unit tests pass** (was 112). No edits
+to runtime, gates, schema, prompts, python_sandbox, profiler, runner,
+compiler, or `workflows/*.json` — Sessions 4–7 numbers remain
+reproducible.

@@ -1,0 +1,26 @@
+# Ablation method config (`ablation.md` §3) — AC-NoSkillsTools.
+method: ac_noskillstools
+ablation_variant: AC-NoSkillsTools
+skills_tools: false
+gate_repair: true
+yaml_implementation:
+  variant_name: AC-NoSkillsTools
+  defines: configs/benchmarks/_base.yaml::variants:AC-NoSkillsTools
+  applied_knobs:
+    disable_reviewer: true
+notes: |
+  PROXY ablation — implemented purely via YAML per the user
+  constraint "no core code edits". `disable_reviewer: true` is the
+  only wired knob in `_apply_variant` that drops skill-driven
+  post-generation specialists (the reviewer / verifier nodes that
+  meta-skills like `code_test_repair_loop`, `math_specialist_route`,
+  and the QA workflows insert). Tool / sandbox nodes (e.g.
+  `python_sandbox` for HumanEval / MBPP) remain active because the
+  existing `_apply_variant` does not honour `disable_python_sandbox`
+  / `disable_repo_backend` — both are config-only documentation
+  knobs without code support.
+
+  A future revision that loosens the no-core-code constraint can
+  extend `_apply_variant` to honour the tool/sandbox / retrieval
+  flags; the documentation in `runs/ablations/README.md` flags this
+  scope honestly.

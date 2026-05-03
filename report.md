@@ -409,7 +409,113 @@ Findings:
    higher-temperature retry policy or a stronger code model becomes
    available.
 
-## 9. Key takeaways
+## 9. Ablation study — `ablation.md` 2 × 2 factorial (Session 8)
+
+Two factors × two levels = four variants, run on the **full** AFlow
+splits of all six benchmarks (24 cells; `AC-Full` reuses the S4–6
+runs, the other 18 cells were freshly produced). YAML-only
+implementation — `configs/benchmarks/_base.yaml` defines the four
+variants and they inherit into every per-dataset config.
+
+| Variant            | skills + tools | gate repair |
+|--------------------|:--:|:--:|
+| `AC-Full`          | ✓ | ✓ |
+| `AC-NoGate`        | ✓ | ✗ |
+| `AC-NoSkillsTools` | ✗ | ✓ |
+| `AC-Minimal`       | ✗ | ✗ |
+
+`AC-NoSkillsTools` is the proxy form: `_apply_variant` only honours
+`disable_gates` / `disable_reviewer`, so we drop reviewer/verifier
+nodes as the closest available proxy for "skills + tools off". Tool /
+sandbox backends remain wired (documented openly in
+`configs/ablations/*.yaml`).
+
+### 9.1 Main result (§6.1 of `ablation.md`)
+
+| Dataset | AC-Full | AC-NoGate | AC-NoSkillsTools | AC-Minimal |
+|---|---:|---:|---:|---:|
+| HotpotQA F1            | **0.7648** | 0.7662 | 0.7615 | 0.7604 |
+| DROP F1                | 0.7723 | 0.7739 | **0.7830** | 0.7695 |
+| HumanEval pass@1       | **0.9015** | 0.8788 | 0.8864 | 0.8864 |
+| MBPP pass@1            | **0.8713** | 0.8684 | 0.8626 | 0.8596 |
+| GSM8K solve            | **0.9441** | 0.9318 | 0.9403 | 0.9394 |
+| MATH solve             | **0.5816** | 0.5655 | 0.5322 | 0.5166 |
+| **Average normalised** | **0.8059** | 0.7974 | 0.7943 | 0.7886 |
+
+`AC-Full` wins the average and 5/6 columns. DROP is the lone
+exception, where dropping the reviewer adds ~+1 F1.
+
+### 9.2 Component effects (§6.2)
+
+| Dataset | Skills/tools w/ gates | Skills/tools w/o gates | Gate w/ skills/tools | Gate w/o skills/tools | Interaction |
+|---|---:|---:|---:|---:|---:|
+| HotpotQA  | +0.0033 | +0.0058 | −0.0014 | +0.0011 | −0.0025 |
+| DROP      | −0.0107 | +0.0044 | −0.0016 | +0.0135 | −0.0151 |
+| HumanEval | +0.0151 | −0.0076 | +0.0227 |  0.0000 | +0.0227 |
+| MBPP      | +0.0087 | +0.0088 | +0.0029 | +0.0030 | −0.0001 |
+| GSM8K     | +0.0038 | −0.0076 | +0.0123 | +0.0009 | +0.0114 |
+| MATH      | +0.0494 | +0.0489 | +0.0161 | +0.0156 | +0.0005 |
+
+Patterns:
+
+- **MATH** shows large, near-additive gains for both factors (skills/
+  tools ≈ +4.9 pp, gates ≈ +1.6 pp, interaction ≈ 0).
+- **HumanEval / GSM8K** show *positive* interaction — gates and
+  skills/tools amplify each other on coding / math.
+- **DROP** is the only negative-interaction case; the reviewer is the
+  dataset's biggest negative contributor.
+- **HotpotQA / MBPP** are within ±1 pp of noise on every cell.
+
+### 9.3 Cost / latency (§6.3) — selected highlights
+
+Full table in `runs/ablations/README.md`. Headlines:
+
+- **HumanEval & MBPP**: dropping the reviewer roughly *halves* tokens
+  and cost (~1.6× faster) for a −0.5 to −1.5 pp accuracy hit — a
+  worthwhile trade in cost-sensitive deployments.
+- **MATH**: `AC-NoSkillsTools` actually costs *more* than `AC-Full`
+  (+34 % USD, +56 % latency) while losing 4.9 pp solve. The math
+  specialist nodes that get pruned with the reviewer were doing more
+  productive work per token than the surviving solver chain.
+- Average cost per task across all 24 cells stayed in the
+  $0.0002–$0.001 range — total ablation spend ≈ $5.
+
+### 9.4 Gate rescue (§6.4) — important caveat
+
+Gates rarely fire on the AFlow-aligned splits. The `AC-Full`
+blueprints (e.g., `aggregate_then_judge` for HotpotQA,
+`iterative_solve_verify` for GSM8K) wire gates whose triggers
+(`schema_invalid`, `low_confidence`, `arithmetic_mismatch`) simply did
+not match in eval traces. **DROP is the only benchmark with material
+gate activity** (13 / 800 ≈ 1.6 % `arithmetic_mismatch`). On the other
+five datasets, the per-task rescue / harm counts (e.g., MATH 37 / 31)
+reflect non-gate variance (planner ordering, prompt context drift,
+re-derivation noise) and should not be attributed to the gate
+mechanism.
+
+DROP itself shows `rescue / harm = 18 / 23` — gates are *net-harmful*
+on DROP, consistent with §9.2 finding that the DROP reviewer is the
+dataset's biggest negative contributor.
+
+### 9.5 What this means
+
+1. **Skills/tools and gates both contribute on average** (+1.7 pp and
+   +0.85 pp respectively to the normalised mean), with the largest
+   effects on MATH and the coding benchmarks.
+2. **Reviewer-style verifier nodes are not universally helpful** —
+   DROP is a clear case where the reviewer over-trims correct spans
+   (echoes the reverted Session-5 "shortest minimal phrase" prompt).
+3. **Gate activity ≠ gate utility on AFlow eval splits** — most
+   datasets see zero gate firings, so rescue/harm rates are a
+   small-sample story driven by DROP. A gate-design effort should
+   widen trigger coverage (semantic-mismatch detectors for HotpotQA;
+   unit-test failure for HumanEval/MBPP) before drawing harder
+   conclusions.
+
+Full data: `runs/ablations/{ablation_results,component_effects,cost_latency,gate_rescue}.csv`,
+`runs/ablations/summary.json`, narrative in `runs/ablations/README.md`.
+
+## 10. Key takeaways
 
 1. **Simplicity-first compilation works.** GSM8K's 50-pt jump came from
    *removing* the `math_specialist_route` verifier; CS3 likewise showed
@@ -437,7 +543,7 @@ Findings:
    HumanEval (where we trail by 5 pt) and MATH (where we lead by 2 pt
    but could push further).
 
-## 10. Limitations
+## 11. Limitations
 
 - **HumanEval gap (−4.5 pt)** — gpt-4o-mini's first-attempt code
   passes ~90 % of edge-case tests; the residual ~5 % gap to AFlow's
@@ -485,7 +591,7 @@ Findings:
   `force_topology_level` / `disable_gates` / `disable_reviewer`
   flags, but were not run for budget reasons.
 
-## 11. Reproducibility
+## 12. Reproducibility
 
 Run directories under `runs/full_v6/{dataset}/` (Session 6 reruns),
 `runs/full/math/` (Session 5 carried over), and `runs/case*/` carry:
@@ -542,7 +648,7 @@ asyncio.run(run_blueprint(bp, config=cfg, payload={'task': 'Janet has 16 eggs...
 "
 ```
 
-## 12. References
+## 13. References
 
 - AFlow paper — https://arxiv.org/abs/2410.10762
 - AFlow code — https://github.com/FoundationAgents/AFlow

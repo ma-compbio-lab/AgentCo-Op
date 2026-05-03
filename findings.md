@@ -610,3 +610,83 @@ didn't natively support.
 - Replace the BH-FDR + vectorised Wilcoxon in Python with a true LR
   test for the Signac branch — would need `statsmodels` and a small
   nCount_peaks covariate matrix.
+
+## Session 8 — Ablation study (2026-05-02 / 03)
+
+Source spec: `ablation.md` (2 × 2 factorial: skills+tools × gate
+repair → AC-Full / AC-NoGate / AC-NoSkillsTools / AC-Minimal). Run on
+all six AFlow-aligned full splits.
+
+### Implementation choice — "skills+tools off" is a proxy
+
+`agentcoop/benchmarks/runner.py::_apply_variant` only honours the
+following knobs today: `force_topology_level` (cosmetic),
+`disable_gates` (sets `max_activations = 0`), `disable_reviewer`
+(drops review-role nodes + dangling edges). There is **no wired knob**
+that disables the skill registry or removes tool/sandbox backends
+from the runtime. The spec's "skills+tools off" was therefore mapped
+to `disable_reviewer: true` — the closest available proxy, since the
+reviewer is the one node that today exercises the
+`verifier_with_calibration` agent skill plus its tool-call surface.
+This choice is documented openly in `configs/ablations/ac_*.yaml`
+notes.
+
+### Numbers worth remembering
+
+- **DROP is the negative-interaction outlier.** Reviewer-style
+  verification *hurts* DROP F1: AC-NoSkillsTools 0.7830 beats AC-Full
+  0.7723 (+1.07 pp), and the §6.2 interaction is the largest negative
+  across the board (−0.0151). Echoes the reverted Session-5
+  "shortest minimal phrase" answer-formatter prompt — the DROP
+  reviewer over-trims correct full-credit spans.
+- **MATH is the best-behaved cell.** Both factors give large,
+  near-additive gains (+4.9 pp skills/tools, +1.6 pp gates,
+  interaction ≈ 0). Component effects are also robust to the gate
+  setting (+4.94 with gates, +4.89 without).
+- **HumanEval & GSM8K positive interaction.** Gates and skills/tools
+  amplify each other on coding/math (+0.0227 and +0.0114 interaction
+  respectively).
+- **HumanEval & MBPP cost halving.** Dropping the reviewer roughly
+  halves tokens and cost (~1.6× faster) for a −0.5 to −1.5 pp
+  accuracy hit — usable in cost-sensitive deployments.
+- **MATH cost inversion.** AC-NoSkillsTools costs *more* than AC-Full
+  (+34 % USD, +56 % latency) while losing 4.9 pp solve. The math
+  specialist nodes pruned with the reviewer were doing more useful
+  work per token than the surviving solver chain.
+
+### Gate-rescue analysis caveat
+
+`gate_totals` is empty in metrics.json for 5/6 datasets — DROP is the
+only benchmark with material gate trigger activity (13 / 800
+`arithmetic_mismatch`). The chosen AC-Full blueprints
+(`aggregate_then_judge` for HotpotQA, `iterative_solve_verify` for
+GSM8K, etc.) wire gates whose triggers (`schema_invalid`,
+`low_confidence`, `arithmetic_mismatch`) simply did not match in eval
+traces. The per-task rescue/harm counts elsewhere (e.g., MATH 37/31)
+reflect non-gate variance (planner ordering, prompt context drift,
+re-derivation noise) and should not be attributed to the gate
+mechanism. A gate-design effort should widen trigger coverage
+(semantic-mismatch detectors for HotpotQA; unit-test failure for
+HumanEval / MBPP) before drawing harder conclusions.
+
+### Operational lessons
+
+- HTTPX connection-pool sweet spot is ≤ ~30 in-flight LLM calls
+  (≈ 5 procs × concurrency 6 or 2 procs × concurrency 12). At ~72
+  in-flight (12 × 6), the pool deadlocks and progress drops to ~0.6 %
+  CPU.
+- Sequential per-variant orchestration wastes wall-clock when the
+  variants don't conflict — always parallel-launch non-conflicting
+  variants.
+- Background processes (`&` + log redirect) survive an interactive
+  terminal close — useful safety net for long sweeps.
+
+### Open follow-ups
+
+- Wire a true "skills+tools off" knob (`disable_skill_registry`,
+  `force_backend: llm_only`) so future ablations can isolate the
+  tool/sandbox contribution from the reviewer contribution.
+- Widen gate trigger coverage so the §6.4 rescue-rate metric is
+  computable on > 1 / 6 datasets.
+- The negative DROP interaction is interesting enough to warrant a
+  per-row diagnostic — which 41 net flips drove the −1.07 pp delta?

@@ -1,0 +1,7 @@
+dataset,skills_tools_with_gates,skills_tools_without_gates,gate_with_skills_tools,gate_without_skills_tools,interaction
+hotpotqa,0.0033,0.0058,-0.0014,0.0011,-0.0025
+drop,-0.0107,0.0044,-0.0016,0.0135,-0.0151
+humaneval,0.0151,-0.0076,0.0227,0.0,0.0227
+mbpp,0.0087,0.0088,0.0029,0.003,-0.0001
+gsm8k,0.0038,-0.0076,0.0123,0.0009,0.0114
+math,0.0494,0.0489,0.0161,0.0156,0.0005
