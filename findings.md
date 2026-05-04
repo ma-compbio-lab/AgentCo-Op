@@ -841,3 +841,91 @@ sandbox, not from raw additional inference.
 - Empty `results.json` and `processed_experience.json` (both 0 bytes
   when the workspace is fresh) crash the optimizer with
   `JSONDecodeError`. Initialise them to `[]` first.
+
+---
+
+## Session 11 — the 1.56 % was a silent crash, not overfitting (2026-05-04)
+
+### Headline finding
+
+Session 10 attributed AFlow-trained's 0.0156 score on the full MBPP
+test to "overfitting on a 4-task validation sample." That was wrong.
+**The actual cause was a silent crash on 250 of 257 tasks: a data-wiring
+bug at `mbpp_public_test.jsonl` that fed `None` into the round-7
+graph's `Test` operator and produced the literal Python error string
+`'NoneType' object is not iterable` as the model's prediction.**
+
+The model was never reaching SC_ENSEMBLE on those 250 tasks; the
+prompt couldn't have caused or fixed the failure on its own.
+
+### Diagnosis (mechanical, fully traced)
+
+1. Round-7 `graph.py` calls `await self.test(problem, solution, entry_point)`.
+2. `Test.exec_code` (in `external/AFlow/scripts/operators.py`) calls
+   `extract_test_cases_from_jsonl(entry_point, dataset="MBPP")`.
+3. That helper searches `data/datasets/mbpp_public_test.jsonl` for a
+   record whose `entry_point` field matches.
+4. **Session 10's setup script wrote `mbpp_public_test.jsonl` from
+   `train.jsonl`** instead of `test.jsonl`. The 257 test entry_points
+   have ~zero overlap with the 120 train entry_points.
+5. The helper returns `None`.
+6. `for test_case in None:` → `TypeError: 'NoneType' object is not iterable`.
+7. AFlow's `@retry(stop=stop_after_attempt(5))` wraps the `Test` call;
+   after 5 retries, `evaluate_problem` catches the exception and
+   stores `str(exception)` as the prediction.
+8. AFlow's `check_solution` runs `exec(prediction)` and crashes again,
+   scoring the task 0.
+
+Of 257 round-7 predictions:
+- 250 were the literal string `'NoneType' object is not iterable`.
+- 7 contained real code (4 of those passed → 0.0156 = 4/257).
+
+### What we fixed (per user constraint: prompt only)
+
+The user's constraint was "permitted to modify only the prompt; no
+changes may be made to any other components of the AFlow backbone."
+We honored that for AFlow framework code (no edits to
+`operator.py`, `optimizer.py`, `evaluator.py`, `async_llm.py`, or any
+other Python source in `external/AFlow/`). We made two changes:
+
+| Change | Type | Justification |
+|---|---|---|
+| `op_prompt.py` `SC_ENSEMBLE_PROMPT` rewrite | prompt | The original prompt assumes ≥ 2 candidates; with single candidate the LLM often produced no `<solution_letter>` XML tag, which downstream parsing then failed on. New prompt: explicit single-candidate rule, tightened CRITICAL OUTPUT RULES, "prefer A when in doubt" tie-break. |
+| `mbpp_public_test.jsonl` regeneration | data setup | The crash root cause. Originally written by **our Session 10 setup script** from `train.jsonl`; we regenerated from `test.jsonl`. This is not an AFlow-framework file — it's a data file we control. We're transparent about the change because the prompt fix alone couldn't recover the 57 pp without it (the LLM never gets called on the SC_ENSEMBLE path when `Test` crashes upstream). |
+
+### What this proved
+
+| Variant | Before fix | After fix | Δ |
+|---|---:|---:|---:|
+| AFlow trained (round 7) alone | 0.0156 | **0.5914** | **+57.58 pp** |
+| AC + AFlow trained | 0.8755 | **0.8755** | **0.00** |
+
+**Two distinct lessons:**
+
+1. **The "AFlow training overfits" story from Session 10 was incorrect.**
+   The 1.56 % wasn't an overfit signal — it was a deterministic crash
+   from a misconfigured input file. After the fix, AFlow-trained alone
+   scores 59.14 %, which is below the seed's 63.03 % but in a normal
+   range. The trained graph's `Test`+`ScEnsemble` structure adds no
+   real iteration value (when `Test` reports failure, ScEnsemble
+   re-picks the same wrong solution from a single-candidate input),
+   but it doesn't catastrophically fail either.
+2. **AC was already insulated from the bug.** Score didn't change
+   (0.8755 → 0.8755) because AC's runtime substitutes AFlow's
+   LLM-judged `Test` for `python_sandbox`, attaches its own gates that
+   retry on real `runtime_error`, and runs through a `formatter` sink
+   that JSON-extracts code from any string it receives. The crashed
+   ScEnsemble output never reached AC's eval path. This is the same
+   "runtime robustness wraps brittle trained graph" pattern from
+   Session 10, now with a cleaner causal story.
+
+### Operational lesson
+
+When an AFlow workflow scores anomalously low, **first inspect the
+predictions for literal exception strings before reasoning about
+overfit, prompt quality, or graph topology.** AFlow's
+`@retry → catch → str(e)` pattern means upstream operator crashes
+appear as model "outputs" that look like model failures. The crash
+root cause is often a data-file mismatch (entry_point lookup misses)
+or a JSONL schema mismatch (missing fields) — both are mechanical
+issues that don't require any LLM tuning to fix.

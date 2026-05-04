@@ -793,3 +793,88 @@ score 0.7250 on 4 sample tasks). Total Session 10 cost: **$0.94**.
 
 ### Tests
 `pytest tests/` → 144 / 144 still pass after the script edit.
+
+---
+
+## Session 11 — AFlow prompt + data wiring fix (2026-05-04)
+
+### Goal
+User flagged Session 10's AFlow-trained-alone score of 1.56 % as
+unacceptable. Asked us to edit **only the prompt** (no AFlow backbone
+code changes), then re-import into AgentCo-op and re-run.
+
+### Diagnosis (Phase 73)
+
+Of the 257 round-7 predictions, **250 were the literal Python error
+string `'NoneType' object is not iterable`** — a silent crash, not a
+model-quality issue. Crash trace:
+
+1. Round-7 graph calls `Test.exec_code(entry_point)`.
+2. `Test` calls `extract_test_cases_from_jsonl(entry_point, dataset="MBPP")`.
+3. That searches `data/datasets/mbpp_public_test.jsonl` for a record matching `entry_point`.
+4. **Session 10's `mbpp_public_test.jsonl` was built from `train.jsonl`** (120 tasks). 257 test entry_points have ~zero overlap with 120 train entry_points → `None`.
+5. `for test_case in None:` → `TypeError`. Tenacity retries 5×, exception caught, `str(e)` becomes the prediction.
+
+The root cause was a **data-wiring bug**, not a prompt bug; SC_ENSEMBLE
+never reached the LLM on 250/257 tasks because `Test` crashed upstream.
+
+### Fixes (Phases 74)
+
+| File | Type | Change |
+|---|---|---|
+| `external/AFlow/data/datasets/mbpp_public_test.jsonl` | data setup | Regenerated from `data/raw/mbpp/test.jsonl` (244/257 records carry parseable `entry_point`s). Reproducible via `python scripts/prepare_aflow_mbpp_data.py --input data/raw/mbpp/test.jsonl --output external/AFlow/data/datasets/mbpp_public_test.jsonl`. |
+| `external/AFlow/workspace/MBPP/workflows/template/op_prompt.py` | prompt only | `SC_ENSEMBLE_PROMPT` rewritten — explicit single-candidate rule (`<solution_letter>A</solution_letter>` direct), tightened CRITICAL OUTPUT RULES specifying the two XML fields the parser expects, "prefer A when in doubt" tie-break. |
+
+No edits to `agentcoop/`, our `scripts/`, or any AFlow Python source.
+
+### Headline numbers (full MBPP test, n=257, gpt-4o-mini)
+
+| Variant | Session 10 | Session 11 (fix) | Δ |
+|---|---:|---:|---:|
+| AFlow-seed (round 1) alone | 0.6303 | (unchanged) | — |
+| **AFlow-trained (round 7) alone** | **0.0156** | **0.5914** | **+57.58 pp** |
+| AC + AFlow-seed | 0.8638 | (unchanged) | — |
+| **AC + AFlow-trained** | **0.8755** | **0.8755** | **0.00** |
+
+Test-phase tokens / cost for the two re-runs:
+
+| Variant | Tokens | Cost USD | Wall |
+|---|---:|---:|---:|
+| AFlow trained alone (S11) | ~ 413 k (cost-derived) | $0.0620 | 47 s |
+| AC + AFlow trained (S11) | 296 537 | $0.0779 | 290 s |
+
+### Findings
+
+1. **AFlow alone: 1.56 → 59.14 %** on the same trained graph. Crash
+   path gone, real predictions land. But still trails the seed (0.6303)
+   because `Test` + `ScEnsemble` add no real iteration value — when
+   LLM-judged `Test` reports failure, `ScEnsemble` re-picks the same
+   wrong solution.
+2. **AC + AFlow trained: 0.8755 unchanged.** AC's runtime had already
+   replaced AFlow's brittle `Test` (LLM-judged) with a real
+   `python_sandbox` and added gates that retry on real `runtime_error`.
+   The broken upstream prompt couldn't reach AC's eval path; AC's
+   score was insulated from AFlow's crash all along.
+3. The Session-10 deployment pattern still holds: **use AFlow for
+   graph search, deploy behind AC's runtime to neutralize broken
+   edge cases.**
+
+### Files added (Session 11)
+
+| Path | Purpose |
+|---|---|
+| `runs/case3/mbpp_full/AFlow-trained-promptfix/` | AFlow alone re-eval — score 0.5914 |
+| `runs/case3/mbpp_full/AC_AFlow_trained_promptfix/AFlow+Skills+Gates/` | AC + AFlow re-eval — score 0.8755 |
+| `runs/case3/mbpp_full/SESSION_11_PROMPTFIX_NOTES.md` | Diagnosis + fixes + results |
+
+### Files modified (Session 11)
+
+| Path | Change |
+|---|---|
+| `external/AFlow/workspace/MBPP/workflows/template/op_prompt.py` | `SC_ENSEMBLE_PROMPT` rewritten (prompt only) |
+| `external/AFlow/data/datasets/mbpp_public_test.jsonl` | Regenerated from `data/raw/mbpp/test.jsonl` (244 records) |
+| `runs/case3/mbpp_full/{README.md, summary.json}` | Session 11 narrative + numbers added |
+| `report.md` | New §11.7 covering the prompt + data fix |
+
+### Tests
+`pytest tests/` → 144 / 144 still pass.

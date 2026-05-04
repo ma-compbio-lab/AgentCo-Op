@@ -20,6 +20,7 @@ runs/case*/**
 !runs/case*/**/
 !runs/case*/**/README.md
 !runs/case*/**/summary.json
+!runs/case*/**/SESSION_*_NOTES.md
 # Ablation deliverable — README narrative + the four §6 tables.
 !runs/ablations/
 !runs/ablations/README.md
@@ -35,4 +36,3 @@ data/*
 # External repos (cloned for reference / image builds; commit SHAs pinned in configs/external_commits.yaml)
 external/
 .secrets/
-runs/

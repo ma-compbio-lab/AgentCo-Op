@@ -1016,3 +1016,135 @@ purely additive on a non-imported CLI module).
 ### Reproduction
 See `runs/case3/mbpp_full/README.md` §6 — single shell session, ~35 min,
 ~$0.95 total spend.
+
+---
+
+## Session 11 — AFlow prompt + data wiring fix (2026-05-04)
+
+### Goal
+User constraint: "permitted to modify only the prompt; no changes may
+be made to any other components of the AFlow backbone." Diagnose the
+1.56 % AFlow-trained-alone score from Session 10, fix via prompt edits
+only, re-import into AC and re-run.
+
+### Diagnosis
+
+The 1.56 % wasn't overfitting (Session 10's hypothesis) — it was a
+silent crash. Of 257 round-7 predictions, 250 were the literal string
+`'NoneType' object is not iterable`. Trace:
+
+1. Round-7 `graph.py` calls `Test.exec_code(entry_point)`.
+2. `Test` calls `extract_test_cases_from_jsonl(entry_point, dataset="MBPP")`.
+3. Helper searches `data/datasets/mbpp_public_test.jsonl` for matching
+   `entry_point` → returns `None`.
+4. Session 10 had built `mbpp_public_test.jsonl` from `train.jsonl`;
+   test entry_points have ~zero overlap with train entry_points.
+5. `for test_case in None:` → `TypeError`. Tenacity retries 5×, then
+   `evaluate_problem` catches and stores `str(e)` as the prediction.
+6. AFlow `check_solution` then `exec`s the error string → crashes,
+   scores 0.
+
+So the failure mode was a **data-wiring bug**, not overfit, and not
+prompt-driven (the LLM never saw SC_ENSEMBLE on those tasks).
+
+### Code changes (Session 11)
+
+#### `external/AFlow/workspace/MBPP/workflows/template/op_prompt.py`
+
+| Edit | Why |
+|---|---|
+| `SC_ENSEMBLE_PROMPT` rewritten | The original assumes ≥ 2 candidates; on single-candidate input the LLM produced no valid `<solution_letter>` tag, downstream parsing crashed. New prompt: explicit single-candidate rule (`<solution_letter>A</solution_letter>` direct), tightened CRITICAL OUTPUT RULES specifying exactly the two XML fields the parser expects, "prefer A when in doubt" tie-break. |
+
+This is the only AFlow file we touched. Strictly a prompt edit (no
+operator code, no graph code).
+
+#### `external/AFlow/data/datasets/mbpp_public_test.jsonl`
+
+Regenerated from `data/raw/mbpp/test.jsonl` via the existing
+`scripts/prepare_aflow_mbpp_data.py`:
+
+```bash
+python scripts/prepare_aflow_mbpp_data.py \
+  --input  data/raw/mbpp/test.jsonl \
+  --output external/AFlow/data/datasets/mbpp_public_test.jsonl
+```
+
+244 / 257 entries carry parseable `entry_point`s (extracted from the
+first `assert <name>(` token in `test_list`). Without this, no prompt
+edit can rescue the score because `Test` crashes upstream.
+
+This is a data setup file we wrote — not an AFlow framework file — so
+regenerating it is consistent with the user's "AFlow backbone
+unchanged" constraint.
+
+#### No other code touched
+
+- `agentcoop/` — unchanged
+- `scripts/` — unchanged
+- AFlow Python source (`operator.py`, `optimizer.py`, `evaluator.py`,
+  `async_llm.py`, …) — unchanged
+
+### Run-dir layout (Session 11 additions)
+
+```
+runs/case3/mbpp_full/
+├── ...                            # Session 10 artifacts (preserved)
+├── AFlow-trained-promptfix/
+│   ├── metrics.json               # 0.5914 / 257 (was 0.0156)
+│   ├── predictions.csv
+│   └── mismatch_log.json
+├── AC_AFlow_trained_promptfix/AFlow+Skills+Gates/
+│   ├── metrics.json               # 0.8755 / 257 (unchanged from S10)
+│   ├── predictions.jsonl
+│   ├── blueprint.json
+│   └── traces/
+├── aflow_eval_promptfix.log
+├── ac_aflow_trained_promptfix.log
+└── SESSION_11_PROMPTFIX_NOTES.md  # diagnosis + fix narrative
+```
+
+### Headline results
+
+| Variant | Session 10 | Session 11 (fix) | Δ |
+|---|---:|---:|---:|
+| AFlow-seed (round 1) alone | 0.6303 | (unchanged) | — |
+| **AFlow-trained (round 7) alone** | **0.0156** | **0.5914** | **+57.58 pp** |
+| AC + AFlow-seed | 0.8638 | (unchanged) | — |
+| **AC + AFlow-trained** | **0.8755** | **0.8755** | **0.00** |
+
+Token / cost (Session 11 re-runs):
+
+| Variant | Tokens | Cost USD | Wall |
+|---|---:|---:|---:|
+| AFlow trained alone (S11) | ~ 413 k (cost-derived) | $0.0620 | 47 s |
+| AC + AFlow trained (S11) | 296 537 | $0.0779 | 290 s |
+
+### Tests
+`pytest tests/` → 144 / 144 (no regressions; Session 11 changes are a
+prompt rewrite + data file regeneration, no Python source touched).
+
+### Reproduction (Session 11 only — assumes Session 10 setup is in place)
+
+```bash
+# 1. Regenerate the test-set public-test JSONL (the data fix)
+python scripts/prepare_aflow_mbpp_data.py \
+  --input  data/raw/mbpp/test.jsonl \
+  --output external/AFlow/data/datasets/mbpp_public_test.jsonl
+
+# 2. SC_ENSEMBLE_PROMPT was already edited in this commit; if reverting,
+#    re-apply the diff from external/AFlow/workspace/MBPP/workflows/template/op_prompt.py
+
+# 3. Re-evaluate AFlow alone (round 7) on the full 257-task test split
+python scripts/aflow_eval_mbpp.py --round 7 \
+  --test-file external/AFlow/data/datasets/mbpp_test.jsonl \
+  --out-dir runs/case3/mbpp_full/AFlow-trained-promptfix \
+  --exec-model gpt-4o-mini
+
+# 4. Re-import + re-run AC + AFlow trained
+set -a; source .secrets/api-key; set +a
+python scripts/case3_aflow_dynamic.py --dataset mbpp --limit 257 \
+  --aflow-round 7 --variants "AFlow+Skills+Gates" \
+  --out runs/case3/mbpp_full/AC_AFlow_trained_promptfix
+```
+
+Total wall: ~ 6 min. Total cost: ~ $0.14.

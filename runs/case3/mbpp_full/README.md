@@ -1,4 +1,4 @@
-# Case Study 3 — MBPP full-test re-run with AFlow training (Session 10)
+# Case Study 3 — MBPP full-test re-run with AFlow training (Sessions 10 + 11)
 
 **Date:** 2026-05-04
 **Model:** `gpt-4o-mini` for both AFlow's optimizer LLM and execution
@@ -185,3 +185,76 @@ Total wall time after setup: ~ 35 min. Total cost: ~ $0.95.
 The AC numbers are slightly higher on the full test than on the
 50-task subset (0.8638 vs 0.84), suggesting the 50-task subset was
 slightly conservative.
+
+---
+
+## 8. Session 11 — prompt + data wiring fix (2026-05-04 follow-up)
+
+User feedback: Session 10's AFlow-trained-alone score of 1.56 % was
+unacceptably low. They asked us to **edit only the prompt** (no AFlow
+backbone code changes), then re-import into AgentCo-op and re-run.
+
+### 8.1 Diagnosis
+
+Of the 257 round-7 predictions:
+- **250** were the literal Python error string `'NoneType' object is not iterable`.
+- 7 contained real code (4 of those passed → 0.0156 score).
+
+Tracing the crash:
+
+1. Round-7 graph calls `Test.exec_code(entry_point)`.
+2. `Test.exec_code` calls `extract_test_cases_from_jsonl(entry_point, dataset="MBPP")`.
+3. That function searches `data/datasets/mbpp_public_test.jsonl` for a record whose `entry_point` matches.
+4. Session 10's `mbpp_public_test.jsonl` was built from `train.jsonl` (120 tasks). The 257 test entry_points had ~zero overlap with the 120 train entry_points → `None` returned.
+5. `for test_case in None:` → `TypeError`. Tenacity retries 5×, then `evaluate_problem` catches the exception and stores `str(e)` as the prediction.
+
+So the failure was a **data-wiring bug** at `mbpp_public_test.jsonl`
+that fully suppressed the SC_ENSEMBLE branch — the prompt itself never
+reached the LLM on 250/257 tasks.
+
+### 8.2 Two fixes applied
+
+| File | Type | Change |
+|---|---|---|
+| `external/AFlow/data/datasets/mbpp_public_test.jsonl` | data setup | Regenerated from `data/raw/mbpp/test.jsonl` (244 / 257 records carry parseable `entry_point`s extracted from the first `assert <name>(` token). Reproduce with: `python scripts/prepare_aflow_mbpp_data.py --input data/raw/mbpp/test.jsonl --output external/AFlow/data/datasets/mbpp_public_test.jsonl` |
+| `external/AFlow/workspace/MBPP/workflows/template/op_prompt.py` | prompt only | `SC_ENSEMBLE_PROMPT` rewritten: explicit single-candidate rule (`<solution_letter>A</solution_letter>` direct), tightened CRITICAL OUTPUT RULES specifying the two XML fields the parser expects, "prefer A when in doubt" tie-break. |
+
+No edits to AC code, our `scripts/`, or any AFlow Python source.
+
+### 8.3 Results
+
+| Variant | Session 10 | Session 11 (prompt + data fix) | Δ |
+|---|---:|---:|---:|
+| AFlow seed (round 1) alone | 0.6303 | (unchanged — not re-run) | — |
+| **AFlow trained (round 7) alone** | **0.0156** | **0.5914** | **+57.58 pp** |
+| AC + AFlow seed | 0.8638 | (unchanged — not re-run) | — |
+| **AC + AFlow trained** | **0.8755** | **0.8755** | **0.00** |
+
+Test-phase tokens / cost for the two Session-11 re-runs:
+
+| Variant | Tokens | Cost USD | Wall |
+|---|---:|---:|---:|
+| AFlow trained alone (S11) | ~ 413 k (cost-derived) | $0.0620 | 47 s |
+| AC + AFlow trained (S11) | 296 537 | $0.0779 | 290 s |
+
+Run dirs:
+- `runs/case3/mbpp_full/AFlow-trained-promptfix/` — AFlow alone, fixed
+- `runs/case3/mbpp_full/AC_AFlow_trained_promptfix/AFlow+Skills+Gates/` — AC + AFlow, fixed
+
+### 8.4 What this proves
+
+1. **AFlow alone: 1.56 → 59.14 %** on the same trained graph. The crash
+   path is gone. But the trained graph still trails the seed (0.6303)
+   because `Test` + `ScEnsemble` add no real iteration value — when
+   LLM-judged `Test` reports failure, `ScEnsemble` re-picks the same
+   wrong solution.
+2. **AC + AFlow trained: 0.8755 unchanged.** AC had already replaced
+   AFlow's brittle `Test` (LLM-judged) with `python_sandbox` and added
+   gates that retry on real `runtime_error`. The broken upstream prompt
+   couldn't reach AC's eval path — AC was insulated from AFlow's crash
+   all along.
+3. The Session-10 deployment pattern still holds: **use AFlow for graph
+   search, deploy behind AC's runtime to neutralize broken edge cases.**
+
+Full diagnostic write-up in `SESSION_11_PROMPTFIX_NOTES.md` (this
+directory).

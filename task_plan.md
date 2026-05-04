@@ -621,3 +621,56 @@ Per user follow-up after the cost-checkpoint:
   AFlow+Skills+Gates alone, AC-Gated, MedPrompt).
 
 Revised cost projection: ~3-4 hr wall, ~$3-5 API.
+
+---
+
+## Session 11 — AFlow prompt fix + re-eval (2026-05-04)
+
+### Goal (per user §1)
+Adjust **only the AFlow prompt** to fix the catastrophic 1.56% score on
+the full MBPP test split. Re-import the trained graph into AC, re-run
+the case study. No changes to AFlow's optimizer, evaluator, operator
+implementations, or other backbone code — prompts only.
+
+### Diagnosis (Phase 73)
+- 250 / 257 predictions are the literal string `"'NoneType' object is not iterable"`
+- 7 / 257 contain real code (4 of which pass)
+- Root cause: round-7 graph calls `self.test(...)` which uses
+  `Test.exec_code` to actually run the candidate against MBPP public
+  asserts. When `Test` returns `result: False` (which it does for
+  ~75% of tasks because the public asserts are strict edge cases),
+  the workflow calls `self.sc_ensemble(solutions=[single_solution], ...)`
+- `SC_ENSEMBLE_PROMPT` asks the LLM to "evaluate these solutions and
+  identify the answer that appears most frequently across them." With
+  ONE solution, the LLM has no consistency to evaluate; it often
+  returns prose without the `<solution_letter>X</solution_letter>` XML
+  tag, so `response.get("solution_letter", "")` returns `""`, and
+  `answer_mapping[""]` raises `KeyError` (or some downstream call
+  raises `'NoneType' object is not iterable`).
+- The exception is caught by AFlow's tenacity retry decorator and the
+  error string ends up in the `prediction` field.
+
+### Phase 74 — prompt edit plan (PROMPT ONLY)
+
+Two prompt files in scope:
+
+1. **`external/AFlow/workspace/MBPP/workflows/template/op_prompt.py`**:
+   - `SC_ENSEMBLE_PROMPT`: handle the single-solution edge case
+     explicitly — "If only one solution is provided, output
+     `solution_letter: A` directly without further analysis."
+   - `CUSTOM_CODE_GENERATE_PROMPT` (if present): tighten code-only
+     output requirement to lift the seed baseline.
+
+2. **`external/AFlow/workspace/MBPP/workflows/round_7/prompt.py`**:
+   - Per-round prompt overrides (if any). Inspect first.
+
+NO edits to `operator.py`, `operator_an.py`, `evaluator.py`, `optimizer.py`,
+`async_llm.py`, or any other backbone module.
+
+### Phases 75-77
+
+- 75 (15 min, ~$0.07): re-eval AFlow alone via aflow_eval_mbpp.py
+- 76 (5 min, ~$0.05): re-eval AC + AFlow via case3_aflow_dynamic.py
+- 77 (15 min, $0): docs + commit + push
+
+Total expected wall: ~ 35 min, $0.12.

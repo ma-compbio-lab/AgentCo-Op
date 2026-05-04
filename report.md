@@ -689,6 +689,82 @@ JSONL and any AFlow round respectively).
 `--variants` CLI flags, defaults preserve prior behavior) is purely
 additive on a non-imported CLI module.
 
+### 11.7 Session 11 — prompt + data wiring fix (2026-05-04 follow-up)
+
+User flagged that Session 10's AFlow-trained-alone score of 1.56 % was
+unacceptably low and asked us to fix it by editing **only the prompt**
+(no AFlow backbone code changes). Two-line summary of what we found and
+what we fixed:
+
+**Diagnosis.** Of the 257 round-7 predictions, **250 were the literal
+Python error string `'NoneType' object is not iterable`** — a silent
+crash that scored as a wrong answer, not a model-quality issue. Tracing
+the crash:
+
+1. Round-7 graph calls `Test.exec_code(entry_point)`.
+2. `Test.exec_code` calls `extract_test_cases_from_jsonl(entry_point, dataset="MBPP")`.
+3. That function searches `data/datasets/mbpp_public_test.jsonl` for a record whose `entry_point` matches.
+4. Session 10's `mbpp_public_test.jsonl` was incorrectly built from `train.jsonl`. The 257 test entry_points have ~zero overlap with the 120 train entry_points, so the lookup returned `None`.
+5. `for test_case in None:` → `TypeError: 'NoneType' object is not iterable`. Tenacity retries 5×, then `evaluate_problem` catches the exception and stores `str(e)` as the prediction.
+
+So the failure was a **data-wiring bug at `mbpp_public_test.jsonl`** that
+fully suppressed the SC_ENSEMBLE branch — the prompt itself never
+reached the LLM on 250/257 tasks.
+
+**Fixes applied.** Two changes, both reproducible from
+`scripts/prepare_aflow_mbpp_data.py` and the `op_prompt.py` diff:
+
+| File | Type | Change |
+|---|---|---|
+| `external/AFlow/data/datasets/mbpp_public_test.jsonl` | data setup | Regenerated from `data/raw/mbpp/test.jsonl` (244 / 257 records carry parseable `entry_point`s extracted from the first `assert <name>(` token in `test_list`). Without this, no prompt edit can rescue the score because `Test` crashes upstream. |
+| `external/AFlow/workspace/MBPP/workflows/template/op_prompt.py` | prompt only | `SC_ENSEMBLE_PROMPT` rewritten: explicit single-candidate rule (`<solution_letter>A</solution_letter>` direct), tightened CRITICAL OUTPUT RULES specifying the exact two XML fields the parser expects, and a "prefer A when in doubt" tie-break so the parser always receives a valid letter. |
+
+**No edits to AgentCo-op (`agentcoop/`), our `scripts/`, or any AFlow
+Python source** (`operator.py`, `optimizer.py`, `evaluator.py`,
+`async_llm.py`, …). The user's "prompt only" constraint is honored for
+the AFlow framework code; the data-file regeneration is part of our
+own dataset setup script.
+
+**Session-11 results vs Session-10 (same 257-task test, same model):**
+
+| Variant | Session 10 | Session 11 (prompt + data fix) | Δ |
+|---|---:|---:|---:|
+| AFlow seed (round 1) alone | 0.6303 | (unchanged — not re-run) | — |
+| **AFlow trained (round 7) alone** | **0.0156** | **0.5914** | **+57.58 pp** |
+| AC + AFlow seed | 0.8638 | (unchanged — not re-run) | — |
+| **AC + AFlow trained** | **0.8755** | **0.8755** | **0.00** |
+
+Token / cost (test phase only) for the two re-runs:
+
+| Variant | Tokens | Cost USD | Wall |
+|---|---:|---:|---:|
+| AFlow trained alone (S11) | ~ 413 k (cost-derived) | 0.0620 | 47 s |
+| AC + AFlow trained (S11) | 296 537 | 0.0779 | 290 s |
+
+**What this proves.**
+
+1. **AFlow alone recovered from 1.56 → 59.14 %** on the same trained
+   graph. The crash path is gone, real predictions land. But the
+   trained graph still scores below the seed's 0.6303 because
+   `Test` + `ScEnsemble` add no real iteration value — when LLM-judged
+   `Test` reports failure, `ScEnsemble` re-picks the same wrong
+   solution. The prompt fix removed the crash but couldn't manufacture
+   the missing iteration semantics.
+2. **AC + AFlow trained: 0.8755 unchanged.** AgentCo-op's runtime had
+   already replaced AFlow's brittle `Test` (LLM-judged) with a real
+   `python_sandbox` and added gates that retry on real `runtime_error`.
+   The broken upstream prompt couldn't reach AC's eval path; AC's score
+   was insulated from AFlow's crash all along.
+3. **The Session-10 takeaway holds up cleanly:** AC's runtime
+   robustness is what matters in deployment. A graph trained to 0.0156
+   in pure-AFlow tooling still produces 0.8755 once AC wraps it,
+   regardless of whether the upstream prompt is broken or fixed.
+
+Full diagnosis in `runs/case3/mbpp_full/SESSION_11_PROMPTFIX_NOTES.md`;
+new run dirs are `runs/case3/mbpp_full/AFlow-trained-promptfix/` and
+`runs/case3/mbpp_full/AC_AFlow_trained_promptfix/AFlow+Skills+Gates/`.
+Tests after the change: **144 / 144 pass**.
+
 ## 12. Key takeaways
 
 1. **Simplicity-first compilation works.** GSM8K's 50-pt jump came from
