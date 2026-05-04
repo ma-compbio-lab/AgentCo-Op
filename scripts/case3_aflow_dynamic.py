@@ -65,10 +65,10 @@ def _ensure_formatter_sink(bp: WorkflowBlueprint) -> WorkflowBlueprint:
     return bp
 
 
-def _make_variants(repo_root: Path, dataset: str) -> dict[str, WorkflowBlueprint]:
+def _make_variants(repo_root: Path, dataset: str, round_num: int = 1) -> dict[str, WorkflowBlueprint]:
     aflow_workflow = (
         repo_root / "external" / "AFlow" / "workspace" / dataset.upper() /
-        "workflows" / "round_1" / "graph.py"
+        "workflows" / f"round_{round_num}" / "graph.py"
     )
     imported = import_aflow_workflow(aflow_workflow, dataset=dataset)
     imported = _ensure_formatter_sink(imported)
@@ -327,29 +327,45 @@ async def _execute_medprompt(
     return summary
 
 
-async def amain(dataset: str, limit: int, out_root: Path) -> dict:
+async def amain(
+    dataset: str,
+    limit: int,
+    out_root: Path,
+    *,
+    aflow_round: int = 1,
+    keep_variants: list[str] | None = None,
+) -> dict:
     repo_root = Path(__file__).resolve().parent.parent
     tasks = load_dataset(dataset, split="test", limit=limit, aflow=True)
-    variants = _make_variants(repo_root, dataset)
+    variants = _make_variants(repo_root, dataset, round_num=aflow_round)
     variants = _add_canonical(repo_root, dataset, variants)
+    if keep_variants:
+        wanted = set(keep_variants)
+        variants = {k: v for k, v in variants.items() if k in wanted}
 
     results = []
     for name, bp in variants.items():
-        print(f"[case3] running variant: {name} (n={len(tasks)})")
+        print(f"[case3] running variant: {name} (n={len(tasks)}, aflow_round={aflow_round})")
         results.append(await _execute(name, bp, tasks, dataset, out_root))
         print(f"  -> {results[-1]}")
 
     # Self-consistency variant — uses the AFlow+Skills+Tools graph as base.
-    medprompt_base = variants.get("AFlow+Skills+Tools")
-    if medprompt_base is not None and dataset == "mbpp":
-        name = "AFlow+MedPrompt-Voting"
-        print(f"[case3] running variant: {name} (n={len(tasks)}, k=3, T=0.7)")
-        results.append(
-            await _execute_medprompt(name, medprompt_base, tasks, dataset, out_root)
-        )
-        print(f"  -> {results[-1]}")
+    if (keep_variants is None or "AFlow+MedPrompt-Voting" in keep_variants):
+        medprompt_base = variants.get("AFlow+Skills+Tools")
+        if medprompt_base is not None and dataset == "mbpp":
+            name = "AFlow+MedPrompt-Voting"
+            print(f"[case3] running variant: {name} (n={len(tasks)}, k=3, T=0.7)")
+            results.append(
+                await _execute_medprompt(name, medprompt_base, tasks, dataset, out_root)
+            )
+            print(f"  -> {results[-1]}")
 
-    final = {"dataset": dataset, "n_per_variant": len(tasks), "variants": results}
+    final = {
+        "dataset": dataset,
+        "n_per_variant": len(tasks),
+        "aflow_round": aflow_round,
+        "variants": results,
+    }
     (out_root / "summary.json").write_text(json.dumps(final, indent=2), encoding="utf-8")
     return final
 
@@ -359,13 +375,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dataset", default="mbpp")
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--out", default="runs/case3/mbpp")
+    p.add_argument("--aflow-round", type=int, default=1,
+                   help="AFlow workspace/<DS>/workflows/round_<N>/graph.py to import")
+    p.add_argument("--variants", default="",
+                   help="Comma-separated subset of variant names to run "
+                        "(default: all). Names: AFlow-imported, AFlow+Skills+Tools, "
+                        "AFlow+Skills+Gates, AC-Gated, AFlow+MedPrompt-Voting")
     args = p.parse_args(argv)
     if not os.environ.get("OPENAI_API_KEY"):
         print("error: OPENAI_API_KEY not set", file=sys.stderr)
         return 2
     out_root = Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
-    summary = asyncio.run(amain(args.dataset, args.limit, out_root))
+    keep = [v.strip() for v in args.variants.split(",") if v.strip()] or None
+    summary = asyncio.run(amain(
+        args.dataset, args.limit, out_root,
+        aflow_round=args.aflow_round, keep_variants=keep,
+    ))
     print(json.dumps(summary, indent=2))
     return 0
 

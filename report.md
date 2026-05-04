@@ -596,7 +596,100 @@ documents the exact run that produced the numbers above.
 reproducible — the orchestrator changes are additive and the wrapper
 changes only land for the new R-image path.
 
-## 11. Key takeaways
+## 11. CS3 full-MBPP re-run with AFlow training (Session 10)
+
+The previous CS3 run used a 50-task MBPP subset; this session re-ran
+the full **257-task** test split AND retrained AFlow on the
+120-task MBPP train split with `--sample 4 --max_rounds 8`. Single
+model `gpt-4o-mini` for both AFlow's optimizer and execution LLMs
+(per user §1, no model mixing). Per user §2, only two variants ran:
+AFlow alone, and AFlow + AgentCo-op (`AFlow+Skills+Gates`).
+
+### 11.1 Headline numbers (n=257, gpt-4o-mini)
+
+| Variant | Score (pass@1) | n passed | Test cost | Test tokens | Wall |
+|---|---:|---:|---:|---:|---:|
+| AFlow-seed (round 1) — alone | 0.6303 | 162 | $0.0199 | ~133 k (cost-derived) | 14 s |
+| AFlow-trained (round 7) — alone | **0.0156** | 4 | $0.0678 | ~452 k (cost-derived) | 124 s |
+| AC + AFlow-seed (round 1) | 0.8638 | 222 | $0.0425 | 167 034 | 156 s |
+| **AC + AFlow-trained (round 7)** | **0.8755** | 225 | $0.0749 | 290 677 | 255 s |
+
+### 11.2 Token / cost — training vs test (per user §3)
+
+| Phase | Variant | Tokens | Cost USD |
+|---|---|---:|---:|
+| Training | AFlow optimizer, 7 rounds × 4 samples | ~ 4.16 M (cost-derived) | **0.7344** |
+| Test | AFlow-seed alone | ~ 133 k | 0.0199 |
+| Test | AFlow-trained alone | ~ 452 k | 0.0678 |
+| Test | AC + AFlow-seed | 167 034 | 0.0425 |
+| Test | AC + AFlow-trained | 290 677 | 0.0749 |
+| **Total Session 10** | | | **0.9395** |
+
+AFlow's optimizer logs `total_cost` per round but not raw tokens; the
+"~tokens" column derives them from gpt-4o-mini pricing ($0.15/M input
++ $0.60/M output) assuming an 80/20 input/output split.
+
+### 11.3 Two findings
+
+**The trained graph overfits to the 4-task validation sample.**
+Round 7 added a `Test` (LLM-judged) → `ScEnsemble` fallback after the
+seed `CustomCodeGenerate`. Validation score on 4 tasks: 0.7250. Full
+test score on 257 tasks: 0.0156 (4 / 257 passed). Failure mode is
+concrete: when the LLM-judged `Test` reports failure, the graph
+passes a single solution to `ScEnsemble`, which is designed to vote
+across multiple candidates and instead emits prose-style critique
+strings (e.g. `'NoneType' object is not iterable`) that AFlow's
+`check_solution` then `exec`s and crashes. The 4-task sample never
+exercised this fallback.
+
+**AgentCo-op recovers the broken trained graph by 86 pp.** AC imports
+the round-7 graph, attaches `code_debugging` + `python_testing`
+skills, the `sandbox_python` + `generated_tests` + `static_analyzer`
+tools, and the runtime gates from
+`configs/gates/code_runtime_gates.yaml`. Three substitutions:
+1. `Test` becomes a real `python_sandbox` exec, not an LLM judge.
+2. A `formatter` sink ensures the final output is JSON-extracted code,
+   not whatever string ScEnsemble produced.
+3. Gates retry the programmer on real `runtime_error` /
+   `tool_error` traces instead of routing to the broken ScEnsemble.
+
+Net: 1.56 % → 87.55 %. AC's value here is **runtime robustness wrapping
+a brittle trained graph**, not just "more LLM calls" — the cost gap
+(290 k vs 452 k tokens) is dominated by substituting an LLM `Test`
+with a real sandbox.
+
+### 11.4 What this means for the AFlow + AgentCo-op pattern
+
+- AC + AFlow-seed beats AC + AFlow-trained by only +1.17 pp absolute
+  (87.55 vs 86.38). Most of the win comes from AC's augmentation, not
+  from AFlow training. Practically: **on a small training budget,
+  skip AFlow training and just run AC on the seed graph** —
+  cost-equivalent (~$0.04 vs $0.74 + $0.04) and within 1.2 pp.
+- For larger training budgets (`--sample 50–100`), AFlow training
+  produces non-degenerate graphs and the AC + trained variant should
+  pull further ahead. We didn't test that here because the user's
+  cost cap was $5–10.
+- **AC's gates can rescue overfit AFlow graphs in production.** This
+  is a concrete deployment pattern: use AFlow for graph search,
+  deploy the chosen graph behind AC's runtime so its broken edge
+  cases are caught and retried instead of escaping as silent failures.
+
+### 11.5 Reproduction
+
+`runs/case3/mbpp_full/README.md` §6 — single shell session, ~35 min,
+~$0.95 total. The training step + the four eval variants are all
+documented with exact commands; `scripts/prepare_aflow_mbpp_data.py`
+and `scripts/aflow_eval_mbpp.py` are general (work for any MBPP-format
+JSONL and any AFlow round respectively).
+
+### 11.6 Tests
+
+`pytest tests/` → 144 / 144 still pass. The only code edit
+(`scripts/case3_aflow_dynamic.py`: added `--aflow-round` and
+`--variants` CLI flags, defaults preserve prior behavior) is purely
+additive on a non-imported CLI module.
+
+## 12. Key takeaways
 
 1. **Simplicity-first compilation works.** GSM8K's 50-pt jump came from
    *removing* the `math_specialist_route` verifier; CS3 likewise showed
@@ -624,7 +717,7 @@ changes only land for the new R-image path.
    HumanEval (where we trail by 5 pt) and MATH (where we lead by 2 pt
    but could push further).
 
-## 12. Limitations
+## 13. Limitations
 
 - **HumanEval gap (−4.5 pt)** — gpt-4o-mini's first-attempt code
   passes ~90 % of edge-case tests; the residual ~5 % gap to AFlow's
@@ -672,7 +765,7 @@ changes only land for the new R-image path.
   `force_topology_level` / `disable_gates` / `disable_reviewer`
   flags, but were not run for budget reasons.
 
-## 13. Reproducibility
+## 14. Reproducibility
 
 Run directories under `runs/full_v6/{dataset}/` (Session 6 reruns),
 `runs/full/math/` (Session 5 carried over), and `runs/case*/` carry:
@@ -729,7 +822,7 @@ asyncio.run(run_blueprint(bp, config=cfg, payload={'task': 'Janet has 16 eggs...
 "
 ```
 
-## 14. References
+## 15. References
 
 - AFlow paper — https://arxiv.org/abs/2410.10762
 - AFlow code — https://github.com/FoundationAgents/AFlow

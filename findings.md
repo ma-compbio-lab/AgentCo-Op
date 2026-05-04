@@ -768,3 +768,76 @@ int_wins=2 / 19, uni_wins=3 / 19.
   file uses `atac.bc`-style barcodes (P1.0X). The `celltype.txt` table
   has BOTH columns, and the right move is `cells = setNames(atac.bc,
   rna.bc)` to `Signac::CreateFragmentObject` so the validator passes.
+
+---
+
+## Session 10 — AFlow training overfits, AC recovers it (2026-05-04)
+
+### Headline result
+
+Real, replicated on the full 257-task MBPP test split with
+`gpt-4o-mini` for both AFlow's optimizer LLM and execution LLM:
+
+| Variant | Score | Notes |
+|---|---:|---|
+| AFlow seed alone | 0.6303 | `CustomCodeGenerate` only |
+| AFlow trained alone | **0.0156** | trained graph adds `Test`+`ScEnsemble` after CCG; overfits to 4-sample validation |
+| AC + AFlow seed | 0.8638 | +23 pp over AFlow seed alone |
+| AC + AFlow trained | **0.8755** | +86 pp over AFlow trained alone |
+
+### Two distinct findings
+
+**Finding 1 — AFlow training with tiny `--sample` overfits hard.**
+We trained AFlow with `--sample 4 --max_rounds 8` (a budget-saving
+choice). The optimizer's "best" graph (round 7) added a `Test` →
+`ScEnsemble` fallback after the seed `CustomCodeGenerate`. On the
+4-task validation it scored 0.725; on the 257-task test it scored
+0.0156. The failure mode is concrete: when LLM-judged `Test` reports
+failure, the graph passes a single solution to `ScEnsemble`, which is
+designed to vote across multiple candidates and instead returns
+prose-style critique strings (`'NoneType' object is not iterable`)
+that AFlow's `check_solution` then `exec`s to crash. With `--sample
+4`, three tasks happened to pass the first-try `Test` and never
+exercised the broken fallback — invisible during training.
+
+The AFlow paper recommends `--sample 50–100` for exactly this reason.
+Our $0.73 training run produced a graph that needs $5–10 more training
+to become robust, OR needs to be wrapped in a runtime that can survive
+its failure modes.
+
+**Finding 2 — AgentCo-op recovers a broken trained graph.** AC
+imported the round-7 graph via `aflow_import.import_aflow_workflow`,
+attached `code_debugging` + `python_testing` skills, the
+`sandbox_python` + `generated_tests` + `static_analyzer` tools, and
+the runtime gates from `configs/gates/code_runtime_gates.yaml`. Three
+substitutions:
+1. `Test` becomes a `python_sandbox` (real exec) instead of an LLM
+   judge.
+2. A `formatter` sink is appended so AC always emits JSON-extracted
+   code, not whatever string ScEnsemble produced.
+3. Gates retry the programmer on `runtime_error` / `tool_error` with
+   the failure trace, instead of routing into the broken ScEnsemble
+   path.
+
+Result: 1.56 % → 87.55 %, a 85.99 pp recovery. AC's value here is
+**runtime robustness wrapping a brittle trained graph**, not just
+"more LLM calls" — `AC + AFlow-trained` (290 k tokens) is more
+expensive than `AFlow trained alone` (~452 k tokens), but the cost
+*and* score gap come from substituting an LLM `Test` with a real
+sandbox, not from raw additional inference.
+
+### Operational lessons
+
+- AFlow's MBPP benchmark expects each test record to carry a
+  `def check():` function string, not raw `assert` lines. Our converter
+  (`scripts/prepare_aflow_mbpp_data.py`) wraps `test_list` into a
+  `check()` definition and extracts `entry_point` from the first
+  `assert <name>(` token. Took two rebuild iterations to discover —
+  the first run scored 0.0 on round 1 because all `exec(test)` calls
+  failed silently.
+- AFlow's optimizer expects `data/datasets/mbpp_validate.jsonl` (not
+  `_public_test`) for the per-round scoring loop, plus
+  `mbpp_public_test.jsonl` for the `Test` operator's sandbox.
+- Empty `results.json` and `processed_experience.json` (both 0 bytes
+  when the workspace is fresh) crash the optimizer with
+  `JSONDecodeError`. Initialise them to `[]` first.

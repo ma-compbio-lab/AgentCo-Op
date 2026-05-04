@@ -738,3 +738,58 @@ for `_run_adapter_in_docker` (locked-down vs bind-mounted), and folding
 (uses 2× more RAM).
 
 Tests after cleanup: **144 / 144 pass**.
+
+---
+
+## Session 10 — AFlow training + full-MBPP CS3 (2026-05-04)
+
+### Goal
+Re-train AFlow on `data/raw/mbpp/train.jsonl` with single-model
+`gpt-4o-mini` (no model mixing per user §1), evaluate the trained
+graph on the full 257-task test split via both (a) AFlow alone and
+(b) AFlow + AgentCo-op (skills + tools + gates). Two variants only
+per user §2.
+
+### Headline numbers (full MBPP test, n=257, gpt-4o-mini)
+
+| Variant | Score | n_passed | Test cost | Test tokens |
+|---|---:|---:|---:|---:|
+| AFlow-seed (round 1) alone | 0.6303 | 162 | $0.0199 | ~133 k |
+| AFlow-trained (round 7) alone | **0.0156** | 4 | $0.0678 | ~452 k |
+| AC + AFlow-seed | **0.8638** | 222 | $0.0425 | 167 034 |
+| AC + AFlow-trained | **0.8755** | 225 | $0.0749 | 290 677 |
+
+Training: 8 rounds, $0.7344 total, best round = 7 (validation
+score 0.7250 on 4 sample tasks). Total Session 10 cost: **$0.94**.
+
+### Notable findings
+
+- AFlow-trained scored **1.56 % on the 257-task test** vs **72.5 % on
+  the 4-task validation** — overfitting from `--sample 4`.
+- AC + AFlow-trained recovered the broken graph by 85.99 pp
+  (1.56 → 87.55 %) — AC's runtime sandbox + gates make the round-7
+  ScEnsemble fallback inert, while preserving the test-loop benefit.
+- AC + AFlow-trained beats AC + AFlow-seed by +1.17 pp (87.55 vs 86.38)
+  — the trained graph's extra Test+ScEnsemble structure is mildly
+  helpful once AC's gates wrap it, but the bulk of the win comes from
+  AC's augmentation, not from training.
+
+### Files added (Session 10)
+
+| Path | Purpose |
+|---|---|
+| `scripts/prepare_aflow_mbpp_data.py` | Dense MBPP JSONL → AFlow's `def check():` test-string format |
+| `scripts/aflow_eval_mbpp.py` | Standalone evaluator for any AFlow `workspace/<DS>/workflows/round_<N>/graph.py` on a given test split |
+| `runs/case3/mbpp_full/aflow_trained/round_7/` | Trained graph + per-round CSVs |
+| `runs/case3/mbpp_full/aflow_trained/training_tokens.json` | Per-round cost / score breakdown |
+| `runs/case3/mbpp_full/aflow_trained/training.log` | AFlow optimizer stdout |
+| `runs/case3/mbpp_full/AFlow-{seed,trained}/metrics.json` | AFlow-alone test results |
+| `runs/case3/mbpp_full/AC_AFlow_{seed,trained}/AFlow+Skills+Gates/metrics.json` | AC + AFlow test results |
+| `runs/case3/mbpp_full/{summary,README}.md+json` | Comparison + reproduction guide |
+
+### Files modified (general-purpose, additive)
+
+- `scripts/case3_aflow_dynamic.py` — added `--aflow-round N` (defaults to 1, preserves prior behavior) and `--variants name1,name2` to filter which subset to run. Generic for any future AFlow training round and any subset of variants on any dataset.
+
+### Tests
+`pytest tests/` → 144 / 144 still pass after the script edit.

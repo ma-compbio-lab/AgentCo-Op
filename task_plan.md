@@ -518,3 +518,106 @@ separate logical commit on top of `1958539`.
 
 `pytest tests/` → 144 / 144 still pass after all fixes. Cleanup committed
 on top of `1958539`.
+
+---
+
+## Session 10 — AFlow training + full-MBPP CS3 rerun (2026-05-03)
+
+### Goal
+Re-train AFlow on `data/raw/mbpp/train.jsonl` (120 tasks), save the
+trained multi-agent graph, evaluate it on `data/raw/mbpp/test.jsonl`
+(257 tasks — full split, vs the 50-task subset used in Session 6),
+then feed the trained graph into AgentCo-op (`AC-AFlowImported-Gated`)
+and evaluate again on the same 257 tasks. Compare and report.
+
+### Hard constraints (per user §5-§7)
+- No code modifications unless absolutely necessary.
+- Any modifications must be general-purpose (not MBPP-specific hacks).
+- Strictly follow CLAUDE.md.
+
+### Phases
+
+#### Phase 67. Wire AFlow data + config — status: pending
+- Place `data/raw/mbpp/test.jsonl` at AFlow's expected
+  `external/AFlow/data/datasets/mbpp_test.jsonl`
+- Place `data/raw/mbpp/train.jsonl` at
+  `external/AFlow/data/datasets/mbpp_public_test.jsonl` (the AFlow
+  optimizer uses this as the per-round validation set).
+- Create `external/AFlow/config/config2.yaml` with our `OPENAI_API_KEY`
+  for `gpt-4o-mini` (exec) AND `gpt-4o-2024-08-06` (opt — we don't
+  have Anthropic Claude access, so we override `--opt_model_name`).
+**Verify:** AFlow's `optimizer.py` can find both files + both model
+configs without fallbacks.
+
+#### Phase 68. AFlow optimizer training — status: pending
+- `cd external/AFlow && python run.py --dataset MBPP --sample 4
+  --max_rounds 8 --check_convergence True --opt_model_name
+  gpt-4o-2024-08-06 --exec_model_name gpt-4o-mini`
+- max_rounds = 8 (vs default 20) to bound cost (~$3-5 instead of ~$10-15).
+- Optimizer will produce `external/AFlow/workspace/MBPP/workflows/round_{1..8}/graph.py`
+  and `processed_experience.json` / `results.json` recording the
+  per-round score.
+- Pick the best-scoring round; copy its graph.py into
+  `runs/case3/mbpp_full/aflow_trained/graph.py` for permanent record.
+**Verify:** `results.json` exists; best round is reproducible by
+inspecting `processed_experience.json["best_round"]`.
+
+#### Phase 69. AFlow alone on full MBPP test (257 tasks) — status: pending
+- Use AFlow's own benchmark to evaluate the trained graph:
+  `cd external/AFlow && python -c "..."` invoking `MBPPBenchmark.run_baseline(workflow)`
+  on `data/datasets/mbpp_test.jsonl` (257 tasks).
+- Save `predictions.jsonl` + `metrics.json` under
+  `runs/case3/mbpp_full/AFlow-trained/`.
+**Verify:** `n=257`, `score_avg` recorded.
+
+#### Phase 70. AC + AFlow trained graph on full MBPP test — status: pending
+- `python scripts/case3_aflow_dynamic.py --limit 257` with the
+  trained graph as input.
+- The script reads the AFlow graph from
+  `external/AFlow/workspace/MBPP/workflows/round_1/graph.py` by default;
+  point it at the trained round (operationally — copy
+  trained-round-N/graph.py over round_1/graph.py, OR add a small
+  generic `--aflow-round N` CLI arg if needed).
+- Variants to run: `AFlow-trained` (raw imported), `AFlow+Skills+Tools`,
+  `AFlow+Skills+Gates`, `AC-Gated` (canonical), `AFlow+MedPrompt-Voting`.
+**Verify:** `runs/case3/mbpp_full/<variant>/metrics.json` exists for
+all variants with `n=257`.
+
+#### Phase 71. Compare + report — status: pending
+- Update `runs/case3/mbpp_full/{README.md, summary.json}`.
+- Update `report.md` §10 (Session 9) with a Session 10 sub-section OR
+  add a new §11 chapter renumbering §11→§12.
+- Append Session 10 entries to `progress.md` / `findings.md` /
+  `implement.md`.
+**Verify:** every cell in the comparison table cites a real run dir.
+
+#### Phase 72. Tests + commit + push — status: pending
+- `pytest tests/` → must stay 144/144.
+- Logical commit on top of `f0aaf0e`. Push.
+
+### Cost / time projection
+
+| Phase | Wall time | API cost |
+|---|---:|---:|
+| 67 (data + config) | 5 min | $0 |
+| 68 (AFlow training, 8 rounds × 30 train tasks × 2 LLMs) | 60-120 min | $3-5 |
+| 69 (AFlow eval, 257 tasks × 1 LLM call) | 15-30 min | $0.50-1 |
+| 70 (AC variants × 257 tasks) | 60-90 min × 5 variants ≈ 4-8 hr | $3-6 |
+| 71-72 (docs + tests + commit) | 30 min | $0 |
+| **Total** | **~6-12 hr** | **~$7-12** |
+
+Will surface a checkpoint after Phase 68 (training done) so the user
+can inspect the trained graph before the expensive Phase 70.
+
+### Session-10 refinements (2026-05-03)
+
+Per user follow-up after the cost-checkpoint:
+- **Single model**: use `gpt-4o-mini` for BOTH AFlow's optimizer LLM and
+  execution LLM. No model mixing.
+- **Two variants only** in Phase 70: (a) AFlow-imported (the trained
+  AFlow graph alone, run via AC's runtime), (b) AFlow+AgentCo-op (the
+  trained AFlow graph + skills + tools + gates — the AC-AFlowImported-
+  Gated variant). Skip the ablation variants (AFlow+Skills+Tools alone,
+  AFlow+Skills+Gates alone, AC-Gated, MedPrompt).
+
+Revised cost projection: ~3-4 hr wall, ~$3-5 API.

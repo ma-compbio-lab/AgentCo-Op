@@ -940,3 +940,79 @@ Additive PanglaoDB block — does NOT modify the CellMarker code path:
 ### Tests
 
 `pytest tests/` → **144 / 144 pass** (was 144 before; no regressions). The orchestrator changes are exercised by `tests/unit/test_repo_collaboration.py` and `tests/unit/test_parallel_then_join.py` which still pass.
+
+---
+
+## Session 10 — AFlow training + full-MBPP CS3 with token tracking (2026-05-04)
+
+### Goal
+Train AFlow on MBPP train split, evaluate trained graph on full test
+split via AFlow alone AND via AgentCo-op import. Single-model
+gpt-4o-mini end-to-end. Token consumption tracked separately for
+training and test phases per user §3.
+
+### Code changes (additive, general-purpose)
+
+#### `scripts/case3_aflow_dynamic.py`
+
+| Edit | Why |
+|---|---|
+| `_make_variants(repo_root, dataset, round_num=1)` | Allow importing any AFlow round, not just `round_1`. Default preserves prior behavior. |
+| New CLI flag `--aflow-round N` (default 1) | Surface the round selection. |
+| New CLI flag `--variants name1,name2,...` (default = all) | Subset of variants to run. Skips the AFlow+MedPrompt-Voting block when not in the keep list. |
+| `amain()` signature extended with `aflow_round=1, keep_variants=None` keyword-only args | Backward-compatible. |
+| `summary.json` now records `aflow_round` | Reproducibility. |
+
+These edits are general — they work for any AFlow workspace round on any
+dataset, not just MBPP round 7. Sessions 4–9 numbers are reproducible
+because the defaults (round=1, no variant filter) match the old behavior.
+
+#### New files
+
+| Path | Purpose |
+|---|---|
+| `scripts/prepare_aflow_mbpp_data.py` | Convert our MBPP JSONL (`test_list` + `task_id` + `code` + `prompt` + `test_setup_code`) to AFlow's expected schema (`task_id` + `prompt` + `code` + `entry_point` + `test=def check():\n  ...`). Reusable for any MBPP-format JSONL. Extracts entry_point from the first `assert <name>(` token; falls back to `def <name>(` in the reference solution. |
+| `scripts/aflow_eval_mbpp.py` | Standalone evaluator: loads `external/AFlow/workspace/<DATASET>/workflows/round_<N>/graph.py`, instantiates the `Workflow` class with `LLMsConfig.default()`, and runs `MBPPBenchmark.run_baseline` on a given test JSONL. Emits a `metrics.json` with `score_avg, n_tasks, cost_total_usd, avg_cost_per_task_usd, elapsed_s, exec_model, round_used`. Reusable for any AFlow workspace round on the MBPP benchmark. |
+
+### Run-dir layout
+
+```
+runs/case3/mbpp_full/
+├── aflow_trained/                    # Phase 68 training artifacts
+│   ├── round_7/                      # the best graph (the "trained graph")
+│   ├── training_results.json         # per-round score + cost
+│   ├── training_tokens.json          # per-round breakdown + total
+│   └── training.log                  # AFlow optimizer stdout
+├── aflow_training.log                # also at top level for convenience
+├── aflow_eval.log                    # Phase 69 stdout
+├── ac_aflow_seed.log                 # Phase 70b stdout
+├── ac_aflow_trained.log              # Phase 70a stdout
+├── AFlow-seed/                       # Phase 69 sanity (round 1 alone)
+│   ├── metrics.json                  # 0.6303 / 257
+│   ├── predictions.csv               # AFlow's per-task CSV
+│   └── mismatch_log.json             # AFlow's per-failure log
+├── AFlow-trained/                    # Phase 69 (round 7 alone)
+│   ├── metrics.json                  # 0.0156 / 257
+│   ├── predictions.csv
+│   └── mismatch_log.json
+├── AC_AFlow_seed/AFlow+Skills+Gates/      # Phase 70b
+│   ├── metrics.json                  # 0.8638 / 257
+│   ├── predictions.jsonl
+│   ├── blueprint.json                # AC's compiled blueprint after import
+│   └── traces/                       # JSONL trace per task
+├── AC_AFlow_trained/AFlow+Skills+Gates/   # Phase 70a
+│   ├── metrics.json                  # 0.8755 / 257
+│   ├── predictions.jsonl
+│   ├── blueprint.json
+│   └── traces/
+├── summary.json                      # all four variants in one place
+└── README.md                         # narrative + reproduction guide
+```
+
+### Tests
+`pytest tests/` → 144 / 144 (no regressions; the script change is
+purely additive on a non-imported CLI module).
+
+### Reproduction
+See `runs/case3/mbpp_full/README.md` §6 — single shell session, ~35 min,
+~$0.95 total spend.

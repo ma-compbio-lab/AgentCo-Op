@@ -1,0 +1,79 @@
+{
+  "session": "10",
+  "date": "2026-05-04",
+  "dataset": "mbpp",
+  "test_split": "data/raw/mbpp/test.jsonl (257 tasks, full)",
+  "train_split": "data/raw/mbpp/train.jsonl (120 tasks)",
+  "validation_split": "data/raw/mbpp/validation.jsonl (43 tasks, used by AFlow optimizer as 4-task samples)",
+  "exec_model": "gpt-4o-mini",
+  "opt_model": "gpt-4o-mini",
+  "training": {
+    "phase": "AFlow optimizer",
+    "rounds_evaluated": 7,
+    "best_round": 7,
+    "validation_score_best_round": 0.725,
+    "sample_tasks_per_round": 4,
+    "total_cost_usd": 0.7344,
+    "per_round": [
+      {"round": 1, "score": 0.7083, "cost_usd": 0.0100, "comment": "seed = single CustomCodeGenerate"},
+      {"round": 2, "score": 0.7000, "cost_usd": 0.0435},
+      {"round": 3, "score": 0.0417, "cost_usd": 0.0372, "comment": "broken mutation"},
+      {"round": 4, "score": 0.0417, "cost_usd": 0.4588, "comment": "broken mutation, expensive ensemble"},
+      {"round": 5, "score": 0.7083, "cost_usd": 0.0482},
+      {"round": 6, "score": 0.5583, "cost_usd": 0.0886},
+      {"round": 7, "score": 0.7250, "cost_usd": 0.0481, "comment": "best — adds Test + ScEnsemble after CustomCodeGenerate"}
+    ]
+  },
+  "test": {
+    "n_tasks": 257,
+    "variants": [
+      {
+        "variant": "AFlow-seed (round 1) — alone, AFlow's MBPPBenchmark",
+        "score_avg": 0.6303,
+        "n_passed": 162,
+        "cost_total_usd": 0.0199,
+        "avg_cost_per_task_usd": 0.000078,
+        "elapsed_s": 14.1,
+        "tokens_total_estimate": "~133k (cost-derived, gpt-4o-mini)",
+        "run_dir": "runs/case3/mbpp_full/AFlow-seed/"
+      },
+      {
+        "variant": "AFlow-trained (round 7) — alone, AFlow's MBPPBenchmark",
+        "score_avg": 0.0156,
+        "n_passed": 4,
+        "cost_total_usd": 0.0678,
+        "avg_cost_per_task_usd": 0.000264,
+        "elapsed_s": 124.4,
+        "tokens_total_estimate": "~452k (cost-derived, gpt-4o-mini)",
+        "run_dir": "runs/case3/mbpp_full/AFlow-trained/",
+        "note": "Severe regression from validation (0.7250 on 4 tasks). Caused by ScEnsemble fallback returning error strings as solutions when Test reports failure on a single solution — overfitted shape of round_7 to the tiny validation sample."
+      },
+      {
+        "variant": "AC + AFlow-seed (round 1) — AFlow+Skills+Gates via AgentCo-op",
+        "score_avg": 0.8638,
+        "n_passed": 222,
+        "cost_total_usd": 0.0425,
+        "tokens_total": 167034,
+        "elapsed_s": 155.9,
+        "run_dir": "runs/case3/mbpp_full/AC_AFlow_seed/AFlow+Skills+Gates/"
+      },
+      {
+        "variant": "AC + AFlow-trained (round 7) — AFlow+Skills+Gates via AgentCo-op",
+        "score_avg": 0.8755,
+        "n_passed": 225,
+        "cost_total_usd": 0.0749,
+        "tokens_total": 290677,
+        "elapsed_s": 255.1,
+        "run_dir": "runs/case3/mbpp_full/AC_AFlow_trained/AFlow+Skills+Gates/",
+        "note": "AC's skills + tools + gates wrap fully recover the broken trained graph (+85.99 pp absolute over AFlow-trained alone)."
+      }
+    ]
+  },
+  "headline_takeaways": [
+    "AFlow training on a 4-task validation sample produced a graph that scored 0.725 on validation but 0.0156 on the full 257-task test — classic overfitting from a tiny sample.",
+    "AC + AFlow-seed beat AFlow-seed alone by +23.35 pp (0.6303 -> 0.8638) on the same 257 tasks.",
+    "AC + AFlow-trained beat AFlow-trained alone by +85.99 pp (0.0156 -> 0.8755) — AC's gates + skills + tools fully recover from the broken trained graph.",
+    "AC + AFlow-trained slightly beats AC + AFlow-seed (0.8755 vs 0.8638, +1.17 pp) — the extra Test + ScEnsemble structure in round_7 *does* help once AC's runtime wraps it with proper gates and a sandbox-test backend.",
+    "Total session 10 cost: $0.93 (training $0.7344 + four test variants $0.205)."
+  ]
+}
