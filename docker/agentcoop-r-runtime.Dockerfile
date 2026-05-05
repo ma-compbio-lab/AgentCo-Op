@@ -44,6 +44,18 @@ RUN R -e "options(repos = c(P3M = 'https://packagemanager.posit.co/cran/__linux_
 # Sanity: confirm packages load + EnsDb GR path works.
 RUN R -e "suppressPackageStartupMessages({library(Seurat); library(Signac); library(EnsDb.Mmusculus.v79); library(biovizBase); library(R.utils)}); gr <- Signac::GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79); cat('R packages OK; EnsDb GR length=', length(gr), '\n')"
 
+# Human (hg38) annotation packages, added in a leaf layer so the heavy
+# CRAN + mm10 layers above stay cached. Required by CS2 human-heart
+# variant (case_study_2_human_heart.md). Same image serves both mouse
+# and human variants — wrappers select annotation by genome parameter.
+RUN R -e "BiocManager::install(c('EnsDb.Hsapiens.v86','BSgenome.Hsapiens.UCSC.hg38','org.Hs.eg.db'), ask=FALSE, update=FALSE, version='3.18')" \
+ && R -e "suppressPackageStartupMessages({library(EnsDb.Hsapiens.v86); library(BSgenome.Hsapiens.UCSC.hg38)}); gr <- Signac::GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86); cat('hg38 EnsDb GR length=', length(gr), '\n')"
+
+# hdf5r — required by Seurat::Read10X_h5 to load 10x H5 multiome files.
+# Used by both Seurat and Signac wrappers when dataset.format=tenx_h5_multiome.
+RUN R -e "options(repos = c(P3M = 'https://packagemanager.posit.co/cran/__linux__/jammy/latest', CRAN = 'https://cloud.r-project.org')); install.packages('hdf5r')" \
+ && R -e "suppressPackageStartupMessages(library(hdf5r)); cat('hdf5r OK\n')"
+
 # Copy the R wrappers in.
 WORKDIR /workspace
 COPY agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R /workspace/agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R

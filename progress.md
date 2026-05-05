@@ -970,3 +970,67 @@ Test-phase tokens / cost (Session 12 re-runs):
 
 ### Tests
 `pytest tests/` → 144 / 144 still pass.
+
+---
+
+## Session 13 — CS2 swap to human heart 10x multiome (GSE270788 MA7) (2026-05-05)
+
+### Goal
+Swap CS2 dataset from SHARE-seq mouse skin to GSE270788 human heart
+paired single-nucleus 10x Multiome ATAC + Gene Expression (sample MA7).
+Spec: `case_study_2_human_heart.md`. Configure + launch + execute
+end-to-end via live Docker backend. Constraint: no AC backbone changes;
+only general-purpose code edits.
+
+### Code changes (general-purpose)
+
+| File | Change |
+|---|---|
+| `docker/agentcoop-r-runtime.Dockerfile` | Additive hg38 leaf layer (`EnsDb.Hsapiens.v86`, `BSgenome.Hsapiens.UCSC.hg38`, `org.Hs.eg.db`) + `hdf5r`. Same image now serves mouse mm10 and human hg38. |
+| `agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R` | New `dataset.format` switch with `tenx_h5_multiome` path (`Read10X_h5` → `$Gene Expression`). Generic `find_candidate_col` helper (case- and punctuation-insensitive column name lookup). Metadata-coverage barcode-overlap check (40% matrix coverage but 100% metadata coverage is normal when matrix has unlabeled cells). |
+| `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R` | Same `dataset.format` switch. 10x path: `$Peaks` from H5, `parse_peak_names_to_granges` helper, hg38 EnsDb annotation via `load_ensdb_for_genome`. Genome param threaded through CreateChromatinAssay. Default `signac_method=gene_activity` for 10x (per spec §11). |
+| `agentcoop/wrappers/cellmarker_evaluator_local/adapter.py` | `_HUMAN_HEART_ALIASES` table auto-selected when `organism="Human"`. Generalized `cellmarker_raw_markers.tsv` artifact name. Tissue-aware `filter_mode` label (was hardcoded "skin"/"skin_extended"). Widened CellMarker file fallback paths. |
+
+NEW files:
+- `scripts/cs2_human_heart_setup.sh` (idempotent GSE270788 download + tabix + image check)
+- `case_study_2_human_heart.request.yaml` (canonical CS2 human heart request)
+
+### End-to-end run (live Docker)
+
+```
+bash scripts/cs2_human_heart_setup.sh
+set -a; source .secrets/api-key; set +a
+export AGENTCOOP_BRANCH_CONCURRENCY=1
+python -m agentcoop.cli collaborate \
+  --request case_study_2_human_heart.request.yaml \
+  --workdir runs/case2/human_heart_ma7_docker \
+  --docker
+```
+
+Wall: **540.6 s** (~ 9 min). Status: **success**. n_handoffs: 2.
+
+### Headline results — does the hypothesis hold?
+
+`precision_intersection > precision_rna > precision_atac` AND
+`recall_union > recall_rna > recall_atac`?
+
+**CellMarker 2.0 heart** (2 cell types mapped: Cardiomyocyte, Fibroblast):
+- P_int=0.369 > P_rna=0.120 > P_atac=0.110 ✓
+- R_union=0.291 > R_rna=0.229 > R_atac=0.189 ✓
+- intersection_strict_wins=2/2, union_strict_wins=2/2
+
+**PanglaoDB Hs heart** (3 cell types mapped: Cardiomyocyte, Fibroblast, Myeloid):
+- P_int=0.492 > P_rna=0.247 > P_atac=0.227 ✓
+- R_union=0.144 > R_rna=0.092 > R_atac=0.089 ✓
+- intersection_strict_wins=2/3, union_strict_wins=2/3
+
+**Hypothesis HOLDS for both databases.**
+
+### Files added (Session 13)
+- `runs/case2/human_heart_ma7_docker/` (full pipeline outputs)
+- `runs/case2/human_heart_ma7_docker/README.md`, `summary.json`
+- `scripts/cs2_human_heart_setup.sh`
+- `case_study_2_human_heart.request.yaml`
+
+### Tests
+`pytest tests/` → 144 / 144 still pass after wrapper + adapter edits.

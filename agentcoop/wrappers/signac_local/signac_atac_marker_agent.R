@@ -19,10 +19,27 @@ suppressPackageStartupMessages({
   library(jsonlite)
   library(dplyr)
   library(GenomicRanges)
-  library(EnsDb.Mmusculus.v79)
   library(GenomeInfoDb)
   library(Rsamtools)
 })
+
+# Genome-specific EnsDb packages are loaded lazily below based on
+# `dataset.genome` (mm10 → EnsDb.Mmusculus.v79; hg38 → EnsDb.Hsapiens.v86).
+# Both ship in the agentcoop-r-runtime image; a missing one is a hard
+# failure with a clear error.
+load_ensdb_for_genome <- function(genome_id) {
+  pkg <- switch(tolower(genome_id),
+                "mm10" = "EnsDb.Mmusculus.v79",
+                "grcm38" = "EnsDb.Mmusculus.v79",
+                "hg38" = "EnsDb.Hsapiens.v86",
+                "grch38" = "EnsDb.Hsapiens.v86",
+                stop(sprintf("unsupported genome '%s' (expected mm10 or hg38)", genome_id)))
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    stop(sprintf("annotation package '%s' is not installed in the R image", pkg))
+  }
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+  get(pkg, envir = asNamespace(pkg))
+}
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
@@ -80,19 +97,47 @@ resolve_path <- function(cache_dir, fname, default = NULL, required = TRUE) {
 
 cache_dir <- if (!is.null(dataset$local_cache_dir)) dataset$local_cache_dir else "data/shareseq_skin"
 files     <- if (!is.null(dataset$files)) dataset$files else list()
-atac_path     <- resolve_path(cache_dir, files$atac_counts,
-                              "GSM4156597_skin.late.anagen.counts.txt.gz")
-peaks_path    <- resolve_path(cache_dir, files$atac_peaks,
-                              "GSM4156597_skin.late.anagen.peaks.bed.gz")
-celltype_path <- resolve_path(cache_dir, files$celltype_labels,
-                              "GSM4156597_skin_celltype.txt.gz")
-fragments_path <- resolve_path(cache_dir, files$atac_fragments,
-                               "GSM4156597_skin.late.anagen.atac.fragments.bed.gz",
-                               required = !allow_p2g_fb)
-log_msg(sprintf("atac_counts: %s", atac_path))
-log_msg(sprintf("peaks_bed:   %s", peaks_path))
-log_msg(sprintf("celltypes:   %s", celltype_path))
-log_msg(sprintf("fragments:   %s", ifelse(is.null(fragments_path), "<unavailable>", fragments_path)))
+dataset_format <- tolower(as.character(if (!is.null(dataset$format)) dataset$format else "dense_tsv"))
+genome_id      <- tolower(as.character(if (!is.null(dataset$genome)) dataset$genome else "mm10"))
+sample_id      <- as.character(if (!is.null(dataset$default_sample_id)) dataset$default_sample_id else "")
+
+# 10x multiome ships GeneActivity-friendly fragments by default, so the
+# spec (case_study_2_human_heart.md §11) makes GeneActivity primary.
+# Honor the request override if present; otherwise default by format.
+if (is.null(atac_method$signac_method) || nchar(as.character(atac_method$signac_method)) == 0) {
+  signac_method <- if (dataset_format == "tenx_h5_multiome") "gene_activity" else "peak_to_gene"
+}
+
+if (dataset_format == "tenx_h5_multiome") {
+  h5_path        <- resolve_path(cache_dir, files$tenx_h5, NULL)
+  fragments_path <- resolve_path(cache_dir, files$atac_fragments, NULL,
+                                 required = !allow_p2g_fb)
+  celltype_path  <- resolve_path(cache_dir, files$metadata,
+                                 if (!is.null(files$celltype_labels)) files$celltype_labels else NULL)
+  atac_path  <- h5_path
+  peaks_path <- h5_path
+  log_msg(sprintf("dataset.format=tenx_h5_multiome  genome=%s  sample_id=%s",
+                  genome_id, sample_id))
+  log_msg(sprintf("tenx_h5:     %s", h5_path))
+  log_msg(sprintf("fragments:   %s", ifelse(is.null(fragments_path), "<unavailable>", fragments_path)))
+  log_msg(sprintf("metadata:    %s", celltype_path))
+} else {
+  atac_path     <- resolve_path(cache_dir, files$atac_counts,
+                                "GSM4156597_skin.late.anagen.counts.txt.gz")
+  peaks_path    <- resolve_path(cache_dir, files$atac_peaks,
+                                "GSM4156597_skin.late.anagen.peaks.bed.gz")
+  celltype_path <- resolve_path(cache_dir, files$celltype_labels,
+                                "GSM4156597_skin_celltype.txt.gz")
+  fragments_path <- resolve_path(cache_dir, files$atac_fragments,
+                                 "GSM4156597_skin.late.anagen.atac.fragments.bed.gz",
+                                 required = !allow_p2g_fb)
+  log_msg(sprintf("dataset.format=dense_tsv  genome=%s (default — SHARE-seq path)", genome_id))
+  log_msg(sprintf("atac_counts: %s", atac_path))
+  log_msg(sprintf("peaks_bed:   %s", peaks_path))
+  log_msg(sprintf("celltypes:   %s", celltype_path))
+  log_msg(sprintf("fragments:   %s", ifelse(is.null(fragments_path), "<unavailable>", fragments_path)))
+}
+log_msg(sprintf("signac_method=%s", signac_method))
 log_msg(sprintf("top_n=%d  min_cells_per_type=%d  test_use=%s  min_pct=%.3f  extend_upstream=%d",
                 top_n, min_cells, test_use, min_pct, extend_up))
 
@@ -135,50 +180,175 @@ read_peaks <- function(path, peak_names) {
   gr
 }
 
-counts <- read_count_matrix(atac_path)
-peaks_gr <- read_peaks(peaks_path, rownames(counts))
-log_msg(sprintf("peak matrix: %d peaks x %d cells", nrow(counts), ncol(counts)))
-
-labels <- data.table::fread(celltype_path, sep = "\t", showProgress = FALSE)
-# SHARE-seq quirk (case_study_2.md §9.3): the ATAC MTX cell barcodes
-# are taken from `barcodes.txt.gz`, which actually matches the `rna.bc`
-# column in celltype.txt — not `atac.bc`. Pick the candidate column
-# whose set has maximum overlap with the MTX cell ids instead of
-# blindly picking the first naming hint.
-candidate_atac_cols <- intersect(colnames(labels),
-                                 c("atac.bc", "atac_bc", "atac_barcode",
-                                   "rna.bc", "rna_bc", "rna_barcode"))
-mtx_cells <- as.character(colnames(counts))
-mtx_set <- as.character(mtx_cells)
-overlap_per_col <- sapply(candidate_atac_cols, function(col) {
-  vals <- as.character(labels[[col]])
-  length(intersect(vals, mtx_set))
-})
-log_msg(sprintf("barcode-overlap candidates: %s",
-                paste(sprintf("%s=%d", names(overlap_per_col), overlap_per_col),
-                      collapse = ", ")))
-bc_col <- if (length(overlap_per_col) > 0) {
-  names(which.max(overlap_per_col))[1]
-} else {
-  colnames(labels)[1]
+# Parse 10x peak rownames like "chr1:1234-2345" into a GRanges.
+parse_peak_names_to_granges <- function(peak_names) {
+  m <- regmatches(peak_names, regexec("^([^:]+):([0-9]+)-([0-9]+)$", peak_names))
+  ok <- vapply(m, function(x) length(x) == 4, logical(1))
+  if (!all(ok)) {
+    bad <- head(peak_names[!ok], 3)
+    stop(sprintf("could not parse %d 10x peak names; first bad: %s",
+                 sum(!ok), paste(bad, collapse = ",")))
+  }
+  parts <- do.call(rbind, lapply(m, function(x) x[2:4]))
+  gr <- GRanges(seqnames = parts[, 1],
+                ranges = IRanges(start = as.integer(parts[, 2]),
+                                 end   = as.integer(parts[, 3])))
+  names(gr) <- peak_names
+  gr
 }
-candidate_ct_cols <- intersect(colnames(labels),
-                               c("celltype", "cell_type", "Celltype", "Cell_Type",
-                                 "cluster", "label"))
-ct_col <- if (length(candidate_ct_cols) > 0) candidate_ct_cols[1] else tail(colnames(labels), 1)
-log_msg(sprintf("barcode_col=%s  celltype_col=%s", bc_col, ct_col))
 
-metadata <- as.data.frame(labels)
-metadata[[bc_col]] <- as.character(metadata[[bc_col]])
-metadata[[ct_col]] <- as.character(metadata[[ct_col]])
-rownames(metadata) <- metadata[[bc_col]]
+# Generic metadata reader (csv/csv.gz/tsv/tsv.gz/txt/txt.gz).
+read_metadata_table <- function(path) {
+  base <- basename(path)
+  sep <- if (grepl("\\.csv(\\.gz)?$", base, ignore.case = TRUE)) "," else "\t"
+  data.table::fread(path, sep = sep, showProgress = FALSE)
+}
 
-common_cells <- intersect(colnames(counts), rownames(metadata))
-log_msg(sprintf("cells with celltype labels: %d / %d", length(common_cells), ncol(counts)))
-if (length(common_cells) == 0) stop("no cells overlap between ATAC counts and celltype labels")
-counts <- counts[, common_cells]
-metadata <- metadata[common_cells, , drop = FALSE]
-metadata$cell_type <- metadata[[ct_col]]
+# Pick the first candidate column name that exists in `cols` (case- and
+# punctuation-insensitive). Mirrors the Seurat wrapper.
+find_candidate_col <- function(cols, candidates) {
+  norm <- function(x) tolower(gsub("[^a-z0-9]", "", tolower(x)))
+  cols_norm <- norm(cols)
+  for (cand in candidates) {
+    hit <- which(cols_norm == norm(cand))
+    if (length(hit) > 0) return(cols[hit[1]])
+  }
+  NA_character_
+}
+
+# Strip leading sample/batch prefix (short alphanumeric + underscore,
+# e.g. "MA7_", "s3_", "s4_") and trailing 10x lane suffix ("-1", "-2");
+# mirrors the Seurat wrapper and case_study_2_human_heart.md §8.5. The
+# prefix length is bounded at 1..6 chars so we don't accidentally
+# consume the actual 16-nt cell barcode.
+normalize_barcode <- function(x) {
+  x <- as.character(x)
+  x <- gsub("^[A-Za-z][A-Za-z0-9]{0,5}_", "", x)
+  x <- gsub("-[0-9]+$", "", x)
+  x
+}
+
+if (dataset_format == "tenx_h5_multiome") {
+  log_msg(sprintf("reading 10x multiome H5: %s", atac_path))
+  counts_list <- Seurat::Read10X_h5(atac_path, use.names = TRUE)
+  if (!is.list(counts_list) || !("Peaks" %in% names(counts_list))) {
+    stop(sprintf("Read10X_h5 missing Peaks assay; available: %s",
+                 paste(names(counts_list), collapse = ", ")))
+  }
+  counts <- counts_list[["Peaks"]]
+  peaks_gr <- parse_peak_names_to_granges(rownames(counts))
+  log_msg(sprintf("peak matrix (10x H5): %d peaks x %d cells",
+                  nrow(counts), ncol(counts)))
+  labels <- read_metadata_table(celltype_path)
+} else {
+  counts <- read_count_matrix(atac_path)
+  peaks_gr <- read_peaks(peaks_path, rownames(counts))
+  log_msg(sprintf("peak matrix: %d peaks x %d cells", nrow(counts), ncol(counts)))
+
+  labels <- data.table::fread(celltype_path, sep = "\t", showProgress = FALSE)
+}
+if (dataset_format == "tenx_h5_multiome") {
+  log_msg(sprintf("metadata table: %d rows x %d cols (%s)",
+                  nrow(labels), ncol(labels), paste(colnames(labels), collapse = ",")))
+  sample_col <- find_candidate_col(
+    colnames(labels),
+    c("sample", "sample_id", "library", "donor", "donor_id", "orig.ident")
+  )
+  if (!is.na(sample_col) && nchar(sample_id) > 0) {
+    pre <- nrow(labels)
+    labels <- labels[toupper(as.character(labels[[sample_col]])) == toupper(sample_id)]
+    log_msg(sprintf("filtered metadata to sample_id=%s via column '%s': %d -> %d rows",
+                    sample_id, sample_col, pre, nrow(labels)))
+  }
+  bc_col <- find_candidate_col(
+    colnames(labels),
+    c("barcode", "cell_barcode", "cell_id", "cellID", "cell.name", "cell", "Cell")
+  )
+  if (is.na(bc_col)) bc_col <- colnames(labels)[1]
+  ct_col <- find_candidate_col(
+    colnames(labels),
+    c("cell_type", "cell.type", "celltype", "CellType", "annotation",
+      "broad_cell_type", "label", "cluster_label", "final_cell_type",
+      "cell.type.l1", "predicted.celltype")
+  )
+  if (is.na(ct_col)) ct_col <- tail(colnames(labels), 1)
+  log_msg(sprintf("barcode_col=%s  celltype_col=%s", bc_col, ct_col))
+
+  metadata <- as.data.frame(labels)
+  metadata[[bc_col]] <- as.character(metadata[[bc_col]])
+  metadata[[ct_col]] <- as.character(metadata[[ct_col]])
+  metadata$barcode_norm <- normalize_barcode(metadata[[bc_col]])
+
+  matrix_cells_raw  <- colnames(counts)
+  matrix_cells_norm <- normalize_barcode(matrix_cells_raw)
+
+  # Choose by metadata-coverage (see Seurat wrapper for rationale).
+  strategies <- list(
+    list(name = "exact",         idx = match(matrix_cells_raw, metadata[[bc_col]])),
+    list(name = "norm_vs_raw",   idx = match(matrix_cells_norm, metadata[[bc_col]])),
+    list(name = "norm_vs_norm",  idx = match(matrix_cells_norm, metadata$barcode_norm))
+  )
+  pick <- strategies[[which.max(sapply(strategies, function(s) sum(!is.na(s$idx))))]]
+  match_idx <- pick$idx
+  overlap_n <- sum(!is.na(match_idx))
+  metadata_coverage <- overlap_n / max(1L, nrow(metadata))
+  log_msg(sprintf(
+    "barcode match strategy=%s: %d matrix cells matched a metadata row (matrix coverage %.1f%%, metadata coverage %.1f%%)",
+    pick$name, overlap_n,
+    100 * overlap_n / length(match_idx),
+    100 * metadata_coverage))
+  if (metadata_coverage < 0.80) {
+    stop(sprintf(
+      "only %d / %d metadata cells found in matrix (%.1f%% < 80%%) — barcode format probably mismatched (case_study_2_human_heart.md §8.5)",
+      overlap_n, nrow(metadata), 100 * metadata_coverage))
+  }
+  matched_meta <- metadata[match_idx, , drop = FALSE]
+  rownames(matched_meta) <- matrix_cells_raw
+  keep_mask <- !is.na(matched_meta[[ct_col]]) & nchar(matched_meta[[ct_col]]) > 0
+  counts <- counts[, keep_mask, drop = FALSE]
+  metadata <- matched_meta[keep_mask, , drop = FALSE]
+  metadata$cell_type <- metadata[[ct_col]]
+} else {
+  # SHARE-seq quirk (case_study_2.md §9.3): the ATAC MTX cell barcodes
+  # are taken from `barcodes.txt.gz`, which actually matches the `rna.bc`
+  # column in celltype.txt — not `atac.bc`. Pick the candidate column
+  # whose set has maximum overlap with the MTX cell ids instead of
+  # blindly picking the first naming hint.
+  candidate_atac_cols <- intersect(colnames(labels),
+                                   c("atac.bc", "atac_bc", "atac_barcode",
+                                     "rna.bc", "rna_bc", "rna_barcode"))
+  mtx_cells <- as.character(colnames(counts))
+  mtx_set <- as.character(mtx_cells)
+  overlap_per_col <- sapply(candidate_atac_cols, function(col) {
+    vals <- as.character(labels[[col]])
+    length(intersect(vals, mtx_set))
+  })
+  log_msg(sprintf("barcode-overlap candidates: %s",
+                  paste(sprintf("%s=%d", names(overlap_per_col), overlap_per_col),
+                        collapse = ", ")))
+  bc_col <- if (length(overlap_per_col) > 0) {
+    names(which.max(overlap_per_col))[1]
+  } else {
+    colnames(labels)[1]
+  }
+  candidate_ct_cols <- intersect(colnames(labels),
+                                 c("celltype", "cell_type", "Celltype", "Cell_Type",
+                                   "cluster", "label"))
+  ct_col <- if (length(candidate_ct_cols) > 0) candidate_ct_cols[1] else tail(colnames(labels), 1)
+  log_msg(sprintf("barcode_col=%s  celltype_col=%s", bc_col, ct_col))
+
+  metadata <- as.data.frame(labels)
+  metadata[[bc_col]] <- as.character(metadata[[bc_col]])
+  metadata[[ct_col]] <- as.character(metadata[[ct_col]])
+  rownames(metadata) <- metadata[[bc_col]]
+
+  common_cells <- intersect(colnames(counts), rownames(metadata))
+  log_msg(sprintf("cells with celltype labels: %d / %d", length(common_cells), ncol(counts)))
+  if (length(common_cells) == 0) stop("no cells overlap between ATAC counts and celltype labels")
+  counts <- counts[, common_cells]
+  metadata <- metadata[common_cells, , drop = FALSE]
+  metadata$cell_type <- metadata[[ct_col]]
+}
 
 if (length(remove_cts) > 0) {
   keep <- !(metadata$cell_type %in% remove_cts)
@@ -190,9 +360,12 @@ keep <- metadata$cell_type %in% valid_types
 counts <- counts[, keep]; metadata <- metadata[keep, , drop = FALSE]
 log_msg(sprintf("after filters: %d cells, %d cell types", ncol(counts), length(valid_types)))
 
-annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79)
+# Pick the EnsDb annotation package by genome (mm10 → Mmusculus.v79;
+# hg38 → Hsapiens.v86). Both are baked into agentcoop-r-runtime.
+ensdb <- load_ensdb_for_genome(genome_id)
+annotation <- GetGRangesFromEnsDb(ensdb = ensdb)
 seqlevelsStyle(annotation) <- "UCSC"
-genome(annotation) <- "mm10"
+genome(annotation) <- genome_id
 
 # --- Validate fragments file + index, attempt repair if missing -------------
 gene_act_used <- FALSE
@@ -215,14 +388,13 @@ if (!is.null(fragments_path)) {
   }
 }
 
-# SHARE-seq quirk (case_study_2.md §9.3): the ATAC matrix columns use
-# `rna.bc`-style barcodes, but the fragment file uses `atac.bc`-style
-# barcodes (different P1 suffix, same molecule). Pass `cells = named
-# vector` so Signac can map ChromatinAssay cell IDs (rna.bc) → fragment
-# barcodes (atac.bc) when validating the fragment file. Setup script
-# normalises commas → dots, so we do the same on the lookup values.
+# Build the ChromatinAssay. The SHARE-seq path needs a custom
+# fragment-cells lookup (rna.bc → atac.bc remap from the celltype
+# table) because the matrix and fragment file use different barcode
+# styles. The 10x_h5_multiome path doesn't need this — both the H5
+# matrix and the fragment file use the same `BARCODE-1` style.
 fragment_cells_arg <- NULL
-if (!is.null(fragments_path)) {
+if (dataset_format != "tenx_h5_multiome" && !is.null(fragments_path)) {
   atac_bc_candidates <- intersect(colnames(labels),
                                   c("atac.bc", "atac_bc", "atac_barcode"))
   if (length(atac_bc_candidates) > 0) {
@@ -248,7 +420,7 @@ chrom_assay <- if (!is.null(fragment_cells_arg)) {
   CreateChromatinAssay(
     counts = counts,
     ranges = peaks_gr,
-    genome = "mm10",
+    genome = genome_id,
     annotation = annotation,
     fragments = list(fragments_obj)
   )
@@ -256,7 +428,7 @@ chrom_assay <- if (!is.null(fragment_cells_arg)) {
   CreateChromatinAssay(
     counts = counts,
     ranges = peaks_gr,
-    genome = "mm10",
+    genome = genome_id,
     annotation = annotation,
     fragments = fragments_path
   )

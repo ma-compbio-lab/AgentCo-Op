@@ -1331,3 +1331,103 @@ python scripts/case3_aflow_dynamic.py --dataset mbpp --limit 257 \
 ```
 
 Total wall: ~ 10 min. Total cost: ~ $0.27.
+
+---
+
+## Session 13 — CS2 swap to human heart 10x multiome (GSE270788 MA7) (2026-05-05)
+
+### Goal
+Switch CS2 from SHARE-seq mouse skin to GSE270788 human heart 10x
+multiome (sample MA7), per `case_study_2_human_heart.md`. Configure +
+launch + execute end-to-end via live Docker. No backbone changes;
+only general-purpose code edits.
+
+### Code changes
+
+#### `docker/agentcoop-r-runtime.Dockerfile`
+Two new leaf layers (additive — heavy mm10/CRAN layers stay cached):
+
+```dockerfile
+# Human (hg38) annotation packages
+RUN R -e "BiocManager::install(c('EnsDb.Hsapiens.v86','BSgenome.Hsapiens.UCSC.hg38','org.Hs.eg.db'), ask=FALSE, update=FALSE, version='3.18')" && \
+    R -e "..."  # smoke test
+
+# hdf5r — required by Seurat::Read10X_h5
+RUN R -e "install.packages('hdf5r')" && \
+    R -e "suppressPackageStartupMessages(library(hdf5r)); cat('hdf5r OK\n')"
+```
+
+Same image now serves mouse mm10 + human hg38 via runtime selection.
+
+#### `agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R`
+Added top-level `dataset.format` switch:
+- `format=tenx_h5_multiome` → `Read10X_h5(h5_path)$Gene Expression`, then load metadata CSV, filter by `sample_id`, match barcodes.
+- `format=dense_tsv` (default) → existing SHARE-seq path.
+
+Generic helpers added:
+- `find_candidate_col(cols, candidates)` — case- and punctuation-insensitive column lookup that respects candidate-list priority (not metadata column order).
+- `read_metadata_table(path)` — auto sep by extension.
+- `normalize_barcode(x)` — strips short alphanumeric prefix + `-N` lane suffix.
+
+Key fix: the metadata-coverage barcode check (40% matrix cells matched is fine if 100% of labeled cells matched).
+
+#### `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R`
+Same `dataset.format` switch + same helpers. 10x path:
+- `Read10X_h5(h5_path)$Peaks`
+- `parse_peak_names_to_granges(rownames(counts))` — turns 10x `chr1:100-200` peak names into a GRanges
+- `load_ensdb_for_genome(genome)` chooses `EnsDb.Mmusculus.v79` (mm10) or `EnsDb.Hsapiens.v86` (hg38)
+- `genome_id` threaded through `CreateChromatinAssay`
+- Default `signac_method` is `gene_activity` for `tenx_h5_multiome` (per spec §11)
+- SHARE-seq's `fragment_cells_arg` (rna.bc → atac.bc remap) is skipped because 10x H5 matrix barcodes match fragment barcodes directly.
+
+#### `agentcoop/wrappers/cellmarker_evaluator_local/adapter.py`
+- `_HUMAN_HEART_ALIASES` table (cardiomyocyte/fibroblast/endothelial/SMC/macrophage/pericyte/T-B-NK/adipocyte/...) auto-selected when `organism="Human"`.
+- Generalized `cellmarker_raw_markers.tsv` artifact name (was `cellmarker_raw_mouse_markers.tsv`).
+- Tissue-aware `filter_mode` label string (was hardcoded "skin"/"skin_extended").
+- Widened `_resolve_cellmarker_file` candidate paths to include `data/heart_human/Cell_marker_All.xlsx` and `data/cellmarker/Cell_marker_All.xlsx`.
+
+No edits to AC core (`agentcoop/core/`).
+
+### NEW files
+
+- `scripts/cs2_human_heart_setup.sh` — idempotent GSE270788 download + tabix index + image presence check.
+- `case_study_2_human_heart.request.yaml` — canonical request driving `agentcoop collaborate`.
+
+### Run-dir layout
+
+```
+runs/case2/human_heart_ma7_docker/
+├── final_report.md, run_manifest.json, compiled_workflow_graph.json
+├── agent_registry.json, collaboration_log.md, topology.{png,dot}
+├── manifests/, docker/, traces/, _invoke/, wrappers/
+└── artifacts/
+    ├── seurat_run/   (3 129 markers, 4 cell types)
+    ├── signac_run/   (4 144 markers via Signac::GeneActivity)
+    ├── cellmarkerevaluator_run/  (precision/recall + figures + DB gold sets)
+    └── integration/  (final hypothesis report)
+```
+
+### Headline numbers
+
+| Database | n_mapped | P_int | P_rna | P_atac | R_union | R_rna | R_atac | hypothesis |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| CellMarker 2.0 (Heart) | 2 | 0.369 | 0.120 | 0.110 | 0.291 | 0.229 | 0.189 | HOLDS |
+| PanglaoDB (Hs Heart) | 3 | 0.492 | 0.247 | 0.227 | 0.144 | 0.092 | 0.089 | HOLDS |
+
+### Tests
+
+`pytest tests/` → 144 / 144 (no regressions).
+
+### Reproduction
+
+```bash
+bash scripts/cs2_human_heart_setup.sh
+set -a; source .secrets/api-key; set +a
+export AGENTCOOP_BRANCH_CONCURRENCY=1
+python -m agentcoop.cli collaborate \
+  --request case_study_2_human_heart.request.yaml \
+  --workdir runs/case2/human_heart_ma7_docker \
+  --docker
+```
+
+Cold-start total wall: ~ 25 min (data ~ 5 min, image rebuild ~ 10 min if needed, pipeline ~ 9 min). Steady state: ~ 9 min.

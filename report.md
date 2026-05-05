@@ -849,6 +849,51 @@ new run dirs are `runs/case3/mbpp_full/AFlow-handcrafted/` and
 `runs/case3/mbpp_full/AC_AFlow_handcrafted/AFlow+Skills+Gates/`. Tests
 after Session 12: **144 / 144 still pass**.
 
+### 11.9 Session 13 — CS2 swap to GSE270788 human heart 10x multiome (2026-05-05)
+
+User asked to swap CS2's dataset from SHARE-seq mouse skin to a
+GSE270788 human heart paired-nucleus 10x Multiome dataset (sample MA7),
+per the `case_study_2_human_heart.md` spec. Constraint: no AC backbone
+edits; only general-purpose code changes.
+
+**Generic code changes** (additive, both case studies coexist):
+
+| File | Edit |
+|---|---|
+| `docker/agentcoop-r-runtime.Dockerfile` | Two new leaf layers: `EnsDb.Hsapiens.v86` + `BSgenome.Hsapiens.UCSC.hg38` + `org.Hs.eg.db`, and `hdf5r`. Same image now serves mm10 + hg38. |
+| `agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R` | `dataset.format` switch (`tenx_h5_multiome` path: `Read10X_h5` → `$Gene Expression`); generic `find_candidate_col` helper; metadata-coverage barcode-overlap check. |
+| `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R` | Same `dataset.format` switch (10x H5 → `$Peaks` → hg38 EnsDb → GeneActivity primary); `load_ensdb_for_genome` helper; CreateChromatinAssay parameterized by genome. |
+| `agentcoop/wrappers/cellmarker_evaluator_local/adapter.py` | `_HUMAN_HEART_ALIASES` table auto-selected when `organism="Human"`; tissue-aware `filter_mode` label; widened CellMarker file fallback paths. |
+
+**NEW files:** `scripts/cs2_human_heart_setup.sh` and
+`case_study_2_human_heart.request.yaml`.
+
+**End-to-end run** (`agentcoop collaborate --docker`): **success** in
+540 s (~ 9 min, of which Signac::GeneActivity is ~ 7 min). 190 cells
+× 36 601 genes / 76 162 peaks; 4 cell types (Endothelium 57,
+Cardiomyocyte 52, Myeloid 44, Fibroblast 37 — Pericyte / Endocardium /
+Lymphatic dropped at the spec's `min_cells_per_type=20` cutoff).
+
+**Hypothesis** (`precision_intersection > precision_rna > precision_atac`
+AND `recall_union > recall_rna > recall_atac`):
+
+| Database | n_mapped | P_int | P_rna | P_atac | R_union | R_rna | R_atac | Holds? |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| **CellMarker 2.0 (Heart)** | 2 (CM, Fib) | **0.369** | 0.120 | 0.110 | **0.291** | 0.229 | 0.189 | ✅ |
+| **PanglaoDB (Hs Heart)** | 3 (CM, Fib, Mye) | **0.492** | 0.247 | 0.227 | **0.144** | 0.092 | 0.089 | ✅ |
+
+Both databases: intersection-precision strictly beats single-modality
+precision; union-recall strictly beats single-modality recall.
+Cardiomyocyte and Fibroblast individually meet `intersection_strict_win`
+AND `union_strict_win` for both DBs. Endothelium / Myeloid don't map to
+CellMarker heart (their gold-set is empty under the strict heart
+filter); per spec we did NOT broaden the filter to force a higher
+macro mean.
+
+Full write-up: `runs/case2/human_heart_ma7_docker/README.md` and
+`SESSION_*` notes referenced from `progress.md` / `findings.md` /
+`implement.md`. Tests after all changes: **144 / 144 pass**.
+
 ## 12. Key takeaways
 
 1. **Simplicity-first compilation works.** GSM8K's 50-pt jump came from

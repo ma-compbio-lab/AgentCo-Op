@@ -737,3 +737,57 @@ Cost estimate: ~3x the seed = $0.06–0.10 / 257 tasks. Trivial.
 - external/AFlow/scripts/{operators.py, optimizer.py, evaluator.py, async_llm.py, action_node.py, llm.py, formatter.py, prompts/}
 - external/AFlow/benchmarks/mbpp.py
 - external/AFlow/run.py
+
+---
+
+## Session 13 — CS2 swap from mouse skin SHARE-seq to human heart 10x multiome (GSE270788) (2026-05-05)
+
+### Goal (per user)
+Swap CS2 dataset from SHARE-seq mouse skin to GSE270788 human heart paired
+single-nucleus multiome (10x Chromium Multiome ATAC + Gene Expression),
+sample MA7. Spec is in `case_study_2_human_heart.md`. Configure + launch
+the experiment, execute end-to-end via live Docker backend so any user
+can reproduce. Constraint: no backbone changes; if code edits are
+needed they must be general-purpose, not ad-hoc patches.
+
+### Strategy
+- **Wrappers**: keep existing Seurat / Signac / CellMarkerEvaluator wrappers, add a generic `dataset.format` switch (`dense_tsv` vs `tenx_h5_multiome`). Same wrapper handles both case studies after the change.
+- **R Docker image**: ADD hg38 packages (`EnsDb.Hsapiens.v86`, `BSgenome.Hsapiens.UCSC.hg38`, `org.Hs.eg.db`) alongside the existing mm10 packages — additive change to the Dockerfile, leaf layer rebuild only. Tag stays `agentcoop-r-runtime:case-study`.
+- **Setup script**: new `scripts/cs2_human_heart_setup.sh` for GSE270788 (data sources + naming completely different from SHARE-seq, so a separate script is cleaner than parameterizing one). Existing `scripts/cs2_setup.sh` stays for the SHARE-seq path.
+- **Request YAML**: new `case_study_2_human_heart.request.yaml`. Existing `case_study_2.request.yaml` stays.
+- **CellMarker evaluator**: tissue/organism filters are already parameterized via the request YAML; only the cell-type alias map for heart-specific labels (cardiomyocyte/fibroblast/endothelial/SMC/macrophage/pericyte) might need broadening.
+
+### Phases
+- Phase 84 (#132): diagnose + plan, read remaining wrappers
+- Phase 85 (#133): update R Dockerfile to add hg38 layer (additive)
+- Phase 86 (#134): rebuild R image (incremental, ~10–20 min)
+- Phase 87 (#135): add `dataset.format` switch to Seurat R wrapper
+- Phase 88 (#136): add `dataset.format` switch + 10x H5 path to Signac R wrapper
+- Phase 89 (#137): widen cell-type aliases in cellmarker_evaluator (heart cell types)
+- Phase 90 (#138): create `scripts/cs2_human_heart_setup.sh`
+- Phase 91 (#139): create `case_study_2_human_heart.request.yaml`
+- Phase 92 (#140): run setup script (download GSE270788 + databases + tabix)
+- Phase 93 (#141): run end-to-end pilot via `agentcoop collaborate --docker`
+- Phase 94 (#142): verify outputs, update docs, commit + push
+
+### Success criteria
+- Both R image variants (mm10 SHARE-seq + hg38 human heart) work without code-path divergence in the wrapper modules — only a `dataset.format` parameter and the chosen image's annotation package matter
+- End-to-end run completes through Seurat → Signac::GeneActivity → Ensemble → CellMarker+PanglaoDB evaluation
+- All required artifacts in §16 of the spec are produced
+- pytest tests/ stays at 144/144
+- No edits to `agentcoop/core/` (backbone)
+
+### Files to add (new)
+- `scripts/cs2_human_heart_setup.sh`
+- `case_study_2_human_heart.request.yaml`
+- `runs/case2/human_heart_ma7_docker/` (run output)
+
+### Files to modify (general-purpose)
+- `docker/agentcoop-r-runtime.Dockerfile` (add hg38 packages layer)
+- `agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R` (add 10x H5 path under format switch)
+- `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R` (add 10x H5 path under format switch)
+- `agentcoop/wrappers/cellmarker_evaluator_local/adapter.py` (only if heart aliases incomplete)
+
+### Files NOT to touch (backbone)
+- `agentcoop/core/` (compiler, runtime, schema, augment_graph, repo_collaboration)
+- AFlow framework code

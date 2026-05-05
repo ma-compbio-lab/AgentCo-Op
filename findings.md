@@ -1024,3 +1024,76 @@ helps if the model can actually correct itself, which is dataset-specific).
 
 A 30-line hand-crafted graph using the same operators can outscore the
 optimizer's chosen graph by 20+ pp — at no training cost.
+
+---
+
+## Session 13 — human heart 10x multiome works through the same wrappers (2026-05-05)
+
+### Headline finding
+
+The Seurat × Signac × CellMarker collaboration designed for SHARE-seq
+mouse skin generalized to GSE270788 human heart 10x multiome with
+**only generic-format-switch edits** to the wrappers — no
+backbone changes, no new wrappers, no new adapters. The hypothesis
+`precision_intersection > precision_rna > precision_atac` AND
+`recall_union > recall_rna > recall_atac` HOLDS on both CellMarker 2.0
+and PanglaoDB independently.
+
+### What the dataset switch actually required
+
+| Layer | Mouse skin SHARE-seq | Human heart 10x H5 | Generic switch |
+|---|---|---|---|
+| Matrix format | dense gzipped TSV (sparse MTX trio sidecar) | 10x H5 with `Gene Expression` + `Peaks` named assays | `dataset.format` enum |
+| Annotation | `EnsDb.Mmusculus.v79`, mm10 | `EnsDb.Hsapiens.v86`, hg38 | `dataset.genome` enum routed through `load_ensdb_for_genome()` |
+| Metadata format | `celltype.txt.gz` (TSV, single sample) | `metadata.csv.gz` (CSV, multi-sample, requires `sample_id` filter) | `read_metadata_table()` (auto sep) + sample-column filter |
+| Barcode style | `R1.52.R2.48.R3.53.P1.05` (SHARE-seq tokens, comma-vs-dot quirk) | `s3_TTTAACG…GTGT-1` (10x lane suffix + author batch prefix) | `normalize_barcode()` strips short-prefix + lane-suffix; column lookup uses both raw and normalized strategies |
+| ATAC primary method | peak-to-nearest-gene (faster on 32 k cells × 86 k peaks) | `Signac::GeneActivity` (per spec; faster on 597 cells × 76 k peaks) | `signac_method` enum (default by `dataset.format`) |
+| CellMarker filter | `tissue=Skin`, mouse aliases | `tissue=Heart`, human heart aliases | `tissue_filter_primary` + organism-conditional `_HUMAN_HEART_ALIASES` default |
+
+The "find_candidate_col" generalization was the key piece: column priority
+should follow the candidate-list order (most-canonical first), NOT the
+metadata's column order. A naïve `intersect()` returns metadata-order,
+which on GSE270788 picked `orig.ident` (containing "HF") before `sample`
+(containing "MA7") and silently returned 0 cells.
+
+### Operational lesson
+
+For author-curated 10x H5 multiome datasets:
+- Matrix has more cells than the labeled metadata (10x's filtered cells
+  include lower-quality cells the author dropped during QC). The
+  "80% overlap" sanity check should measure **metadata-→-matrix coverage**
+  (did the labeled cells find a home in the matrix?), NOT
+  matrix-→-metadata coverage. Otherwise you'll falsely fail-fast on
+  perfectly valid data.
+- Cell-type labels often appear in multiple columns (`cell.type`,
+  `cell.type.l1`, `predicted.celltype`). Picking the wrong one gives
+  cluster IDs instead of cell type names. The candidate list should
+  prioritize the broad-label columns first.
+- `Read10X_h5` requires `hdf5r` in the R image — easy to miss until
+  runtime. Bake it into the leaf Dockerfile layer.
+
+### Why the hypothesis held
+
+For Cardiomyocyte and Fibroblast (the two cell types that mapped to
+both DBs):
+- The intersection is small (8-11 genes per cell type) but enriched for
+  canonical markers, so precision jumps from ~12% (RNA alone) to
+  ~37% (intersection).
+- The union expands the gene set ~80%, capturing both RNA-supported
+  and ATAC-supported markers, so recall expands modestly (e.g., 0.14
+  → 0.21 for Cardiomyocyte under CellMarker).
+
+For PanglaoDB the precision boost is even larger (24% → 49%) because
+PanglaoDB has broader heart marker coverage, so more of the
+intersection genes are recognized as canonical markers.
+
+### Limitation
+
+Endothelium and Myeloid map to 0 markers under CellMarker 2.0's strict
+heart filter — they would map under broader filters but we deliberately
+did not broaden, to honor the spec's "do not tune to force the
+ordering" rule. PanglaoDB has Myeloid markers (n=15), so it's included
+in PanglaoDB's macro mean. The hypothesis-ordering result would be
+**stronger** with more cell types mapped, but the cell types we DID
+have showed strict-win for both intersection-precision and
+union-recall.

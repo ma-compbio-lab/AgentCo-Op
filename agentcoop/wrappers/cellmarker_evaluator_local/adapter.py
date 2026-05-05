@@ -43,7 +43,14 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
     extended_filter = list(join_inputs.get("tissue_filter_extended") or [
         "Skin", "Epidermis", "Dermis", "Hair follicle", "Hair",
     ])
-    aliases = (join_inputs.get("aliases") or _DEFAULT_ALIASES)
+    # Pick the alias table by organism. The request YAML's
+    # `join_agent.inputs.aliases` overrides this entirely if set.
+    if join_inputs.get("aliases"):
+        aliases = join_inputs.get("aliases")
+    elif organism.lower().startswith("h"):
+        aliases = _HUMAN_HEART_ALIASES
+    else:
+        aliases = _DEFAULT_ALIASES
 
     warnings: list[str] = []
     try:
@@ -92,7 +99,11 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
             "n_genes_input_rna": int(sum(len(v) for v in rna.values())),
             "n_genes_input_atac": int(sum(len(v) for v in atac.values())),
             "duplicates_removed_within_cell_type": True,
-            "alias_table_used": "manual mouse-skin aliases (case_study_2.md §14.2)",
+            "alias_table_used": (
+                "join_inputs.aliases" if join_inputs.get("aliases")
+                else ("default human-heart aliases" if organism.lower().startswith("h")
+                      else "default mouse-skin aliases")
+            ),
         }
         (out_dir / "gene_symbol_harmonization_report.json").write_text(
             json.dumps(harm, indent=2), encoding="utf-8"
@@ -101,9 +112,9 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
         # ---- CellMarker parsing + gold sets ------------------------------
         cm_raw = _read_cellmarker_file(cellmarker_path, log)
         log.info(f"CellMarker rows: {len(cm_raw)}")
-        # Persist a tab-separated copy of the raw mouse marker rows for
-        # reproducibility.
-        raw_tsv = out_dir / "cellmarker_raw_mouse_markers.tsv"
+        # Persist a tab-separated copy of the filtered raw marker rows for
+        # reproducibility (works for any organism + tissue filter).
+        raw_tsv = out_dir / "cellmarker_raw_markers.tsv"
         cm_raw.to_csv(raw_tsv, sep="\t", index=False)
 
         gold_primary, label_map_primary = _build_gold_sets(
@@ -115,11 +126,15 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
             dataset_cell_types=all_cts, aliases=aliases, log=log,
         )
 
-        # If the strict skin filter is sparse, fall back on extended for
-        # the *primary* gold-set; record both.
+        # If the strict tissue filter is sparse, fall back on extended for
+        # the *primary* gold-set; record which one was used.
         gold = gold_primary if any(len(v) > 0 for v in gold_primary.values()) else gold_extended
         label_map = label_map_primary if gold is gold_primary else label_map_extended
-        filter_mode = "skin" if gold is gold_primary else "skin_extended"
+        if gold is gold_primary:
+            filter_mode = "_".join(t.lower().replace(" ", "_") for t in primary_filter) or "primary"
+        else:
+            filter_mode = ("_".join(t.lower().replace(" ", "_") for t in primary_filter)
+                            or "primary") + "_extended"
         log.info(f"using cellmarker_filter_mode={filter_mode}")
 
         gold_path = out_dir / "cellmarker_gold_markers_by_celltype.json"
@@ -293,7 +308,7 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
                 "marker_set_operations_by_celltype_json": str(out_dir / "marker_set_operations_by_celltype.json"),
                 "marker_set_sizes_by_celltype_csv": str(out_dir / "marker_set_sizes_by_celltype.csv"),
                 "gene_symbol_harmonization_report_json": str(out_dir / "gene_symbol_harmonization_report.json"),
-                "cellmarker_raw_mouse_markers_tsv": str(raw_tsv),
+                "cellmarker_raw_markers_tsv": str(raw_tsv),
                 "cellmarker_gold_markers_by_celltype_json": str(gold_path),
                 "cellmarker_label_mapping_csv": str(label_map_csv),
                 "precision_recall_by_celltype_csv": str(out_dir / "precision_recall_by_celltype.csv"),
@@ -335,6 +350,54 @@ def register() -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+# Default human-heart aliases (mirror case_study_2_human_heart.md §11
+# initial mapping table). The request YAML can override entirely via
+# `join_agent.inputs.aliases`. Aliases match CellMarker 2.0 / PanglaoDB
+# label conventions case-insensitively.
+_HUMAN_HEART_ALIASES: dict[str, list[str]] = {
+    # Cardiomyocytes
+    "Cardiomyocyte": ["cardiomyocyte", "cardiac muscle cell", "ventricular cardiomyocyte", "atrial cardiomyocyte"],
+    "Ventricular Cardiomyocyte": ["ventricular cardiomyocyte", "cardiomyocyte"],
+    "Atrial Cardiomyocyte": ["atrial cardiomyocyte", "cardiomyocyte"],
+    "vCM": ["ventricular cardiomyocyte", "cardiomyocyte"],
+    "aCM": ["atrial cardiomyocyte", "cardiomyocyte"],
+    "CM": ["cardiomyocyte", "cardiac muscle cell"],
+    # Fibroblasts
+    "Fibroblast": ["fibroblast", "cardiac fibroblast", "myofibroblast"],
+    "Cardiac Fibroblast": ["cardiac fibroblast", "fibroblast"],
+    "Myofibroblast": ["myofibroblast", "fibroblast"],
+    "Matrifibrocyte": ["matrifibrocyte", "fibroblast"],
+    "Fib": ["fibroblast", "cardiac fibroblast"],
+    # Endothelial
+    "Endothelial": ["endothelial cell", "vascular endothelial cell"],
+    "Endothelial Cell": ["endothelial cell"],
+    "EC": ["endothelial cell"],
+    "Vascular Endothelial": ["endothelial cell", "vascular endothelial cell"],
+    "Lymphatic Endothelial": ["lymphatic endothelial cell", "endothelial cell"],
+    # Smooth muscle / pericytes
+    "Smooth Muscle Cell": ["smooth muscle cell", "vascular smooth muscle cell"],
+    "SMC": ["smooth muscle cell"],
+    "Pericyte": ["pericyte", "mural cell", "smooth muscle cell"],
+    "Mural Cell": ["pericyte", "mural cell"],
+    # Immune
+    "Macrophage": ["macrophage", "monocyte"],
+    "Mac": ["macrophage"],
+    "Mono": ["monocyte"],
+    "Monocyte": ["monocyte", "macrophage"],
+    "T cell": ["t cell", "t lymphocyte"],
+    "B cell": ["b cell", "b lymphocyte"],
+    "NK cell": ["natural killer cell", "nk cell"],
+    "DC": ["dendritic cell"],
+    # Other heart cell types
+    "Adipocyte": ["fat cell", "adipocyte"],
+    "Neuron": ["neuron", "neural cell"],
+    "Schwann Cell": ["schwann cell"],
+    "Glial Cell": ["glial cell"],
+    "Mesothelial": ["mesothelial cell"],
+    "Epicardial": ["epicardial cell"],
+}
 
 
 _DEFAULT_ALIASES: dict[str, list[str]] = {
@@ -405,8 +468,11 @@ def _resolve_cellmarker_file(join_inputs: dict[str, Any], log: "_Logger") -> Pat
         path = Path(p).expanduser()
         if path.is_file():
             return path
-    # Fallback: search common dataset cache locations.
+    # Fallback: search common dataset cache locations (mouse and human).
     candidates = [
+        Path("data/heart_human/Cell_marker_All.xlsx"),
+        Path("data/cellmarker/Cell_marker_All.xlsx"),
+        Path("data/raw/databases/Cell_marker_All.xlsx"),
         Path("data/shareseq_skin/Cell_marker_Mouse.xlsx"),
         Path("data/cellmarker/Cell_marker_Mouse.xlsx"),
         Path("data/heart_merfish/Cell_marker_Mouse.xlsx"),
@@ -415,7 +481,7 @@ def _resolve_cellmarker_file(join_inputs: dict[str, Any], log: "_Logger") -> Pat
         if c.is_file():
             return c
     raise FileNotFoundError(
-        "Cell_marker_Mouse.xlsx not found; declare it via "
+        "CellMarker xlsx not found; declare it via "
         "join_agent.inputs.cellmarker_file in the request YAML"
     )
 
