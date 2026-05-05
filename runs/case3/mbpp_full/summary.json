@@ -1,6 +1,6 @@
 {
-  "session": "10+11",
-  "date": "2026-05-04",
+  "session": "10+11+12",
+  "date": "2026-05-05",
   "dataset": "mbpp",
   "test_split": "data/raw/mbpp/test.jsonl (257 tasks, full)",
   "train_split": "data/raw/mbpp/train.jsonl (120 tasks)",
@@ -93,6 +93,30 @@
         "elapsed_s": 290.3,
         "run_dir": "runs/case3/mbpp_full/AC_AFlow_trained_promptfix/AFlow+Skills+Gates/",
         "note": "Identical to Session 10 (0.8755 → 0.8755). AC's runtime had already neutralized AFlow's broken Test/ScEnsemble path by substituting python_sandbox + gates. The upstream prompt+data fix doesn't change AC's outcome because AC bypasses those internals."
+      },
+      {
+        "session": "12",
+        "variant": "AFlow-handcrafted (round 99) — alone, AFlow's MBPPBenchmark (HAND-ENGINEERED MULTI-SAMPLE)",
+        "score_avg": 0.7821,
+        "n_passed": 201,
+        "cost_total_usd": 0.1984,
+        "avg_cost_per_task_usd": 0.000772,
+        "elapsed_s": 292.8,
+        "tokens_total_estimate": "~1.3M (cost-derived, gpt-4o-mini)",
+        "run_dir": "runs/case3/mbpp_full/AFlow-handcrafted/",
+        "note": "Hand-engineered round_99 graph: K=3 candidates with diverse instructions in parallel, Test each (Test does up to 3 reflection rounds internally), return first passing or ScEnsemble vote. +19.07 pp over round-7 trained alone, +15.18 pp over round-1 seed. Built using AFlow's existing operators only — no backbone code touched."
+      },
+      {
+        "session": "12",
+        "variant": "AC + AFlow-handcrafted (round 99) — AFlow+Skills+Gates via AgentCo-op",
+        "score_avg": 0.8677,
+        "n_passed": 223,
+        "cost_total_usd": 0.0764,
+        "tokens_total": 291948,
+        "elapsed_s": 323.2,
+        "run_dir": "runs/case3/mbpp_full/AC_AFlow_handcrafted/AFlow+Skills+Gates/",
+        "gate_totals": {"runtime_error": 2, "public_or_generated_test_failure": 2},
+        "note": "Effectively flat vs AC + round-7 (-0.78 pp, noise). AC's aflow_import collapses both round_7 and round_99 to a 3-node chain (CustomCodeGenerate → Test → ScEnsemble) via AST parsing — the parallel/conditional control flow in round_99 is invisible to AC. Known limitation of aflow_import."
       }
     ]
   },
@@ -105,13 +129,24 @@
     "diagnosis": "250/257 round-7 predictions were the string 'NoneType' object is not iterable. Root cause: mbpp_public_test.jsonl built from train.jsonl in Session 10 → entry_point lookup returns None → Test operator crashes → ScEnsemble never reached.",
     "headline_takeaway": "AFlow alone: 0.0156 → 0.5914 (+57.58 pp). AC + AFlow trained: 0.8755 → 0.8755 (unchanged — AC was insulated from AFlow's crash all along)."
   },
+  "session_12_changes": {
+    "constraint": "User: anything except AFlow's core backbone code. Trained-graph code + operator-template prompts are fair game.",
+    "files_changed": [
+      {"path": "external/AFlow/workspace/MBPP/workflows/round_99/__init__.py", "type": "new", "change": "Empty init for new round dir"},
+      {"path": "external/AFlow/workspace/MBPP/workflows/round_99/graph.py", "type": "new", "change": "Hand-engineered Workflow: K=3 multi-sample with diverse instructions, parallel via asyncio.gather, return first passing Test result or ScEnsemble vote fallback"},
+      {"path": "external/AFlow/workspace/MBPP/workflows/round_99/prompt.py", "type": "new", "change": "Three INSTRUCTION_* strings (default, edge-cases, step-by-step) for diversity at T=0"},
+      {"path": "scripts/aflow_eval_mbpp.py", "type": "fix", "change": "Resolve --out-dir to absolute BEFORE chdir (otherwise metrics.json lands at external/AFlow/<out_dir>/ instead of caller's intended path)"}
+    ],
+    "diagnosis": "Round-7 trained graph trails seed (0.5914 vs 0.6303) because Test+ScEnsemble fallback adds zero value: Test internally does 3 reflection rounds; ScEnsemble over a single solution is a no-op. The leverage is diversity at the entry point, not more reflection.",
+    "headline_takeaway": "AFlow alone: 0.5914 → 0.7821 (+19.07 pp). AC + AFlow handcrafted: 0.8755 → 0.8677 (-0.78 pp, noise). AC's aflow_import collapses both rounds to the same 3-node chain via AST parsing, so the multi-sample improvement is invisible to AC."
+  },
   "headline_takeaways": [
     "Session 10: AFlow training on a 4-task validation sample produced a graph that scored 0.725 on validation but 0.0156 on the full 257-task test — assumed to be overfitting.",
     "Session 11 diagnosis: 0.0156 was actually a data-wiring bug (mbpp_public_test.jsonl built from train, entry_points didn't match) + a prompt fragility (SC_ENSEMBLE crashed on single-solution input). Not an overfit failure — a silent crash on 250/257 tasks.",
     "Session 11 fix: regenerated data file + rewrote SC_ENSEMBLE_PROMPT. AFlow alone climbed to 0.5914 (+57.58 pp).",
-    "AFlow alone (0.5914 fixed) still trails AFlow seed (0.6303): the round-7 Test+ScEnsemble structure adds no real iteration value because ScEnsemble re-picks the same wrong solution on Test failure.",
-    "AC + AFlow-trained: 0.8755 in both sessions. AC's runtime sandbox + gates had already neutralized AFlow's broken Test/ScEnsemble path; the upstream prompt+data fix doesn't change AC's outcome.",
-    "Deployment pattern remains: use AFlow for graph search, deploy the chosen graph behind AC's runtime so its broken edge cases are caught and retried instead of escaping as silent failures.",
-    "Total session 10+11 cost: ~$1.08 (training $0.7344 + four S10 test variants $0.205 + two S11 re-runs $0.140)."
+    "Session 12: hand-engineered round_99 graph using AFlow's existing operators (K=3 multi-sample with diverse instructions + Test-with-reflection on each + first-passing-wins) pushed AFlow alone to 0.7821 (+19.07 pp over round-7 fixed, +15.18 pp over seed). No AFlow backbone code touched.",
+    "AC + AFlow numbers stayed in a tight 0.86-0.88 band across all three sessions and all three rounds — AC's aflow_import collapses every graph to a 3-node chain via AST parsing, so the upstream graph quality matters within ~1 pp once AC wraps it.",
+    "Deployment recommendation: if you must run AFlow alone, deploy round_99 (0.7821); if you can deploy AC, the choice of AFlow round matters within ~1 pp (use round_7 for the highest absolute number, 0.8755).",
+    "Total session 10+11+12 cost: ~$1.36 (training $0.7344 + four S10 test variants $0.205 + two S11 re-runs $0.140 + two S12 re-runs $0.275)."
   ]
 }

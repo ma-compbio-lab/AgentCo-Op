@@ -1148,3 +1148,186 @@ python scripts/case3_aflow_dynamic.py --dataset mbpp --limit 257 \
 ```
 
 Total wall: ~ 6 min. Total cost: ~ $0.14.
+
+---
+
+## Session 12 — hand-engineered multi-sample MBPP graph (round 99) (2026-05-05)
+
+### Goal
+User constraint: "modify anything except AFlow's core backbone code"
+(`scripts/operators.py`, `optimizer.py`, `evaluator.py`,
+`async_llm.py`, `benchmarks/mbpp.py`, `run.py`). Push AFlow alone above
+Session 11's 0.5914 (still below the seed's 0.6303).
+
+### Diagnosis
+
+Round-7's `CustomCodeGenerate → Test → if fails, ScEnsemble` is
+structurally a no-op:
+- `Test` already does up to 3 reflection rounds internally.
+- `ScEnsemble` over a single solution adds zero information.
+- The leverage is diversity at the entry point.
+
+### Code changes (Session 12)
+
+#### NEW: `external/AFlow/workspace/MBPP/workflows/round_99/`
+
+```
+round_99/
+├── __init__.py    # empty
+├── graph.py       # K=3 multi-sample Workflow class
+└── prompt.py      # 3 INSTRUCTION_* strings
+```
+
+`graph.py` (excerpt):
+```python
+async def __call__(self, problem: str, entry_point: str):
+    instructions = [
+        prompt_custom.INSTRUCTION_DEFAULT,
+        prompt_custom.INSTRUCTION_EDGE_CASES,
+        prompt_custom.INSTRUCTION_STEP_BY_STEP,
+    ]
+    # Step 1 — K=3 diverse candidates in parallel
+    candidates = await asyncio.gather(*[
+        self.custom_code_generate(problem=problem, entry_point=entry_point,
+                                   instruction=instr)
+        for instr in instructions
+    ], return_exceptions=True)
+    valid = [c for c in candidates if isinstance(c, dict) and c.get("response")]
+    if not valid:
+        return "", self.llm.get_usage_summary()["total_cost"]
+
+    # Step 2 — Test each (Test internally does up to 3 reflection rounds)
+    test_results = await asyncio.gather(*[
+        self.test(problem=problem, solution=c["response"], entry_point=entry_point)
+        for c in valid
+    ], return_exceptions=True)
+
+    # Step 3 — return first that passes
+    reflected = []
+    for tr in test_results:
+        if isinstance(tr, dict):
+            if tr.get("result") and tr.get("solution"):
+                return tr["solution"], self.llm.get_usage_summary()["total_cost"]
+            if tr.get("solution"):
+                reflected.append(tr["solution"])
+
+    # Step 4 — none passed; ScEnsemble vote over reflected candidates
+    pool = reflected or [c["response"] for c in valid]
+    try:
+        ensemble = await self.sc_ensemble(solutions=pool, problem=problem)
+        if ensemble.get("response"):
+            return ensemble["response"], self.llm.get_usage_summary()["total_cost"]
+    except Exception:
+        pass
+    return pool[0], self.llm.get_usage_summary()["total_cost"]
+```
+
+`prompt.py`:
+```python
+INSTRUCTION_DEFAULT = ""
+INSTRUCTION_EDGE_CASES = (
+    "Carefully analyze the function signature, docstring, and any examples "
+    "shown. Enumerate edge cases (empty input, single element, boundary "
+    "values, negative numbers, special characters, off-by-one situations). "
+    "Then write a clean, idiomatic Python implementation that handles all "
+    "of them. Prefer straightforward control flow over clever tricks.\n\n"
+)
+INSTRUCTION_STEP_BY_STEP = (
+    "Solve this step by step:\n"
+    "1. Restate the problem in your own words and identify the function "
+    "signature.\n"
+    "2. List the inputs, outputs, and any implicit constraints.\n"
+    "3. Sketch the algorithm in 1-3 sentences.\n"
+    "4. Implement it as a single Python function.\n\n"
+)
+```
+
+#### FIX: `scripts/aflow_eval_mbpp.py`
+
+Resolve `args.out_dir` to absolute BEFORE `os.chdir(aflow_root)`,
+otherwise the file write at the end lands inside `external/AFlow/<out_dir>/`
+instead of the caller's intended path. Sessions 10/11 silently hit this;
+Session 12 fixes it transparently.
+
+```python
+repo_root = Path.cwd()
+aflow_root = (repo_root / args.aflow_root).resolve()
+args.out_dir = args.out_dir.resolve()       # NEW — must be before chdir
+args.out_dir.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(aflow_root))
+os.chdir(aflow_root)
+```
+
+#### NO EDITS to AFlow backbone
+
+We did NOT modify any of the following files (per user constraint):
+- `external/AFlow/scripts/{operators.py, optimizer.py, evaluator.py, async_llm.py, action_node.py, llm.py, formatter.py, prompts/}`
+- `external/AFlow/benchmarks/mbpp.py`
+- `external/AFlow/run.py`
+
+#### NO EDITS to AC code
+
+We did NOT modify any AgentCo-op source. AC + AFlow handcrafted's
+slight regression (-0.78 pp vs AC + AFlow trained) is documented as a
+known limitation of `agentcoop/core/aflow_import.py` (AST-based;
+shape-blind to runtime control flow).
+
+### Run-dir layout (Session 12 additions)
+
+```
+runs/case3/mbpp_full/
+├── ...                                       # S10/S11 artifacts (preserved)
+├── AFlow-handcrafted/
+│   ├── metrics.json                          # 0.7821 / 257
+│   ├── 0.78210_<timestamp>.csv               # AFlow's per-task CSV
+│   └── log.json
+├── AC_AFlow_handcrafted/AFlow+Skills+Gates/
+│   ├── metrics.json                          # 0.8677 / 257
+│   ├── predictions.jsonl
+│   ├── blueprint.json
+│   └── traces/
+├── aflow_eval_handcrafted.log
+├── ac_aflow_handcrafted.log                  # empty (case3_aflow_dynamic doesn't print to stdout in this mode)
+└── SESSION_12_HANDCRAFTED_NOTES.md
+```
+
+### Headline results
+
+| Variant | S10 | S11 | **S12** |
+|---|---:|---:|---:|
+| AFlow seed (round 1) alone | 0.6303 | 0.6303 | 0.6303 |
+| AFlow trained (round 7) alone | 0.0156 | 0.5914 | 0.5914 |
+| **AFlow handcrafted (round 99) alone** | — | — | **0.7821** |
+| AC + AFlow seed | 0.8638 | 0.8638 | 0.8638 |
+| AC + AFlow trained (round 7) | 0.8755 | 0.8755 | 0.8755 |
+| **AC + AFlow handcrafted (round 99)** | — | — | **0.8677** |
+
+Test-phase token / cost (Session 12 re-runs):
+
+| Variant | Tokens | Cost USD | Wall |
+|---|---:|---:|---:|
+| AFlow handcrafted alone (S12) | ~ 1.3 M (cost-derived) | $0.1984 | 293 s |
+| AC + AFlow handcrafted (S12) | 291 948 | $0.0764 | 323 s |
+
+### Tests
+`pytest tests/` → 144 / 144 (no regressions).
+
+### Reproduction (Session 12 only — assumes Session 11 setup is in place)
+
+```bash
+# 1. round_99 graph + prompts already in place after this commit.
+
+# 2. Re-evaluate AFlow alone (round 99) on full 257-task test split
+set -a; source .secrets/api-key; set +a
+python scripts/aflow_eval_mbpp.py --round 99 \
+  --test-file external/AFlow/data/datasets/mbpp_test.jsonl \
+  --out-dir runs/case3/mbpp_full/AFlow-handcrafted \
+  --exec-model gpt-4o-mini
+
+# 3. Re-import + re-run AC + AFlow handcrafted
+python scripts/case3_aflow_dynamic.py --dataset mbpp --limit 257 \
+  --aflow-round 99 --variants "AFlow+Skills+Gates" \
+  --out runs/case3/mbpp_full/AC_AFlow_handcrafted
+```
+
+Total wall: ~ 10 min. Total cost: ~ $0.27.

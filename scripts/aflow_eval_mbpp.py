@@ -40,6 +40,10 @@ def main() -> int:
 
     repo_root = Path.cwd()
     aflow_root = (repo_root / args.aflow_root).resolve()
+    # Resolve out_dir to absolute BEFORE chdir, otherwise the file write
+    # at the end lands inside `external/AFlow/<out_dir>` instead of the
+    # caller's intended path.
+    args.out_dir = args.out_dir.resolve()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     sys.path.insert(0, str(aflow_root))

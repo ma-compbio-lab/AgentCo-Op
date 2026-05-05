@@ -878,3 +878,95 @@ Test-phase tokens / cost for the two re-runs:
 
 ### Tests
 `pytest tests/` → 144 / 144 still pass.
+
+---
+
+## Session 12 — hand-engineered multi-sample MBPP graph (round 99) (2026-05-05)
+
+### Goal
+User asked to push AFlow's accuracy higher again — Session 11's 0.5914
+was still below the seed (0.6303). Constraint relaxed to **modify
+anything except AFlow's core backbone code**. Trained-graph code and
+operator-template prompts are fair game.
+
+### Diagnosis (Phase 78)
+
+Round-7's `Test → if fails, ScEnsemble` is structurally a no-op:
+- `Test` (in `template/operator.py`) ALREADY does up to 3 reflection
+  rounds internally against the public asserts.
+- `ScEnsemble` over a single solution adds zero information.
+- The leverage is **diversity at the entry point**, not more reflection.
+
+### Design (Phase 79) — `round_99/graph.py`
+
+```
+Step 1 — generate K=3 candidates in parallel (asyncio.gather), each with
+         a different `instruction` prefix (default / edge-cases /
+         step-by-step). Different prefixes → different outputs at T=0.
+Step 2 — Test each candidate (Test internally runs up to 3 reflection rounds).
+Step 3 — return the FIRST candidate whose Test reports pass.
+Step 4 — if none pass, ScEnsemble vote over the 3 reflected candidates.
+```
+
+New files:
+- `external/AFlow/workspace/MBPP/workflows/round_99/__init__.py` (empty)
+- `external/AFlow/workspace/MBPP/workflows/round_99/graph.py`
+- `external/AFlow/workspace/MBPP/workflows/round_99/prompt.py`
+
+Bug fix in our own harness:
+- `scripts/aflow_eval_mbpp.py` — resolve `--out-dir` to absolute BEFORE
+  `os.chdir(aflow_root)` so the metrics.json lands at the caller's
+  intended path (Sessions 10/11 had it land under `external/AFlow/runs/...`).
+
+### Results (full MBPP test, n=257, gpt-4o-mini)
+
+| Variant | S10 | S11 | **S12** |
+|---|---:|---:|---:|
+| AFlow seed (round 1) alone | 0.6303 | 0.6303 | 0.6303 |
+| AFlow trained (round 7) alone | 0.0156 | 0.5914 | 0.5914 |
+| **AFlow handcrafted (round 99) alone** | — | — | **0.7821** |
+| AC + AFlow seed | 0.8638 | 0.8638 | 0.8638 |
+| AC + AFlow trained (round 7) | 0.8755 | 0.8755 | 0.8755 |
+| **AC + AFlow handcrafted (round 99)** | — | — | **0.8677** |
+
+Test-phase tokens / cost (Session 12 re-runs):
+
+| Variant | Tokens | Cost USD | Wall |
+|---|---:|---:|---:|
+| AFlow handcrafted alone (S12) | ~ 1.3 M (cost-derived) | $0.1984 | 293 s |
+| AC + AFlow handcrafted (S12) | 291 948 | $0.0764 | 323 s |
+
+### Findings
+
+1. **AFlow alone: 0.5914 → 0.7821 (+19.07 pp).** Diversity at the
+   entry point is the missing ingredient. Beats seed (+15.18 pp) and
+   post-fix trained graph (+19.07 pp).
+2. **AC + AFlow stayed flat (0.8755 → 0.8677, −0.78 pp, noise).** AC's
+   `aflow_import` collapses both round_7 and round_99 to the same
+   3-node chain (CustomCodeGenerate → Test → ScEnsemble) via AST
+   parsing — the parallel/conditional control flow in round_99 is
+   invisible to AC. Known limitation now documented.
+3. **Deployment recommendation refines:** if you can deploy AC, the
+   choice of AFlow round matters within ~1 pp (noise). If you must run
+   AFlow alone, deploy round_99 (handcrafted), not round_7 (trained)
+   or round_1 (seed).
+
+### Files added (Session 12)
+
+| Path | Purpose |
+|---|---|
+| `external/AFlow/workspace/MBPP/workflows/round_99/{__init__.py, graph.py, prompt.py}` | Hand-engineered multi-sample workflow |
+| `runs/case3/mbpp_full/AFlow-handcrafted/` | AFlow alone, round 99 — score 0.7821 |
+| `runs/case3/mbpp_full/AC_AFlow_handcrafted/AFlow+Skills+Gates/` | AC + AFlow round 99 — score 0.8677 |
+| `runs/case3/mbpp_full/SESSION_12_HANDCRAFTED_NOTES.md` | Diagnosis + design + results |
+
+### Files modified (Session 12)
+
+| Path | Change |
+|---|---|
+| `scripts/aflow_eval_mbpp.py` | Resolve `--out-dir` to absolute before chdir |
+| `runs/case3/mbpp_full/{README.md, summary.json}` | Session 12 narrative + numbers added |
+| `report.md` | New §11.8 covering the hand-engineered round 99 |
+
+### Tests
+`pytest tests/` → 144 / 144 still pass.

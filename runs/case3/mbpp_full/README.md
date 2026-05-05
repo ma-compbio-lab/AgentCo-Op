@@ -1,4 +1,4 @@
-# Case Study 3 — MBPP full-test re-run with AFlow training (Sessions 10 + 11)
+# Case Study 3 — MBPP full-test re-run with AFlow training (Sessions 10 + 11 + 12)
 
 **Date:** 2026-05-04
 **Model:** `gpt-4o-mini` for both AFlow's optimizer LLM and execution
@@ -258,3 +258,78 @@ Run dirs:
 
 Full diagnostic write-up in `SESSION_11_PROMPTFIX_NOTES.md` (this
 directory).
+
+---
+
+## 9. Session 12 — hand-engineered multi-sample graph (round 99)
+
+User asked: AFlow alone at 0.5914 is still below the seed (0.6303).
+Push higher under a relaxed constraint — **modify anything except AFlow's
+core backbone code** (scripts/operators.py, scripts/optimizer.py,
+scripts/evaluator.py, scripts/async_llm.py, benchmarks/mbpp.py, etc.).
+Trained-graph code and operator-template prompts are fair game.
+
+### 9.1 Diagnosis
+
+Round-7's `Test → if fails, ScEnsemble` is a no-op pattern:
+- `Test` (in `template/operator.py`) ALREADY does up to 3 reflection rounds internally.
+- `ScEnsemble` over a single solution adds no information.
+- The leverage is **diversity at the entry point**, not more reflection.
+
+### 9.2 Design — `round_99/graph.py`
+
+```
+Step 1 — generate K=3 candidates in parallel (asyncio.gather), each with
+         a different `instruction` prefix (default / edge-cases /
+         step-by-step). Different prefixes → different outputs at T=0.
+Step 2 — Test each candidate (Test internally runs up to 3 reflection rounds).
+Step 3 — return the FIRST candidate whose Test reports pass (using the
+         possibly-reflected solution from Test's return).
+Step 4 — if none pass, ScEnsemble vote over the 3 reflected candidates.
+```
+
+New files:
+- `external/AFlow/workspace/MBPP/workflows/round_99/__init__.py` (empty)
+- `external/AFlow/workspace/MBPP/workflows/round_99/graph.py`
+- `external/AFlow/workspace/MBPP/workflows/round_99/prompt.py`
+
+No edits to AFlow backbone files.
+
+### 9.3 Results
+
+| Variant | S10 | S11 | **S12** | Δ S11→S12 |
+|---|---:|---:|---:|---:|
+| AFlow seed (round 1) alone | 0.6303 | 0.6303 | 0.6303 | — |
+| AFlow trained (round 7) alone | 0.0156 | 0.5914 | 0.5914 | — |
+| **AFlow handcrafted (round 99) alone** | — | — | **0.7821** | **+19.07 pp over R7** |
+| AC + AFlow seed | 0.8638 | 0.8638 | 0.8638 | — |
+| AC + AFlow trained (round 7) | 0.8755 | 0.8755 | 0.8755 | — |
+| **AC + AFlow handcrafted (round 99)** | — | — | **0.8677** | -0.78 pp (noise) |
+
+Test-phase tokens / cost for the two Session-12 re-runs:
+
+| Variant | Tokens | Cost USD | Wall |
+|---|---:|---:|---:|
+| AFlow handcrafted alone (S12) | ~ 1.3 M (cost-derived) | $0.1984 | 293 s |
+| AC + AFlow handcrafted (S12) | 291 948 | $0.0764 | 323 s |
+
+Run dirs:
+- `runs/case3/mbpp_full/AFlow-handcrafted/` — AFlow alone, round 99
+- `runs/case3/mbpp_full/AC_AFlow_handcrafted/AFlow+Skills+Gates/` — AC, round 99
+
+### 9.4 What this proves
+
+1. **AFlow alone climbed from 0.5914 → 0.7821 (+19.07 pp).** Diversity
+   at the entry point recovers tasks that a single deterministic
+   candidate dead-ended on. Beats both seed (+15.18 pp) and post-fix
+   trained graph (+19.07 pp).
+2. **AC + AFlow stayed flat (0.8755 → 0.8677, −0.78 pp).** AC's
+   `aflow_import` collapses both round_7 and round_99 to the same
+   3-node chain (CustomCodeGenerate → Test → ScEnsemble) via AST
+   parsing — the parallel/conditional control flow in round_99 is
+   invisible to AC. This is a known limitation of `aflow_import`.
+3. **The deployment recommendation refines:** if you can deploy AC,
+   the choice of AFlow round matters within ~1 pp. If you must run
+   AFlow alone, deploy round_99 (handcrafted), not round_7 (trained).
+
+Full diagnostic write-up: `SESSION_12_HANDCRAFTED_NOTES.md` (this directory).

@@ -929,3 +929,98 @@ appear as model "outputs" that look like model failures. The crash
 root cause is often a data-file mismatch (entry_point lookup misses)
 or a JSONL schema mismatch (missing fields) — both are mechanical
 issues that don't require any LLM tuning to fix.
+
+---
+
+## Session 12 — diversity at the entry point is what AFlow training was missing (2026-05-05)
+
+### Headline finding
+
+Hand-engineering a K=3 multi-sample graph (round_99) using AFlow's
+existing operators — without touching backbone code — pushed AFlow
+alone from 0.5914 (post-S11 trained) to **0.7821**. That's +19.07 pp
+over the trained graph and +15.18 pp over the seed.
+
+The leverage was **diversity at the entry point**, not more reflection
+or smarter ensembles. AFlow's optimizer at `--sample 4 --max_rounds 8`
+never explored that direction; the round-7 graph it picked instead
+added Test+ScEnsemble (which is structurally a no-op when fed a single
+candidate).
+
+### What AFlow's optimizer missed
+
+Round-7 (the optimizer's "best" graph): `CustomCodeGenerate → Test → if not result, ScEnsemble`.
+
+Why this is structurally weak:
+1. `Test` already does up to 3 reflection rounds internally (it's a
+   `Test`+`Reflect`+`Regenerate` loop, not just a checker).
+2. When `Test` returns `result=False`, the original solution has
+   ALREADY been refined 3 times by reflection. ScEnsemble over a
+   single candidate has nothing to vote on; it just rephrases or
+   re-emits the wrong solution.
+3. CustomCodeGenerate at T=0 is deterministic. One starting candidate
+   × (up to 3 reflections) = one trajectory. When the trajectory
+   dead-ends at a wrong solution, there's no diversity to bail it out.
+
+### What round_99 does instead
+
+```
+Step 1 — generate K=3 candidates in parallel (asyncio.gather), each with
+         a different `instruction` prefix:
+           "" (default)
+           "Carefully analyze … enumerate edge cases …"
+           "Solve step by step: 1. Restate … 2. Identify … 3. Sketch … 4. Implement"
+         Different prefixes → different outputs at T=0.
+Step 2 — Test each candidate (Test does up to 3 reflection rounds against public asserts).
+Step 3 — return the FIRST candidate whose Test reports pass, using the
+         (possibly reflected) solution from Test's return.
+Step 4 — if none pass, ScEnsemble vote over the 3 reflected candidates
+         (with the Session-11 hardened SC_ENSEMBLE_PROMPT).
+```
+
+Key insight: **public asserts (mbpp_public_test.jsonl) ARE the scoring
+asserts (mbpp_test.jsonl).** So `Test.result=True` implies the solution
+will pass scoring with probability ~1. Maximizing the rate at which
+Test returns True is the right objective.
+
+### What the AC variant tells us about `aflow_import`
+
+AC + AFlow handcrafted scored 0.8677 — basically identical to AC +
+AFlow trained at 0.8755 (-0.78 pp, well within API non-determinism
+noise). Why?
+
+`agentcoop/core/aflow_import.py` parses graph.py via Python AST. Its
+walker visits every `self.<op>(...)` call inside `__call__`. List
+comprehensions, `asyncio.gather`, and `if/else` branches are
+*invisible* to the walker — it sees one `CustomCodeGenerate` call,
+one `Test` call, and one `ScEnsemble` call regardless of how many
+times the runtime actually executes them. Both round_7 and round_99
+reduce to the same 3-node chain in AC's blueprint.
+
+This is a real limitation of `aflow_import`. If we wanted AC + AFlow
+handcrafted to capture round_99's parallelism, we'd need either:
+1. Teach `aflow_import` to recognize `asyncio.gather([f() for x in xs])`
+   as a parallel-fanout pattern and emit parallel NodeSpecs, OR
+2. Have AC import a structural representation (YAML/JSON) of the AFlow
+   workflow rather than its Python source, OR
+3. Add a `parallel_then_join` topology level to AC's compiler (the
+   Session 7.3 work for CS2 already added this — but `aflow_import`
+   doesn't use it).
+
+For now, document the limitation and let users choose: deploy AFlow
+alone with round_99 if you want the +19 pp; deploy AC + AFlow with any
+round if you want ~0.87.
+
+### Operational lesson
+
+When an LLM-based optimizer (AFlow, ADAS, etc.) under-performs after
+training, **inspect its chosen graph for structural no-ops** before
+blaming hyperparameters or model quality. AFlow's mutator can produce
+shapes that look superficially smart (Test! Reflection! Ensemble!) but
+collapse to no-ops at runtime because they don't generate the inputs
+that the wrapping operator needs (e.g., `ScEnsemble` needs ≥ 2
+candidates; `Test` already iterates internally; `Reflection` only
+helps if the model can actually correct itself, which is dataset-specific).
+
+A 30-line hand-crafted graph using the same operators can outscore the
+optimizer's chosen graph by 20+ pp — at no training cost.

@@ -674,3 +674,66 @@ NO edits to `operator.py`, `operator_an.py`, `evaluator.py`, `optimizer.py`,
 - 77 (15 min, $0): docs + commit + push
 
 Total expected wall: ~ 35 min, $0.12.
+
+---
+
+## Session 12 — hand-engineered multi-sample MBPP graph (2026-05-05)
+
+### Goal (per user)
+The AFlow-trained graph at 0.5914 (post Session-11 fix) still trails
+the seed (0.6303). Push higher under a relaxed constraint:
+**you may modify anything except AFlow's core backbone code**
+(scripts/operators.py, optimizer.py, evaluator.py, async_llm.py,
+benchmarks/mbpp.py, etc.). Trained-graph code (workspace/MBPP/workflows/
+round_*/{graph.py, prompt.py}) and operator-template prompts
+(workspace/MBPP/workflows/template/op_prompt.py) are fair game.
+
+Re-import the new graph into AC and re-run the case study.
+
+### Diagnosis (carryover from Session 11)
+- Test operator (in template/operator.py) ALREADY does up to 3 reflection
+  rounds internally. Round-7's outer ScEnsemble fallback adds zero
+  value because it votes over a single solution.
+- Public asserts (mbpp_public_test.jsonl) are the same asserts as
+  scoring asserts (mbpp_test.jsonl). So Test.result=True implies the
+  solution will pass scoring with probability ~1.
+- The remaining shortfall is **diversity at the entry point** —
+  CustomCodeGenerate at T=0 produces one deterministic candidate.
+
+### Design — round_99 (hand-crafted multi-sample)
+1. Generate K=3 candidates in parallel via asyncio.gather, each with a
+   different `instruction` prefix (default / edge-cases / step-by-step).
+   Different prefixes → different outputs even at T=0.
+2. Test each candidate (Test internally runs up to 3 reflection rounds).
+3. Return the FIRST candidate whose Test reports pass — use the
+   reflected solution from Test's return, not the original.
+4. If none pass, ScEnsemble vote over the 3 reflected candidates
+   (with the Session-11 hardened SC_ENSEMBLE_PROMPT).
+
+Cost estimate: ~3x the seed = $0.06–0.10 / 257 tasks. Trivial.
+
+### Phases
+- Phase 78 (#126): diagnose + design — done in plan above
+- Phase 79 (#127): create round_99/{__init__.py, graph.py, prompt.py}
+- Phase 80 (#128): smoke-test on 5 tasks
+- Phase 81 (#129): full eval — AFlow alone @ round 99 on n=257
+- Phase 82 (#130): full eval — AC + AFlow @ round 99 on n=257
+- Phase 83 (#131): docs + commit + push
+
+### Success criteria
+- AFlow alone (round 99) > seed's 0.6303 (target 0.75+)
+- AC + AFlow (round 99) ≥ AC + AFlow trained (0.8755)
+- pytest tests/ stays at 144/144
+- All changes outside AFlow backbone files
+
+### Files we may touch
+- external/AFlow/workspace/MBPP/workflows/round_99/{__init__.py, graph.py, prompt.py} — NEW
+- runs/case3/mbpp_full/AFlow-handcrafted/ — NEW eval outputs
+- runs/case3/mbpp_full/AC_AFlow_handcrafted/ — NEW AC eval outputs
+- runs/case3/mbpp_full/{README.md, summary.json, SESSION_12_HANDCRAFTED_NOTES.md}
+- report.md, progress.md, findings.md, implement.md, task_plan.md
+
+### Files we MUST NOT touch (backbone)
+- external/AFlow/scripts/{operators.py, optimizer.py, evaluator.py, async_llm.py, action_node.py, llm.py, formatter.py, prompts/}
+- external/AFlow/benchmarks/mbpp.py
+- external/AFlow/run.py

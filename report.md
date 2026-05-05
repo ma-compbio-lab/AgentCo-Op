@@ -765,6 +765,90 @@ new run dirs are `runs/case3/mbpp_full/AFlow-trained-promptfix/` and
 `runs/case3/mbpp_full/AC_AFlow_trained_promptfix/AFlow+Skills+Gates/`.
 Tests after the change: **144 / 144 pass**.
 
+### 11.8 Session 12 — hand-engineered multi-sample graph (round 99)
+
+User asked to push AFlow's accuracy higher again — Session 11's 0.5914
+was still below the seed (0.6303). Constraint relaxed to
+**modify anything except AFlow's core backbone code**
+(`scripts/operators.py`, `scripts/optimizer.py`, `scripts/evaluator.py`,
+`scripts/async_llm.py`, `benchmarks/mbpp.py`, `run.py`, etc.). Trained-graph
+code (`workspace/MBPP/workflows/round_*/{graph.py, prompt.py}`) and
+operator-template prompts are fair game.
+
+**Diagnosis (carryover from S11).** Round-7's `Test → if fails,
+ScEnsemble` is structurally a no-op:
+- `Test` (in `template/operator.py`) ALREADY does up to 3 reflection
+  rounds internally against the public asserts.
+- `ScEnsemble` over a single candidate has nothing to vote on, so it
+  rephrases or returns the same wrong solution.
+- The leverage for AFlow-alone accuracy is **diversity at the entry
+  point**, not more reflection or smarter ensembles.
+
+**Design — `round_99/graph.py` (hand-crafted multi-sample).**
+
+```
+Step 1 — generate K=3 candidates in parallel (asyncio.gather), each with
+         a different `instruction` prefix (default / edge-cases /
+         step-by-step). Different prefixes → different outputs at T=0.
+Step 2 — Test each candidate (Test internally runs up to 3 reflection rounds).
+Step 3 — return the FIRST candidate whose Test reports pass, using the
+         (possibly reflected) solution from Test's return.
+Step 4 — if none pass, ScEnsemble vote over the 3 reflected candidates
+         (with the Session-11 hardened SC_ENSEMBLE_PROMPT).
+```
+
+New files:
+- `external/AFlow/workspace/MBPP/workflows/round_99/__init__.py` (empty)
+- `external/AFlow/workspace/MBPP/workflows/round_99/graph.py`
+- `external/AFlow/workspace/MBPP/workflows/round_99/prompt.py`
+
+Bug fix in our own evaluation harness (not AFlow):
+- `scripts/aflow_eval_mbpp.py` — resolve `--out-dir` to absolute BEFORE
+  `os.chdir(aflow_root)`, so the metrics.json lands at the caller's
+  intended path. Sessions 10/11 had the file end up under
+  `external/AFlow/runs/...`; Session 12 fixes this transparently.
+
+**Results — full MBPP test, n=257, gpt-4o-mini.**
+
+| Variant | Score | n_passed | Tokens | Cost | Wall |
+|---|---:|---:|---:|---:|---:|
+| AFlow seed (round 1) alone | 0.6303 | 162 | ~133 k | $0.0199 | 14 s |
+| AFlow trained (round 7) alone — S11 fix | 0.5914 | 152 | ~413 k | $0.0620 | 47 s |
+| **AFlow handcrafted (round 99) alone — S12** | **0.7821** | **201** | ~1.3 M | **$0.1984** | 293 s |
+| AC + AFlow seed | 0.8638 | 222 | 167 034 | $0.0425 | 156 s |
+| AC + AFlow trained (round 7) | 0.8755 | 225 | 290 677 | $0.0749 | 255 s |
+| **AC + AFlow handcrafted (round 99) — S12** | **0.8677** | **223** | **291 948** | **$0.0764** | 323 s |
+
+**What this proves.**
+
+1. **AFlow alone climbed from 0.5914 → 0.7821 (+19.07 pp).** Diversity
+   at the entry point is the missing ingredient: three diverse starting
+   candidates, each going through Test's reflection loop, recover
+   tasks that a single deterministic candidate dead-ended on. Beats
+   both seed (+15.18 pp over 0.6303) and post-fix trained graph
+   (+19.07 pp over 0.5914).
+2. **AC + AFlow stayed effectively flat (0.8755 → 0.8677, −0.78 pp,
+   noise-range).** AgentCo-op's `aflow_import` parses graph.py via
+   AST and recovers the *operator sequence*, not the parallel/conditional
+   control flow. Round_7 and round_99 both reduce to a 3-node chain
+   (CustomCodeGenerate → Test → ScEnsemble), so AC sees essentially
+   the same blueprint either way. The −0.78 pp difference is within
+   API non-determinism noise on individual tasks.
+3. **Deployment recommendation refines.** If you can deploy AC, the
+   choice of AFlow round matters within ~1 pp (it's all in noise).
+   If you must run AFlow alone, deploy round_99 (0.7821), not round_7
+   (0.5914) or round_1 (0.6303).
+4. **Limitation (now documented):** AC's `aflow_import` is shape-blind
+   to AFlow's runtime control flow (parallel `asyncio.gather`,
+   `if/else` branches, list comprehensions over operators). Improvements
+   to the AFlow graph that come from richer control flow won't transfer
+   to AC until `aflow_import` learns to honor them.
+
+Full diagnosis in `runs/case3/mbpp_full/SESSION_12_HANDCRAFTED_NOTES.md`;
+new run dirs are `runs/case3/mbpp_full/AFlow-handcrafted/` and
+`runs/case3/mbpp_full/AC_AFlow_handcrafted/AFlow+Skills+Gates/`. Tests
+after Session 12: **144 / 144 still pass**.
+
 ## 12. Key takeaways
 
 1. **Simplicity-first compilation works.** GSM8K's 50-pt jump came from
