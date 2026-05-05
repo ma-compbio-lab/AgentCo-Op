@@ -791,3 +791,74 @@ needed they must be general-purpose, not ad-hoc patches.
 ### Files NOT to touch (backbone)
 - `agentcoop/core/` (compiler, runtime, schema, augment_graph, repo_collaboration)
 - AFlow framework code
+
+---
+
+## Session 14 — CS2 Lite (10x PBMC multiome from Signac tutorial) (2026-05-05)
+
+### Goal (per user)
+Configure + launch CS2 Lite using the smaller 10x Genomics PBMC
+Multiome dataset (`pbmc_granulocyte_sorted_10k`, ~11 909 cells), per
+`case_study_2_lite.md`. Execute end-to-end via live Docker. Constraint:
+no AC backbone changes; only general-purpose improvements if needed.
+
+### Key challenge — no author-provided cell-type labels
+
+Unlike CS2 mouse skin (SHARE-seq celltype.txt) and CS2 human heart
+(GSE270788_metadata.csv), the 10x PBMC dataset has **no author-provided
+cell-type labels**. The spec requires label transfer from the Hao et al.
+PBMC multimodal reference (`pbmc_multimodal_2023.rds` from Zenodo) using
+Seurat's `FindTransferAnchors` + `TransferData`.
+
+### Strategy — annotation in setup, no new agent
+
+The annotation step is data prep (one-time per dataset), not
+collaborative agent work. Putting it in the setup script keeps AC
+code untouched and lets the existing Seurat / Signac / CellMarker
+wrappers run unchanged on the resulting metadata CSV.
+
+- **NEW R script** `scripts/cs2_pbmc_lite_annotation.R` — runs inside
+  the existing `agentcoop-r-runtime:case-study` image: load H5 →
+  Signac QC → SCTransform → FindTransferAnchors / TransferData against
+  Hao reference → write `pbmc_predicted_celltype_metadata.csv.gz`
+  with `barcode`, `sample`, `cell_type`, `predicted_score` columns.
+- **NEW setup script** `scripts/cs2_pbmc_lite_setup.sh` — downloads
+  10x H5, ATAC fragments + .tbi (10x ships the tabix index),
+  Hao reference RDS, CellMarker xlsx, PanglaoDB; runs the annotation
+  script; verifies images.
+- **NEW request YAML** `case_study_2_lite.request.yaml` — declares
+  `dataset.format=tenx_h5_multiome`, points to the annotation CSV as
+  `dataset.files.metadata`, sets `tissue_filter_primary=[Blood, PBMC,
+  Peripheral blood, Immune system]`, and provides PBMC aliases via
+  `join_agent.inputs.aliases` (mirroring spec §7.1).
+
+NO changes to:
+- `agentcoop/core/*` (backbone)
+- Existing wrappers (Session 13's `tenx_h5_multiome` path already
+  handles 10x H5 + a metadata CSV with `barcode` + `cell_type` columns)
+- Docker R image (already has hg38 + hdf5r + Signac + Seurat after S13)
+- SHARE-seq mouse skin path or human heart path (they coexist)
+
+### Phases
+- Phase 95 (#143): design + plan, confirm wrappers handle the metadata schema
+- Phase 96 (#144): write `scripts/cs2_pbmc_lite_annotation.R`
+- Phase 97 (#145): write `scripts/cs2_pbmc_lite_setup.sh`
+- Phase 98 (#146): write `case_study_2_lite.request.yaml`
+- Phase 99 (#147): run setup (downloads + label transfer; ~30-60 min cold start)
+- Phase 100 (#148): run end-to-end pipeline (`agentcoop collaborate --docker`)
+- Phase 101 (#149): verify outputs + docs + commit + push
+
+### Success criteria
+- Setup script downloads ~9 GB (10x files + 6 GB Hao RDS + DBs) and writes a metadata CSV with ≥ 5 PBMC cell types having ≥ 30 cells each.
+- `agentcoop collaborate` runs Seurat → Signac::GeneActivity → CellMarker/PanglaoDB evaluator end-to-end via Docker.
+- Hypothesis check holds OR is honestly reported (no parameter tuning).
+- pytest tests/ stays at 144/144.
+
+### Files to add (new)
+- `scripts/cs2_pbmc_lite_annotation.R`
+- `scripts/cs2_pbmc_lite_setup.sh`
+- `case_study_2_lite.request.yaml`
+- `runs/case2/pbmc_lite_docker/` (run output)
+
+### Files to modify
+- None (leverage Session 13's generic wrappers as-is)

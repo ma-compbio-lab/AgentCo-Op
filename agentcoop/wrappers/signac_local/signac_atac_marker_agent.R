@@ -447,21 +447,44 @@ log_msg(sprintf("variable features after FindTopFeatures(q75): %d",
                 length(VariableFeatures(obj))))
 
 if (signac_method == "gene_activity" && !is.null(fragments_path)) {
+  # Stratified-by-cell-type subsample to bound GeneActivity cost. The
+  # call scales roughly linearly with n_cells × n_genes × frags/cell;
+  # on the 10k-cell PBMC multiome we measured 5+ hours single-threaded.
+  # `peak_marker_max_cells > 0` (already documented for peak_to_gene)
+  # also caps GeneActivity here, so a single param controls both
+  # ATAC-marker paths. Set 0 to disable.
+  obj_for_ga <- obj
+  if (peak_marker_max_cells > 0 && ncol(obj) > peak_marker_max_cells) {
+    set.seed(42)
+    cells_by_type <- split(colnames(obj), obj$cell_type)
+    per_type_cap <- max(1L, ceiling(peak_marker_max_cells / length(cells_by_type)))
+    sampled <- unlist(lapply(cells_by_type, function(cs) {
+      if (length(cs) <= per_type_cap) cs else sample(cs, per_type_cap)
+    }), use.names = FALSE)
+    log_msg(sprintf(
+      "subsampling for GeneActivity: %d → %d cells (%d / cell type)",
+      ncol(obj), length(sampled), per_type_cap))
+    obj_for_ga <- subset(obj, cells = sampled)
+  } else {
+    log_msg(sprintf("no subsampling for GeneActivity (n_cells=%d, cap=%d)",
+                    ncol(obj), peak_marker_max_cells))
+  }
   log_msg("computing GeneActivity (signac_method=gene_activity)")
   ga <- tryCatch(
-    GeneActivity(obj, extend.upstream = extend_up),
+    GeneActivity(obj_for_ga, extend.upstream = extend_up),
     error = function(e) {
       log_msg(sprintf("FAIL GeneActivity threw: %s", e$message)); NULL
     }
   )
   if (!is.null(ga)) {
-    obj[["activity"]] <- CreateAssayObject(counts = ga)
-    DefaultAssay(obj) <- "activity"
-    obj <- NormalizeData(obj, assay = "activity",
-                         normalization.method = "LogNormalize",
-                         scale.factor = median(obj$nCount_activity))
+    obj_for_ga[["activity"]] <- CreateAssayObject(counts = ga)
+    DefaultAssay(obj_for_ga) <- "activity"
+    obj_for_ga <- NormalizeData(obj_for_ga, assay = "activity",
+                                normalization.method = "LogNormalize",
+                                scale.factor = median(obj_for_ga$nCount_activity))
     log_msg("running FindAllMarkers on gene-activity assay")
-    ga_markers <- FindAllMarkers(obj, only.pos = TRUE, test.use = test_use,
+    ga_markers <- FindAllMarkers(obj_for_ga, only.pos = TRUE,
+                                 test.use = test_use,
                                  min.pct = min_pct, logfc.threshold = 0.25)
     fc_col <- intersect(c("avg_log2FC", "avg_logFC"), colnames(ga_markers))[1]
     ga_markers <- ga_markers %>% arrange(cluster, p_val_adj, desc(.data[[fc_col]]))

@@ -1,0 +1,231 @@
+# Case Study 2 Lite — Seurat × Signac collaboration on the 10x Genomics
+# PBMC multiome dataset (`pbmc_granulocyte_sorted_10k`). Spec:
+# case_study_2_lite.md.
+#
+# Prereq: cell-type labels are NOT shipped with the dataset; they are
+# transferred from the Hao et al. PBMC multimodal reference by the
+# setup script `scripts/cs2_pbmc_lite_setup.sh` and written to
+# `data/pbmc_lite/pbmc_predicted_celltype_metadata.csv.gz`. This file
+# replaces the author-provided metadata.csv that other CS2 variants use.
+#
+# Loaded by:
+#   python -m agentcoop.cli collaborate \
+#       --request case_study_2_lite.request.yaml \
+#       --workdir runs/case2/pbmc_lite_docker \
+#       --docker
+
+case_id: pbmc10k_multiome_seurat_signac_collaboration
+mode: autonomous_tool_wrapping
+topology: parallel_then_join
+model: gpt-5
+reasoning_effort: medium
+
+repositories:
+  - name: Seurat
+    url: https://github.com/satijalab/seurat
+    role_hint: scRNA-seq marker discovery specialist (Seurat::FindAllMarkers)
+    docs:
+      - https://satijalab.org/seurat/articles/pbmc3k_tutorial.html
+      - https://satijalab.org/seurat/reference/findmarkers
+    sandbox_overrides:
+      runtime_image: agentcoop-r-runtime:case-study
+  - name: Signac
+    url: https://github.com/stuart-lab/signac
+    role_hint: snATAC-seq marker-gene specialist (Signac::GeneActivity → Seurat::FindAllMarkers)
+    docs:
+      - https://stuartlab.org/signac/articles/pbmc_multiomic
+      - https://stuartlab.org/signac/articles/pbmc_vignette
+      - https://stuartlab.org/signac/reference/geneactivity
+    sandbox_overrides:
+      runtime_image: agentcoop-r-runtime:case-study
+
+join_agent:
+  name: CellMarkerEvaluator
+  role_hint: CellMarker 2.0 + PanglaoDB human PBMC marker evaluator
+  inputs:
+    cellmarker_file: data/pbmc_lite/Cell_marker_All.xlsx
+    panglaodb_file: data/panglaodb/PanglaoDB_markers_27_Mar_2020.tsv
+    organism: Human
+    tissue_filter_primary: [Blood, Peripheral blood, PBMC]
+    tissue_filter_extended:
+      - Blood
+      - Peripheral blood
+      - PBMC
+      - Immune system
+      - Bone marrow
+    # PBMC alias map. The PRIMARY annotation path uses Hao
+    # celltype.l2 labels (case_study_2_lite.md §7.1). If the
+    # annotation falls back to SingleR + celldex::MonacoImmuneData
+    # (Hao reference unavailable), the wrapper still finds the
+    # right gold-set bucket via the same alias keys plus a few
+    # Monaco-specific entries. Both label conventions are listed
+    # below so the same YAML works regardless of which path ran.
+    aliases:
+      # ---- Hao celltype.l2 labels (PRIMARY per spec §7.1) -------------
+      "CD14 Mono":          [monocyte, monocytes, "cd14+ monocyte", classical monocyte]
+      "CD16 Mono":          [monocyte, monocytes, "cd16+ monocyte", non-classical monocyte]
+      "B naive":            [b cell, b cells, naive b cell]
+      "B memory":           [b cell, b cells, memory b cell]
+      "B intermediate":     [b cell, b cells]
+      "Plasmablast":        [plasmablast, plasmablasts, plasma cell, plasma cells]
+      "CD4 Naive":          [t cell, t cells, cd4 t cell, "cd4+ t cell", naive t cell, naive cd4 t cell]
+      "CD4 TCM":            [t cell, t cells, cd4 t cell, "cd4+ t cell", central memory t cell]
+      "CD4 TEM":            [t cell, t cells, cd4 t cell, "cd4+ t cell", effector memory t cell]
+      "CD4 CTL":            [t cell, t cells, cd4 t cell, cytotoxic t cell]
+      "CD4 Proliferating":  [t cell, t cells, cd4 t cell, proliferating t cell]
+      "CD8 Naive":          [t cell, t cells, cd8 t cell, "cd8+ t cell", naive t cell, naive cd8 t cell]
+      "CD8 TCM":            [t cell, t cells, cd8 t cell, "cd8+ t cell", central memory t cell]
+      "CD8 TEM":            [t cell, t cells, cd8 t cell, "cd8+ t cell", effector memory t cell]
+      "CD8 Proliferating":  [t cell, t cells, cd8 t cell, proliferating t cell]
+      "Treg":               [regulatory t cell, regulatory t cells, treg, tregs, t regulatory cell, t cell]
+      "NK":                 [natural killer cell, nk cell, natural killer cells, nk cells]
+      "NK_CD56bright":      [natural killer cell, nk cell, "cd56bright nk cell"]
+      "NK Proliferating":   [natural killer cell, nk cell, proliferating nk cell]
+      "MAIT":               [mait cell, mucosal-associated invariant t cell, t cell]
+      "gdT":                [gamma delta t cell, "gd t cell", t cell, t cells]
+      "dnT":                [double negative t cell, t cell, t cells]
+      "ILC":                [innate lymphoid cell, lymphoid cell]
+      "cDC1":               [dendritic cell, conventional dendritic cell, cdc1, dendritic cells]
+      "cDC2":               [dendritic cell, conventional dendritic cell, cdc2, dendritic cells]
+      "pDC":                [plasmacytoid dendritic cell, pdc, dendritic cell, dendritic cells]
+      "ASDC":               [dendritic cell, dendritic cells]
+      "HSPC":               [hematopoietic stem cell, stem cell, hsc, progenitor cell]
+      "Eryth":              [erythrocyte, red blood cell, erythrocytes]
+      "Platelet":           [platelet, megakaryocyte, platelets]
+      # ---- celldex::MonacoImmuneData labels (FALLBACK only) -----------
+      "Classical monocytes":          [monocyte, monocytes, "cd14+ monocyte", classical monocyte]
+      "Intermediate monocytes":       [monocyte, monocytes, intermediate monocyte]
+      "Non classical monocytes":      [monocyte, monocytes, "cd16+ monocyte", non-classical monocyte]
+      "Naive CD4 T cells":            [t cell, t cells, cd4 t cell, "cd4+ t cell", naive t cell, naive cd4 t cell]
+      "Naive CD8 T cells":            [t cell, t cells, cd8 t cell, "cd8+ t cell", naive t cell, naive cd8 t cell]
+      "Central memory CD8 T cells":   [t cell, t cells, cd8 t cell, central memory t cell, memory t cell]
+      "Effector memory CD8 T cells":  [t cell, t cells, cd8 t cell, effector memory t cell, memory t cell]
+      "Terminal effector CD8 T cells": [t cell, t cells, cd8 t cell, effector memory t cell]
+      "Terminal effector CD4 T cells": [t cell, t cells, cd4 t cell]
+      "Th1 cells":                    [t cell, t cells, cd4 t cell, th1, t helper cell, helper t cell]
+      "Th2 cells":                    [t cell, t cells, cd4 t cell, th2, t helper cell, helper t cell]
+      "Th17 cells":                   [t cell, t cells, cd4 t cell, th17, t helper cell, helper t cell]
+      "Th1/Th17 cells":               [t cell, t cells, cd4 t cell, t helper cell, helper t cell]
+      "T regulatory cells":           [regulatory t cell, regulatory t cells, treg, tregs, t regulatory cell, t cell]
+      "Follicular helper T cells":    [t cell, t cells, cd4 t cell, follicular helper t cell, tfh]
+      "Vd2 gd T cells":               [gamma delta t cell, "gd t cell", t cell]
+      "Non-Vd2 gd T cells":           [gamma delta t cell, "gd t cell", t cell]
+      "MAIT cells":                   [mait cell, mucosal-associated invariant t cell, t cell]
+      "Naive B cells":                [b cell, b cells, naive b cell]
+      "Switched memory B cells":      [b cell, b cells, memory b cell, switched memory b cell]
+      "Non-switched memory B cells":  [b cell, b cells, memory b cell]
+      "Exhausted B cells":            [b cell, b cells]
+      "Plasmablasts":                 [plasmablast, plasmablasts, plasma cell, plasma cells]
+      "Natural killer cells":         [natural killer cell, nk cell, natural killer cells, nk cells]
+      "Myeloid dendritic cells":      [dendritic cell, dendritic cells, myeloid dendritic cell, mdc, conventional dendritic cell]
+      "Plasmacytoid dendritic cells": [plasmacytoid dendritic cell, pdc, dendritic cell, dendritic cells]
+      "Progenitor cells":             [hematopoietic stem cell, stem cell, progenitor cell]
+
+dataset:
+  name: pbmc_granulocyte_sorted_10k
+  organism: Homo sapiens
+  genome: hg38
+  tissue: pbmc
+  source: 10x Genomics public datasets — PBMC from a Healthy Donor, Granulocytes Removed Through Cell Sorting (10k)
+  source_page: https://www.10xgenomics.com/datasets/pbmc-from-a-healthy-donor-granulocytes-removed-through-cell-sorting-10-k-1-standard-1-0-0
+  default_sample_id: PBMC10K
+  paired_cells: true
+  assay_platform: 10x Chromium Next GEM Single Cell Multiome ATAC + Gene Expression
+  format: tenx_h5_multiome   # Session 13 generic wrapper path
+  local_cache_dir: data/pbmc_lite
+  files:
+    tenx_h5: pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5
+    atac_fragments: pbmc_granulocyte_sorted_10k_atac_fragments.tsv.gz   # 10x ships .tbi alongside
+    metadata: pbmc_predicted_celltype_metadata.csv.gz                   # written by setup script
+    cellmarker: Cell_marker_All.xlsx
+  reference:
+    name: Hao et al. PBMC multimodal reference (celltype.l2)
+    direct_download: https://zenodo.org/records/7779017/files/pbmc_multimodal_2023.rds
+    used_for: label transfer (FindTransferAnchors + TransferData) in scripts/cs2_pbmc_lite_annotation.R
+
+task:
+  title: 10x PBMC multiome cross-modal marker collaboration with Hao reference annotation
+  description: >
+    Identify cell-type marker genes for the 10x PBMC granulocyte-sorted
+    10k multiome dataset from two molecular modalities. Use Seurat
+    FindAllMarkers on the gene-expression assay of the 10x H5 to
+    compute the top-N RNA markers per cell type (predicted via Hao
+    reference label transfer). Use Signac::GeneActivity on the Peaks
+    assay + ATAC fragments to derive a gene-activity matrix, then
+    Seurat FindAllMarkers with matching DE parameters to compute the
+    top-N ATAC marker genes per cell type. For every cell type,
+    compute the intersection and union of the RNA and ATAC marker
+    sets. Evaluate each set independently against CellMarker 2.0
+    (human PBMC/blood) and PanglaoDB (Hs blood/immune-system),
+    reporting per-cell-type and macro precision (RNA, ATAC,
+    intersection) and recall (RNA, ATAC, union). Report whether the
+    hypothesis ordering holds for each database; do not tune
+    parameters to force the ordering.
+  organism: Homo sapiens
+
+parameters:
+  top_n: 50
+  min_cells_per_type: 30   # spec §2.5 / §3.3 default
+  remove_cell_types: [Doublet, Mix, Mixed, Unknown]
+  rna_marker_method:
+    test_use: wilcoxon
+    only_pos: true
+    min_pct: 0.10
+    logfc_threshold: 0.25
+  atac_marker_method:
+    test_use: wilcoxon
+    only_pos: true
+    min_pct: 0.10
+    signac_method: gene_activity   # spec §4 + Session 13 wrapper default for tenx_h5_multiome
+    extend_upstream_bp: 2000
+    allow_peak_to_gene_fallback: false   # spec §4.4: do NOT silently fall back
+    # Stratified subsample BEFORE GeneActivity per spec §15.3:
+    # "if memory fails, use a predeclared fallback: stratified
+    # downsample to 5,000 cells while preserving cell-type
+    # proportions, and clearly label all outputs as downsampled".
+    # In benchmarking the ungated GeneActivity on the full ~10k cells
+    # peaked at 9.5 GB / 13.6 GB (memory-pressure region) and was
+    # extrapolating to > 5 hours wall time. Cap matches the spec's
+    # declared 5000-cell ceiling. Set 0 to disable.
+    peak_marker_max_cells: 5000
+
+required_outputs:
+  - compiled_workflow_graph.json
+  - agent_registry.json
+  - manifests/docker_build_report.json
+  - manifests/repo_profile_Seurat.json
+  - manifests/repo_profile_Signac.json
+  - manifests/env_manifest.json
+  - artifacts/seurat_run/seurat_rna_markers_all.csv
+  - artifacts/seurat_run/rna_top_markers_by_celltype.json
+  - artifacts/seurat_run/celltype_distribution.csv
+  - artifacts/signac_run/signac_gene_activity_markers_all.csv
+  - artifacts/signac_run/atac_top_marker_genes_by_celltype.json
+  - artifacts/cellmarkerevaluator_run/marker_set_operations_by_celltype.json
+  - artifacts/cellmarkerevaluator_run/marker_set_sizes_by_celltype.csv
+  - artifacts/cellmarkerevaluator_run/cellmarker_gold_markers_by_celltype.json
+  - artifacts/cellmarkerevaluator_run/cellmarker_label_mapping.csv
+  - artifacts/cellmarkerevaluator_run/precision_recall_by_celltype.csv
+  - artifacts/cellmarkerevaluator_run/precision_recall_summary.csv
+  - artifacts/cellmarkerevaluator_run/collaboration_gain_table.csv
+  - artifacts/cellmarkerevaluator_run/marker_overlap_heatmap.png
+  - artifacts/cellmarkerevaluator_run/precision_recall_barplot.png
+  - artifacts/cellmarkerevaluator_run/panglaodb_gold_markers_by_celltype.json
+  - artifacts/cellmarkerevaluator_run/precision_recall_panglaodb_by_celltype.csv
+  - artifacts/cellmarkerevaluator_run/precision_recall_panglaodb_summary.csv
+  - run_manifest.json
+  - collaboration_log.md
+  - final_report.md
+  - topology.png
+  - topology.dot
+  - traces/execution_trace.jsonl
+
+success_criteria:
+  docker_sandboxes_built: true
+  seurat_node_called: true
+  signac_node_called: true
+  cellmarker_evaluation_completed: true
+  panglaodb_evaluation_completed: true
+  top_marker_sets_created_for_minimum_cell_types: 5
+  required_collaboration: true
+  max_replans: 2

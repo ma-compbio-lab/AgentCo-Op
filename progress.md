@@ -1034,3 +1034,75 @@ Wall: **540.6 s** (~ 9 min). Status: **success**. n_handoffs: 2.
 
 ### Tests
 `pytest tests/` → 144 / 144 still pass after wrapper + adapter edits.
+
+---
+
+## Session 14 — CS2 Lite (10x PBMC multiome — granulocyte-sorted 10k) (2026-05-05)
+
+### Goal
+Run CS2 Lite per spec `case_study_2_lite.md`: smaller 10x PBMC multiome
+dataset (~11k cells), Hao reference label transfer, end-to-end via Docker.
+Constraint: no AC backbone changes.
+
+### Code changes (general-purpose, additive)
+
+| File | Change |
+|---|---|
+| `docker/agentcoop-r-runtime.Dockerfile` | New leaf layer: `SingleR` + `celldex` (Bioconductor) for the fallback annotation path. The `glmGamPoi` source-build attempt was reverted (no aarch64 binary, source needs newer C++14 than rocker/r-ver:4.3.3). |
+| `agentcoop/wrappers/signac_local/signac_atac_marker_agent.R` | Existing `peak_marker_max_cells` cap (previously only the `peak_to_gene` branch) now also applies to the `gene_activity` branch. One param controls both ATAC paths' cell budget. |
+
+NEW files:
+- `scripts/cs2_pbmc_lite_setup.sh` — idempotent download (10x H5 + ATAC fragments + .tbi + Hao RDS + DBs); retry-on-OOM annotation
+- `scripts/cs2_pbmc_lite_annotation.R` — Hao primary path + SingleR/Monaco fallback; downsample-before-SCTransform per spec §15.3
+- `case_study_2_lite.request.yaml`
+
+### Annotation outcome
+
+Hao Zenodo label transfer OOM'd at ~10 GB during `FindTransferAnchors`
+on the 13.62 GiB colima host (the 1.9 GB RDS unpacks to ~6–10 GB, plus
+the live SCT-processed PBMC query). Setup script auto-fell-back to
+SingleR + celldex's MonacoImmuneData (29 immune cell types, Bioconductor
+hosted). Spec §15.3 explicitly permits documented memory-pressure
+fallbacks. Result: 5,000 cells × 27 fine cell types in metadata CSV.
+
+### End-to-end pipeline run
+
+`agentcoop collaborate --request case_study_2_lite.request.yaml --docker`:
+- Started 06:49 EDT, finished 07:48 EDT — **3540 s (59 min)** wall.
+- Filtered to **4,777 cells × 22 cell types** (min_cells_per_type=30).
+- Seurat: 26,353 marker rows; Signac::GeneActivity: 45,731 marker rows.
+- All 22 cell types mapped to BOTH CellMarker 2.0 and PanglaoDB.
+
+### Headline results (n=22 mapped cell types — much richer than CS2-heart's 2-3)
+
+**CellMarker 2.0 (Blood/PBMC filter):**
+- Hypothesis HOLDS at the macro level for both precision and recall:
+  - P_int=0.303 > P_rna=0.195 > P_atac=0.110 ✓
+  - R_union=0.124 > R_rna=0.102 > R_atac=0.061 ✓
+- 17/22 cell types: intersection_strict_win
+- 16/22 cell types: union_strict_win
+
+**PanglaoDB (Hs Blood/Immune system filter):**
+- Hypothesis HOLDS at the macro level for both precision and recall:
+  - P_int=0.333 > P_rna=0.231 > P_atac=0.131 ✓
+  - R_union=0.117 > R_rna=0.097 > R_atac=0.054 ✓
+- 15/22 cell types: intersection_strict_win
+- 18/22 cell types: union_strict_win
+
+### Tests
+`pytest tests/` → 144 / 144 still pass.
+
+### Operational lessons
+- `glmGamPoi` is unavailable for R 4.3 / aarch64 in binary form; source
+  builds against rocker/r-ver:4.3.3 fail on RcppArmadillo C++14 errors.
+  The clean workaround is the spec §15.3 5,000-cell downsample.
+- Hao multimodal reference's RDS is 1.9 GB on disk but unpacks to ~10 GB
+  in memory during anchor finding — too large for a 14 GB colima host.
+  SingleR + celldex::MonacoImmuneData (Bioconductor-hosted, 29 immune
+  cell types) is a clean documented fallback that produces directly
+  comparable PBMC labels.
+- R inside the agentcoop-r-runtime image runs single-threaded
+  (no BiocParallel plan, no OMP_NUM_THREADS). On a 6-CPU host this
+  costs ~5–6× wall time on FindAllMarkers. Future improvement: bake
+  `BiocParallel::register(MulticoreParam(6))` into the wrapper or pass
+  it via the request YAML.

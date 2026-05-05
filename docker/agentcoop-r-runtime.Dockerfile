@@ -56,6 +56,18 @@ RUN R -e "BiocManager::install(c('EnsDb.Hsapiens.v86','BSgenome.Hsapiens.UCSC.hg
 RUN R -e "options(repos = c(P3M = 'https://packagemanager.posit.co/cran/__linux__/jammy/latest', CRAN = 'https://cloud.r-project.org')); install.packages('hdf5r')" \
  && R -e "suppressPackageStartupMessages(library(hdf5r)); cat('hdf5r OK\n')"
 
+# SingleR + celldex — fallback annotation path used by the CS2-Lite
+# annotation script when the Hao Zenodo reference is unavailable.
+RUN R -e "BiocManager::install(c('SingleR','celldex','SummarizedExperiment','SingleCellExperiment'), ask=FALSE, update=FALSE, version='3.18')" \
+ && R -e "suppressPackageStartupMessages({library(SingleR); library(celldex)}); cat('SingleR + celldex OK\n')"
+
+# NOTE: glmGamPoi (the fast SCTransform backend) is not available in
+# binary form for R 4.3 / aarch64 and the source build needs a newer
+# C++ standard than rocker/r-ver:4.3.3 ships. The CS2-Lite annotation
+# script handles this by stratified downsampling to 5,000 cells before
+# SCTransform (spec §15.3 fallback) — avoids the SCT memory blow-up
+# without changing the methodology.
+
 # Copy the R wrappers in.
 WORKDIR /workspace
 COPY agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R /workspace/agentcoop/wrappers/seurat_local/seurat_rna_marker_agent.R
