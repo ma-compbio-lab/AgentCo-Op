@@ -87,7 +87,7 @@ DATASET_PROFILE_OVERRIDES: dict[str, dict[str, Any]] = {
     # Locked-in profile shape per AFlow-aligned dataset. The runner passes
     # `dataset` so we can route deterministically — relying purely on regex
     # signals over short prompts misclassified ~30% of MATH / HotpotQA tasks
-    # in the smoke run. These overrides keep the compiler picking the right
+    # in early runs. These overrides keep the compiler picking the right
     # meta-skill (math_specialist_route / retrieval_grounded_qa /
     # code_test_repair_loop / numeric_reading_comprehension).
     "gsm8k": {

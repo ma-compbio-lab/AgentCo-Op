@@ -1,4 +1,4 @@
-# Gate policies for HumanEval / MBPP dynamic refinement (case_study.md §4.5).
+# Gate policies for HumanEval / MBPP dynamic refinement (docs/experiments/case_study.md §4.5).
 # Hidden tests are NEVER used as gate signals — only syntax errors,
 # runtime errors, generated tests, and public examples may trigger repair.
 

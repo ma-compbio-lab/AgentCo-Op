@@ -143,7 +143,7 @@ def _match_trigger(
             return "risk flag raised"
         return None
 
-    # --- benchmarks.md §5 + case_study.md §4 triggers ------------------------
+    # --- benchmarks.md §5 + docs/experiments/case_study.md §4 triggers ------------------------
     if trigger in ("answer_format_invalid", "format_invalid"):
         if result.output.get("format_invalid") or result.output.get("format_error"):
             return "final output format invalid"

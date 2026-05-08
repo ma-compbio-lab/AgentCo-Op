@@ -1,6 +1,6 @@
 """AgentCard — typed YAML-loadable spec for one external sandboxed agent.
 
-Mirrors the YAML shape in `case_study_1.md` §4.3 so users can author cards
+Mirrors the YAML shape in `docs/experiments/case_study_1.md` §4.3 so users can author cards
 by hand and AgentCo-Op can also generate them from a `RepoProfile` /
 `SandboxSpec`. Used by the `external_repo_collaboration` meta-skill.
 
@@ -33,7 +33,7 @@ AgentKindT = Literal[
 class AgentCard(BaseModel):
     """A YAML-loadable agent specification.
 
-    Strictly typed against the case_study_1.md §4.3 schema so author and
+    Strictly typed against the docs/experiments/case_study_1.md §4.3 schema so author and
     machine see the same shape.
     """
 

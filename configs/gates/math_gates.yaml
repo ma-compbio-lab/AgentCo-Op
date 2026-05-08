@@ -1,4 +1,4 @@
-# Gate policies for MATH dynamic refinement (case_study.md §4.6).
+# Gate policies for MATH dynamic refinement (docs/experiments/case_study.md §4.6).
 
 gates:
   boxed_answer_missing:

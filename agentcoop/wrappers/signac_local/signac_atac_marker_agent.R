@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 # Signac ATAC marker-gene wrapper for AgentCo-Op CS2.
 #
-# Per the user override of case_study_2.md §11, this wrapper makes
+# Per the user override of docs/experiments/case_study_2.md §11, this wrapper makes
 # Signac::GeneActivity() the **primary** marker-gene method and
 # requires the GSM4156597 fragments BED file as a mandatory input.
 # Falls back to peak-to-nearest-gene only if the fragments file or its
 # tabix index is missing AND the user has explicitly enabled that
 # fallback in `parameters.atac_marker_method.allow_peak_to_gene_fallback`
-# — and we log the fallback prominently per case_study_2.md §17.3.
+# — and we log the fallback prominently per docs/experiments/case_study_2.md §17.3.
 #
 # Invocation: Rscript signac_atac_marker_agent.R <invoke.json>
 
@@ -61,7 +61,7 @@ if (test_use == "wilcoxon") test_use <- "wilcox"
 min_pct      <- as.numeric(if (!is.null(atac_method$min_pct)) atac_method$min_pct else 0.05)
 extend_up    <- as.integer(if (!is.null(atac_method$extend_upstream_bp)) atac_method$extend_upstream_bp else 2000)
 allow_p2g_fb <- isTRUE(atac_method$allow_peak_to_gene_fallback)
-# Method selector (case_study_2.md §11): peak_to_gene is the primary
+# Method selector (docs/experiments/case_study_2.md §11): peak_to_gene is the primary
 # method declared in the doc and the only one that fits on a 16 GB host
 # at full SHARE-seq scale (32 k cells × 140 M fragments). GeneActivity
 # is the sensitivity-analysis option (§11.2) — set
@@ -102,7 +102,7 @@ genome_id      <- tolower(as.character(if (!is.null(dataset$genome)) dataset$gen
 sample_id      <- as.character(if (!is.null(dataset$default_sample_id)) dataset$default_sample_id else "")
 
 # 10x multiome ships GeneActivity-friendly fragments by default, so the
-# spec (case_study_2_human_heart.md §11) makes GeneActivity primary.
+# spec (docs/experiments/case_study_2_human_heart.md §11) makes GeneActivity primary.
 # Honor the request override if present; otherwise default by format.
 if (is.null(atac_method$signac_method) || nchar(as.character(atac_method$signac_method)) == 0) {
   signac_method <- if (dataset_format == "tenx_h5_multiome") "gene_activity" else "peak_to_gene"
@@ -218,7 +218,7 @@ find_candidate_col <- function(cols, candidates) {
 
 # Strip leading sample/batch prefix (short alphanumeric + underscore,
 # e.g. "MA7_", "s3_", "s4_") and trailing 10x lane suffix ("-1", "-2");
-# mirrors the Seurat wrapper and case_study_2_human_heart.md §8.5. The
+# mirrors the Seurat wrapper and docs/experiments/case_study_2_human_heart.md §8.5. The
 # prefix length is bounded at 1..6 chars so we don't accidentally
 # consume the actual 16-nt cell barcode.
 normalize_barcode <- function(x) {
@@ -299,7 +299,7 @@ if (dataset_format == "tenx_h5_multiome") {
     100 * metadata_coverage))
   if (metadata_coverage < 0.80) {
     stop(sprintf(
-      "only %d / %d metadata cells found in matrix (%.1f%% < 80%%) — barcode format probably mismatched (case_study_2_human_heart.md §8.5)",
+      "only %d / %d metadata cells found in matrix (%.1f%% < 80%%) — barcode format probably mismatched (docs/experiments/case_study_2_human_heart.md §8.5)",
       overlap_n, nrow(metadata), 100 * metadata_coverage))
   }
   matched_meta <- metadata[match_idx, , drop = FALSE]
@@ -309,7 +309,7 @@ if (dataset_format == "tenx_h5_multiome") {
   metadata <- matched_meta[keep_mask, , drop = FALSE]
   metadata$cell_type <- metadata[[ct_col]]
 } else {
-  # SHARE-seq quirk (case_study_2.md §9.3): the ATAC MTX cell barcodes
+  # SHARE-seq quirk (docs/experiments/case_study_2.md §9.3): the ATAC MTX cell barcodes
   # are taken from `barcodes.txt.gz`, which actually matches the `rna.bc`
   # column in celltype.txt — not `atac.bc`. Pick the candidate column
   # whose set has maximum overlap with the MTX cell ids instead of
@@ -508,9 +508,9 @@ if (signac_method == "gene_activity" && !is.null(fragments_path)) {
 
 if (!gene_act_used) {
   if (signac_method == "gene_activity") {
-    log_msg("FALLBACK using peak-to-nearest-gene (case_study_2.md §17.3 — GeneActivity unavailable)")
+    log_msg("FALLBACK using peak-to-nearest-gene (docs/experiments/case_study_2.md §17.3 — GeneActivity unavailable)")
   } else {
-    log_msg("running peak-to-nearest-gene (signac_method=peak_to_gene; case_study_2.md §11 primary path)")
+    log_msg("running peak-to-nearest-gene (signac_method=peak_to_gene; docs/experiments/case_study_2.md §11 primary path)")
   }
   DefaultAssay(obj) <- "peaks"
   # Stratified-by-cell-type subsample to make peak marker discovery

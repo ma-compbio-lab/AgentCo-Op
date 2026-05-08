@@ -4,8 +4,8 @@
 
 Streaming row-by-row so the dense matrix never materialises in memory —
 this is what unblocks R-based Seurat::CreateSeuratObject on hosts with
-small Docker memory budgets (case_study_2.md §10.2 Seurat wrapper +
-case_study_2.md §11.3 Signac wrapper both call ReadMtx instead of
+small Docker memory budgets (docs/experiments/case_study_2.md §10.2 Seurat wrapper +
+docs/experiments/case_study_2.md §11.3 Signac wrapper both call ReadMtx instead of
 fread on the dense input).
 
 Usage:

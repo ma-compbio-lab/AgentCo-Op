@@ -2,7 +2,7 @@
 
 Implements the framework-phase pieces of the `agentcoop run-case2 /
 evaluate-perturb / ensemble-perturb / report-case2` pipeline
-(case_study.md §3). No deep models are trained here; we ship:
+(docs/experiments/case_study.md §3). No deep models are trained here; we ship:
 
 - a synthetic perturbation dataset generator (so tests work offline),
 - unified prediction schema validation,
@@ -26,7 +26,7 @@ from typing import Any, Iterable
 
 
 # ---------------------------------------------------------------------------
-# Synthetic dataset (tests + smoke)
+# Synthetic dataset (offline tests)
 # ---------------------------------------------------------------------------
 
 

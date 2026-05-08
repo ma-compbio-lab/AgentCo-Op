@@ -14,13 +14,11 @@ topology_template:
   nodes:
     - {id: setup_inspector, role: planner, backend: llm}
     - {id: sandbox_builder, role: tool, backend: python_sandbox}
-    - {id: smoke_test, role: tool, backend: python_sandbox}
     - {id: repo_adapter, role: sandbox_agent, backend: sandbox_repo}
     - {id: artifact_reviewer, role: reviewer, backend: llm}
   edges:
     - {source: setup_inspector, target: sandbox_builder}
-    - {source: sandbox_builder, target: smoke_test}
-    - {source: smoke_test, target: repo_adapter}
+    - {source: sandbox_builder, target: repo_adapter}
     - {source: repo_adapter, target: artifact_reviewer}
 gates:
   - {name: tool_error, trigger: tool_error, action: replace_backend, max_activations: 2}

@@ -2,7 +2,7 @@
 
 Validates and normalizes typed artifacts as they pass between sandboxed
 agents in the `external_repo_collaboration` topology. Per
-`case_study_1.md` §4.4, the broker should never pass an unvalidated
+`docs/experiments/case_study_1.md` §4.4, the broker should never pass an unvalidated
 free-text gene list — it must check gene symbols, deduplicate, preserve
 order, and emit both the full marker list and the filtered upregulated
 marker subset.
@@ -179,7 +179,7 @@ class ArtifactBroker:
             name=f"{producer}_to_{consumer}_gene_set",
             payload=payload,
             path=path,
-            schema_hint="case_study_1.md §8 geneagent_input_gene_set.json",
+            schema_hint="docs/experiments/case_study_1.md §8 geneagent_input_gene_set.json",
         )
         result = HandoffResult(ok=ok, artifact=artifact, warnings=warnings)
         self._record(result, kind="handoff_gene_set", producer=producer, consumer=consumer)

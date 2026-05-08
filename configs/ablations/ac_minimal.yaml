@@ -1,4 +1,4 @@
-# Ablation method config (`ablation.md` §3) — AC-Minimal.
+# Ablation method config (`docs/experiments/ablation.md` §3) — AC-Minimal.
 method: ac_minimal
 ablation_variant: AC-Minimal
 skills_tools: false

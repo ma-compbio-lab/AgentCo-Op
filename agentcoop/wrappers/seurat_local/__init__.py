@@ -1,6 +1,6 @@
 """Seurat local-Python adapter.
 
-Mirrors the R wrapper specified in `case_study_2.md` §10 using
+Mirrors the R wrapper specified in `docs/experiments/case_study_2.md` §10 using
 scanpy + numpy + pandas in Python. The Docker manifest + Dockerfile
 are kept alongside this module and used whenever the Docker daemon is
 available; this local-Python adapter exercises the same logic on the

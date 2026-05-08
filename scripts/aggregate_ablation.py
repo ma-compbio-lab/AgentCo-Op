@@ -1,5 +1,5 @@
 """Aggregate the AgentCo-Op ablation runs into the four tables
-required by `ablation.md` §6.
+required by `docs/experiments/ablation.md` §6.
 
 Inputs (paths are conventional and overridable via CLI flags):
 - AC-Full: reuses the Sessions-4–6 AC-Gated full-split runs

@@ -243,7 +243,7 @@ clone repos
 Result on the **real Farah MERFISH AnnData** (228 635 cells × 238
 genes; `data/heart_merfish/overall_merfish.h5ad`):
 
-| Outcome | Value | case_study_1.md §13 target |
+| Outcome | Value | docs/experiments/case_study_1.md §13 target |
 |---|---|---|
 | Status | **success** (real data; not synthetic_fallback) | — |
 | Cells | 576 target (aFibro × AVN/AV Ring) / 5 685 control (aFibro × Left + Right Atria) | non-zero each |
@@ -287,7 +287,7 @@ root** (added in Session 7.2):
 
 The mechanism is documented in `docs/external_agent_collaboration.md`.
 The legacy synthetic airway / single-repo flow remains at
-`runs/case1/airway/` and is referenced from `case_study.md` §2.1.b as
+`runs/case1/airway/` and is referenced from `docs/experiments/case_study.md` §2.1.b as
 the simpler fallback when only a single repo + bulk RNA-seq is
 needed.
 
@@ -409,7 +409,7 @@ Findings:
    higher-temperature retry policy or a stronger code model becomes
    available.
 
-## 9. Ablation study — `ablation.md` 2 × 2 factorial (Session 8)
+## 9. Ablation study — `docs/experiments/ablation.md` 2 × 2 factorial (Session 8)
 
 Two factors × two levels = four variants, run on the **full** AFlow
 splits of all six benchmarks (24 cells; `AC-Full` reuses the S4–6
@@ -430,7 +430,7 @@ nodes as the closest available proxy for "skills + tools off". Tool /
 sandbox backends remain wired (documented openly in
 `configs/ablations/*.yaml`).
 
-### 9.1 Main result (§6.1 of `ablation.md`)
+### 9.1 Main result (§6.1 of `docs/experiments/ablation.md`)
 
 | Dataset | AC-Full | AC-NoGate | AC-NoSkillsTools | AC-Minimal |
 |---|---:|---:|---:|---:|
@@ -572,7 +572,7 @@ Two takeaways:
 - `Signac::GeneActivity` was the user's preferred primary ATAC method but
   hits a hard memory wall on a 16 GB Mac (> 14 GB RAM at the
   "extracting reads overlapping genomic regions" step). The wrapper
-  defaults to `signac_method: peak_to_gene` (which `case_study_2.md` §11
+  defaults to `signac_method: peak_to_gene` (which `docs/experiments/case_study_2.md` §11
   also names as the primary) and exposes GeneActivity as opt-in for hosts
   with colima ≥ 22 GB.
 - ATAC marker discovery uses a stratified 4 000-cell subsample
@@ -586,7 +586,7 @@ Two takeaways:
 
 ### 10.4 Reproduction
 
-Single-command after one-time host setup. See `case_study_2.md` §25 for the
+Single-command after one-time host setup. See `docs/experiments/case_study_2.md` §25 for the
 full Path-B and Path-C recipes; `runs/case2/shareseq_skin_docker_c/README.md`
 documents the exact run that produced the numbers above.
 
@@ -853,7 +853,7 @@ after Session 12: **144 / 144 still pass**.
 
 User asked to swap CS2's dataset from SHARE-seq mouse skin to a
 GSE270788 human heart paired-nucleus 10x Multiome dataset (sample MA7),
-per the `case_study_2_human_heart.md` spec. Constraint: no AC backbone
+per the `docs/experiments/case_study_2_human_heart.md` spec. Constraint: no AC backbone
 edits; only general-purpose code changes.
 
 **Generic code changes** (additive, both case studies coexist):

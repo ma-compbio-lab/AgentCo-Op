@@ -1,4 +1,4 @@
-# Ablation method config (`ablation.md` §3) — AC-Full.
+# Ablation method config (`docs/experiments/ablation.md` §3) — AC-Full.
 # This is a documentation-only YAML: the actual switches are applied by
 # `agentcoop run-benchmark -v AC-Full` reading variants from
 # `configs/benchmarks/_base.yaml`. Kept here so users can audit the

@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Seurat RNA marker discovery wrapper for AgentCo-Op CS2.
 #
-# Implements case_study_2.md §10.2: load gene-by-cell counts, attach
+# Implements docs/experiments/case_study_2.md §10.2: load gene-by-cell counts, attach
 # celltype labels, FindAllMarkers per cell type (only.pos, wilcox), export
 # the full marker table + per-cell-type top-N JSON + a result.json.
 #
@@ -135,7 +135,7 @@ find_candidate_col <- function(cols, candidates) {
 }
 
 normalize_barcode <- function(x) {
-  # Mirror case_study_2_human_heart.md §8.5 normalisation rules:
+  # Mirror docs/experiments/case_study_2_human_heart.md §8.5 normalisation rules:
   # strip leading sample/batch prefix (short alphanumeric + underscore,
   # e.g. "MA7_", "s3_", "s4_"), then strip trailing 10x lane suffixes
   # ("-1", "-2"). The prefix length is bounded at 1..6 chars so we
@@ -225,7 +225,7 @@ if (dataset_format == "tenx_h5_multiome") {
     100 * metadata_coverage))
   if (metadata_coverage < 0.80) {
     stop(sprintf(
-      "only %d / %d metadata cells found in matrix (%.1f%% < 80%%) — barcode format probably mismatched (case_study_2_human_heart.md §8.5)",
+      "only %d / %d metadata cells found in matrix (%.1f%% < 80%%) — barcode format probably mismatched (docs/experiments/case_study_2_human_heart.md §8.5)",
       overlap_n, nrow(metadata), 100 * metadata_coverage))
   }
 

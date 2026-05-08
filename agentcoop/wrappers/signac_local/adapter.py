@@ -1,7 +1,7 @@
 """Signac local-Python adapter.
 
 Implements the scATAC-seq marker-gene workflow specified in
-`case_study_2.md` §11 inside the AgentCo-Op host process when Docker
+`docs/experiments/case_study_2.md` §11 inside the AgentCo-Op host process when Docker
 is unavailable. Mirrors the Signac R wrapper but uses scanpy + scipy
 under the hood:
 

@@ -146,7 +146,7 @@ def test_write_collaboration_log_and_final_report(tmp_path: Path) -> None:
         repos=repos, upstream_name="AgentA", downstream_name="AgentB",
         upstream_resp=upstream_resp, downstream_resp=downstream_resp,
         handoffs=handoffs, integrator_meta=integrator_meta,
-        env_report=None, sandbox_report={"AgentA": {"image_built": False, "smoke_ok": None, "notes": []}},
+        env_report=None, sandbox_report={"AgentA": {"image_built": False, "notes": []}},
         elapsed_s=12.3, status="success", notes=["unit test"],
     )
     assert log_path.is_file()

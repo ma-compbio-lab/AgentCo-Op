@@ -1,7 +1,7 @@
 """GeneAgent local-Python adapter.
 
 Calls the OpenAI Chat Completions API directly to deliver a gene-set
-analysis report shaped per `case_study_1.md` §11.4. Designed to mirror
+analysis report shaped per `docs/experiments/case_study_1.md` §11.4. Designed to mirror
 the upstream GeneAgent's role-based prompt + self-verification protocol
 without requiring its old `openai==0.28.0` SDK or container.
 

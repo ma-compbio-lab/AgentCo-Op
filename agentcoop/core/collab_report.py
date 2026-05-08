@@ -95,15 +95,14 @@ def write_collaboration_log(
     # Stage 3 — sandbox build (Dockerfiles + compose).
     lines.append("## 3. Sandbox build")
     lines.append("")
-    lines.append(f"Dockerfiles + smoke tests + `docker-compose.yml` written under `docker/`. "
+    lines.append(f"Dockerfiles + `docker-compose.yml` written under `docker/`. "
                  f"Build report: `manifests/docker_build_report.json`.")
     if isinstance(sandbox_report, dict):
         for name, info in sandbox_report.items():
             if name.startswith("__") or not isinstance(info, dict):
                 continue
             built = info.get("image_built")
-            smoke = info.get("smoke_ok")
-            lines.append(f"- **{name}**: image_built={built}, smoke_ok={smoke}")
+            lines.append(f"- **{name}**: image_built={built}")
             for note in (info.get("notes") or [])[:3]:
                 lines.append(f"  - note: {note}")
     lines.append("")

@@ -1,7 +1,7 @@
 """External-repo-collaboration orchestration.
 
-Loads a request YAML matching the schema in `case_study_1.md` §3.3,
-profiles each repository, generates Dockerfiles + smoke tests via the
+Loads a request YAML matching the schema in `docs/experiments/case_study_1.md` §3.3,
+profiles each repository, generates Dockerfiles via the
 `SandboxBuilder`, registers an `AgentCard` per repo, runs each agent's
 adapter (Docker or local-python `--no-docker`), brokers typed handoffs,
 and writes a `run_manifest.json` + `compiled_workflow_graph.json` plus
@@ -225,9 +225,7 @@ class RepoCollaborationOrchestrator:
             specs.append(spec)
             report[name] = {
                 "image_built": res.image_built,
-                "smoke_ok": res.smoke_ok,
                 "dockerfile": str(res.dockerfile_path),
-                "smoke_test": str(res.smoke_test_path),
                 "notes": res.notes,
                 "runtime_image": _runtime_image_for(spec),
             }

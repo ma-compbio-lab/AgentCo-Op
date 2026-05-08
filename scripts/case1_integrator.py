@@ -2,7 +2,7 @@
 
 Reads: enrichment JSONs (up/down) + GeneAgent reports (up/down).
 Calls OpenAI (via `agentcoop.backends.llm.OpenAIClient`) once with the
-benchmark integrator prompt from case_study.md §3.7-style guidance,
+benchmark integrator prompt from docs/experiments/case_study.md §3.7-style guidance,
 adapted for bulk RNA-seq + gene-set analysis.
 
 Writes: `final_report.md` with the synthesized biological interpretation

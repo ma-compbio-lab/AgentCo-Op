@@ -83,7 +83,7 @@ For framework-only phase, we can defer `datasets`, `evaluate`, `docker`, `gitpyt
 ## Session 3 — spec refactor findings
 
 - `experiments.md` shrinks to a short overview; `benchmarks.md` and
-  `case_study.md` are the new detailed protocols. The v1 specialized
+  `docs/experiments/case_study.md` are the new detailed protocols. The v1 specialized
   track (SpatialBench / BioDiscoveryAgent / cross-specialist pilot) is
   replaced by three case studies.
 - New variant names in experiments.md §3: **AC-NoMeta → AC-NoMetaSkills**,
@@ -434,7 +434,7 @@ task description, it autonomously profiles each repo, builds (or
 templates) a Docker sandbox per agent, registers each as an
 AgentCard, brokers typed handoffs, and synthesises both outputs with
 an LLM-backed integrator. Inaugural fixture: TissueAgent × GeneAgent
-on the developing human heart MERFISH dataset (`case_study_1.md`).
+on the developing human heart MERFISH dataset (`docs/experiments/case_study_1.md`).
 Use the `gpt-5` reasoning-model family. **Don't disturb the
 benchmark numbers from Sessions 4–6.**
 
@@ -509,7 +509,7 @@ rerun CS1 against it.
 |---|---|
 | File | `data/heart_merfish/overall_merfish.h5ad` (368 MB, 228 635 × 238) |
 | Schema match | 9/9 obs columns from §5.1 present (`sample_id`, `batch`, `n_counts`, `leiden`, `zone_cluster`, `communities`, `complexity`, `populations`, `purity`) |
-| Label discovery | `AVN/AV Ring` (capital R) auto-matched to `avnavring` via `_norm()`; case-insensitive / punctuation-insensitive matching survived the spelling drift from `case_study_1.md` |
+| Label discovery | `AVN/AV Ring` (capital R) auto-matched to `avnavring` via `_norm()`; case-insensitive / punctuation-insensitive matching survived the spelling drift from `docs/experiments/case_study_1.md` |
 | Normalisation state | already log-normalised (values 0–5.2, row sums ~90–100) — adapter does not double-log |
 | n_target / n_control | 576 / 5 685 cells |
 | Welch t markers | 53 (40–60 acceptable per §13) |
@@ -553,7 +553,7 @@ rerun CS1 against it.
 
 ### Goal
 Wire the Seurat × Signac × CellMarker SHARE-seq workflow described
-in `case_study_2.md` into the existing external-repo collaboration
+in `docs/experiments/case_study_2.md` into the existing external-repo collaboration
 framework — without breaking CS1 / CS3 / benchmarks. The case
 introduces a topology shape (N parallel branches → broker → join
 agent → integrator) that the current single-handoff orchestrator
@@ -574,7 +574,7 @@ didn't natively support.
    that needs an evaluator after N parallel branches (e.g. comparing
    embeddings against a benchmark) can use the same slot.
 3. **Python local adapters mirror the R wrappers.** Per
-   `case_study_2.md` the canonical sandbox is a Docker image with R
+   `docs/experiments/case_study_2.md` the canonical sandbox is a Docker image with R
    + Seurat / Signac. On hosts without Docker the framework runs a
    Python adapter that uses scanpy's vectorised Wilcoxon (the exact
    test Seurat uses) and a hand-rolled BH-FDR (matches R's
@@ -599,21 +599,21 @@ didn't natively support.
 ### Numbers worth remembering
 - Mean precision pattern: `intersection (0.083) > rna (0.051) > atac (0.003)` — the cross-modal-precision claim of the case study holds at the macro level on real Ma 2020 SHARE-seq skin data.
 - `Basal` cell type is the canonical strict-intersection win: precision_intersection=0.333 vs precision_rna=0.04 vs precision_atac=0.02 — keratin markers DES + KRT14 both supported by RNA and ATAC modalities.
-- Recall_union ≈ recall_rna because RNA's per-cell-type marker recall already dominates on this skin panel; ATAC adds little additional gold-marker recall under the GENCODE nearest-gene mapping (a known limitation enumerated in `case_study_2.md` §21).
+- Recall_union ≈ recall_rna because RNA's per-cell-type marker recall already dominates on this skin panel; ATAC adds little additional gold-marker recall under the GENCODE nearest-gene mapping (a known limitation enumerated in `docs/experiments/case_study_2.md` §21).
 
 ### Open follow-ups
 - Run the same request with `--docker` once the daemon is up to
   validate Wilcoxon ↔ Wilcoxon equivalence between the Python and R
   paths.
 - Add Signac's optional `GeneActivity` sensitivity branch
-  (case_study_2.md §11.2) by registering an additional `Signac` adapter variant and bumping `top_n` lists.
+  (docs/experiments/case_study_2.md §11.2) by registering an additional `Signac` adapter variant and bumping `top_n` lists.
 - Replace the BH-FDR + vectorised Wilcoxon in Python with a true LR
   test for the Signac branch — would need `statsmodels` and a small
   nCount_peaks covariate matrix.
 
 ## Session 8 — Ablation study (2026-05-02 / 03)
 
-Source spec: `ablation.md` (2 × 2 factorial: skills+tools × gate
+Source spec: `docs/experiments/ablation.md` (2 × 2 factorial: skills+tools × gate
 repair → AC-Full / AC-NoGate / AC-NoSkillsTools / AC-Minimal). Run on
 all six AFlow-aligned full splits.
 
@@ -725,7 +725,7 @@ int_wins=2 / 19, uni_wins=3 / 19.
    shows more union wins (denser per-cell-type catalogs → recall lift),
    CellMarker keeps tighter precision (skin-tagged entries are biology-
    curated to skin specifically). Reporting them separately (per the user's
-   case_study_2.md update) surfaces both signals; aggregating would hide
+   docs/experiments/case_study_2.md update) surfaces both signals; aggregating would hide
    the asymmetry.
 
 3. **Real R Seurat / R Signac runs end-to-end on a 16 GB Mac**, but only

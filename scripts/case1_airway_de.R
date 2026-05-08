@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Case Study 1: bulk RNA-seq differential expression on the Bioconductor
-# `airway` dataset per case_study.md §2.5.
+# `airway` dataset per docs/experiments/case_study.md §2.5.
 #
 # Usage:
 #   Rscript scripts/case1_airway_de.R [output_dir]

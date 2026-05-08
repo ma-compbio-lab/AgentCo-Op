@@ -1,8 +1,8 @@
-"""Unit tests for the new external_repo_collaboration framework.
+"""Unit tests for the external_repo_collaboration framework.
 
-Cover the four NEW core modules added in Session 7
-(repo_profile, sandbox_build, agent_card, artifact_broker) plus a
-smoke test for the orchestrator on a `--no-docker` two-stub run.
+Cover the four core modules added in Session 7
+(repo_profile, sandbox_build, agent_card, artifact_broker) plus an
+end-to-end test for the orchestrator on a `--no-docker` two-stub run.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from agentcoop.core.sandbox_build import (
     SandboxSpec,
     render_compose,
     render_dockerfile,
-    render_smoke_test,
     spec_from_profile,
 )
 from agentcoop.core.agent_card import AgentCard, AgentRegistry
@@ -82,22 +81,12 @@ def test_render_compose_lists_two_services() -> None:
     assert "OPENAI_API_KEY" in cmp
 
 
-def test_render_smoke_test_is_runnable_python(tmp_path: Path) -> None:
-    p = _toy_profile()
-    spec = spec_from_profile(p, name="ToyAgent")
-    text = render_smoke_test(spec)
-    assert "smoke-test" in text
-    # Compile to catch syntax errors without executing the import side-effects
-    compile(text, "<smoke>", "exec")
-
-
 def test_sandbox_builder_dry_run_writes_files(tmp_path: Path) -> None:
     builder = SandboxBuilder(tmp_path)
     p = _toy_profile()
     spec = spec_from_profile(p, name="ToyAgent")
     res = builder.build(spec, profile=p, dry_run=True)
     assert res.dockerfile_path.is_file()
-    assert res.smoke_test_path.is_file()
     assert res.image_built is False  # dry-run never builds
     compose_path = builder.write_compose([spec])
     assert compose_path.is_file()
@@ -177,7 +166,7 @@ def test_artifact_broker_gene_set_handoff_writes_file(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator smoke test (no Docker, no LLM — uses register_local_adapter
+# Orchestrator end-to-end test (no Docker, no LLM — uses register_local_adapter
 # stubs so the test stays fully offline)
 # ---------------------------------------------------------------------------
 

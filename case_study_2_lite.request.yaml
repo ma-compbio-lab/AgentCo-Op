@@ -1,6 +1,6 @@
 # Case Study 2 Lite — Seurat × Signac collaboration on the 10x Genomics
 # PBMC multiome dataset (`pbmc_granulocyte_sorted_10k`). Spec:
-# case_study_2_lite.md.
+# docs/experiments/case_study_2_lite.md.
 #
 # Prereq: cell-type labels are NOT shipped with the dataset; they are
 # transferred from the Hao et al. PBMC multimodal reference by the
@@ -54,7 +54,7 @@ join_agent:
       - Immune system
       - Bone marrow
     # PBMC alias map. The PRIMARY annotation path uses Hao
-    # celltype.l2 labels (case_study_2_lite.md §7.1). If the
+    # celltype.l2 labels (docs/experiments/case_study_2_lite.md §7.1). If the
     # annotation falls back to SingleR + celldex::MonacoImmuneData
     # (Hao reference unavailable), the wrapper still finds the
     # right gold-set bucket via the same alias keys plus a few

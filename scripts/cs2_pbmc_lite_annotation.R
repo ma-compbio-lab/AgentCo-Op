@@ -7,7 +7,7 @@
 # dataset inside the agentcoop-r-runtime image so AgentCo-Op's
 # wrappers can stay unchanged.
 #
-# PRIMARY annotation path (per case_study_2_lite.md §3.4 / §11.1):
+# PRIMARY annotation path (per docs/experiments/case_study_2_lite.md §3.4 / §11.1):
 #   Seurat label transfer from the Hao et al. PBMC multimodal
 #   reference (`pbmc_multimodal_2023.rds` from Zenodo), using
 #   `celltype.l2` labels.

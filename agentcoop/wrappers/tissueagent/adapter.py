@@ -1,7 +1,7 @@
 """TissueAgent local-Python adapter.
 
 Implements the spatial-transcriptomics differential-expression case
-described in `case_study_1.md` §6 inside the AgentCo-Op host process when
+described in `docs/experiments/case_study_1.md` §6 inside the AgentCo-Op host process when
 Docker is unavailable. The same logic runs inside the upstream
 TissueAgent container in `--docker` mode.
 
@@ -45,7 +45,7 @@ import matplotlib.pyplot as plt
 def invoke_tissueagent_local(req: dict[str, Any]) -> dict[str, Any]:
     """Local-Python implementation of the TissueAgent DE node.
 
-    Mirrors the case_study_1.md §11.2 prompt + §9.2 response schema.
+    Mirrors the docs/experiments/case_study_1.md §11.2 prompt + §9.2 response schema.
     """
     out_dir = Path(req.get("output_dir", "runs/case1/heart_merfish/artifacts/tissueagent_run"))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def invoke_tissueagent_local(req: dict[str, Any]) -> dict[str, Any]:
     )
 
     # Sensitivity summary (we ship just the welch result + a wilcoxon
-    # comparison to satisfy the case_study_1.md §6.3 sensitivity request).
+    # comparison to satisfy the docs/experiments/case_study_1.md §6.3 sensitivity request).
     wilcox_df = _run_wilcoxon_de(adata, mask_target, mask_control)
     sens = pd.DataFrame({
         "method": ["welch_t", "mann_whitney_u"],

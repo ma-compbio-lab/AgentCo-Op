@@ -3,7 +3,7 @@
 Reads `/inputs/request.json`, writes `/outputs/result.json` conforming to
 `perturbation_prediction_v1`. Self-contained so the adapter works both
 inside a Docker image (no agentcoop install) and when invoked from the
-host for smoke tests.
+host.
 """
 
 from __future__ import annotations

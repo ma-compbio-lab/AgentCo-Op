@@ -235,7 +235,7 @@ def invoke_cellmarker_evaluator_local(req: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             warnings.append(f"PR barplot failed: {exc}")
 
-        # ---- PanglaoDB independent evaluation (additive per case_study_2.md
+        # ---- PanglaoDB independent evaluation (additive per docs/experiments/case_study_2.md
         # user-prose addendum: "CellMarker 2.0 + PanglaoDB independently
         # filter for mouse skin markers and report precision/recall
         # separately rather than aggregated"). Skips silently if no
@@ -352,7 +352,7 @@ def register() -> None:
 # ---------------------------------------------------------------------------
 
 
-# Default human-heart aliases (mirror case_study_2_human_heart.md §11
+# Default human-heart aliases (mirror docs/experiments/case_study_2_human_heart.md §11
 # initial mapping table). The request YAML can override entirely via
 # `join_agent.inputs.aliases`. Aliases match CellMarker 2.0 / PanglaoDB
 # label conventions case-insensitively.

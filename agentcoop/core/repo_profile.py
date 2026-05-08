@@ -45,7 +45,7 @@ class RepoProfile(BaseModel):
     """Structured snapshot of an external GitHub repository.
 
     The shape is consciously aligned with the JSON example in
-    `case_study_1.md` §4.1 so users can dump the profile to disk and
+    `docs/experiments/case_study_1.md` §4.1 so users can dump the profile to disk and
     diff it without translation.
     """
 

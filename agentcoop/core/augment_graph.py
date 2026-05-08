@@ -56,7 +56,7 @@ def attach_skills_and_tools(
 
 
 def load_gate_yaml(path: str | Path) -> list[GatePolicy]:
-    """Load a gate YAML (case_study.md §4.5 / §4.6 format) into GatePolicy."""
+    """Load a gate YAML (docs/experiments/case_study.md §4.5 / §4.6 format) into GatePolicy."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     gates_spec = data.get("gates") or data
     if isinstance(gates_spec, dict):

@@ -1,6 +1,6 @@
 """CellMarker evaluator (join-agent) local-Python adapter.
 
-Implements the join + evaluation step specified in `case_study_2.md`
+Implements the join + evaluation step specified in `docs/experiments/case_study_2.md`
 §13–§14: take Seurat's RNA top-N marker JSON and Signac's ATAC top-N
 marker JSON, harmonise gene symbols, compute per-cell-type
 intersection / union, parse a CellMarker 2.0 mouse marker file,

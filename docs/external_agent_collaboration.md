@@ -204,7 +204,7 @@ to reconcile them.
 Same invocation contract as stage 6. For CS1 the downstream is
 GeneAgent's local adapter (`agentcoop/wrappers/geneagent_local/adapter.py`):
 calls the OpenAI Chat Completions endpoint with a JSON-mode prompt
-shaped per `case_study_1.md` §11.4 to produce a structured gene-set
+shaped per `docs/experiments/case_study_1.md` §11.4 to produce a structured gene-set
 interpretation report (process label, subprocesses, supporting genes,
 self-verification, caveats, final interpretation).
 
@@ -273,7 +273,7 @@ without crawling JSON files.
 
 To collaborate two arbitrary GitHub agents:
 
-1. Write a `<my_case>.request.yaml` matching `case_study_1.md` §3.3 —
+1. Write a `<my_case>.request.yaml` matching `docs/experiments/case_study_1.md` §3.3 —
    the only required fields are `case_id`, `repositories[]` with
    `{name,url,role_hint}`, and `task.description`. Optional:
    `dataset`, `success_targets`, `required_outputs`,
@@ -284,7 +284,7 @@ To collaborate two arbitrary GitHub agents:
    - `adapter.py` that implements an
      `invoke_<agent>_local(req: dict) -> dict` callable returning the
      `{status, summary, artifacts, main_results}` shape.
-   - `manifest.yaml` that mirrors `case_study_1.md` §4.3.
+   - `manifest.yaml` that mirrors `docs/experiments/case_study_1.md` §4.3.
    - `Dockerfile.agentcoop` (when shipping a container image).
 3. Run `agentcoop collaborate --request my_case.request.yaml
    --workdir runs/my_case --no-docker --model gpt-5

@@ -283,7 +283,7 @@ def bio_select_markers(
     top_k: int = typer.Option(100, "--top-k"),
     out: Path = typer.Option(Path("artifacts/gene_sets"), "--out"),
 ) -> None:
-    """Filter DE results to up/down gene sets (case_study.md §2.5)."""
+    """Filter DE results to up/down gene sets (docs/experiments/case_study.md §2.5)."""
     from agentcoop.benchmarks.bio import select_markers
 
     res = select_markers(
@@ -425,7 +425,7 @@ def perturb_synth(
     n_perts: int = typer.Option(12, "--n-perts"),
     seed: int = typer.Option(42, "--seed"),
 ) -> None:
-    """Produce a synthetic perturbation dataset for offline smoke tests."""
+    """Produce a synthetic perturbation dataset for offline tests."""
     from agentcoop.benchmarks.perturb import synthetic_dataset
 
     ds = synthetic_dataset(dataset, n_genes=n_genes, n_perturbations=n_perts, seed=seed)
@@ -559,51 +559,10 @@ def repo_wrap(
     typer.echo(f"manifest written to {out}")
 
 
-@repo_app.command("smoke")
-def repo_smoke(
-    manifest: Path = typer.Option(..., "--manifest", exists=True, readable=True),
-    input_json: Optional[Path] = typer.Option(None, "--input"),
-    out: Optional[Path] = typer.Option(None, "--out"),
-) -> None:
-    """Dry-run the sandbox-repo backend against a manifest."""
-    manifest_data = yaml.safe_load(Path(manifest).read_text(encoding="utf-8"))
-    req = manifest_data.get("resources", manifest_data.get("requirements", {})) or {}
-    security = manifest_data.get("security", {}) or {}
-    payload = {
-        "manifest": {
-            "image": f"agentcoop/{manifest_data.get('name', 'repo')}",
-            "commit_sha": manifest_data.get("source", {}).get("commit", "HEAD"),
-            "digest": manifest_data.get("digest", "sha256:placeholder"),
-            "network": security.get("network", "none"),
-            "cpus": req.get("cpus", 4),
-            "memory_gb": req.get("memory_gb", 16),
-            "pids_limit": req.get("pids_limit", 512),
-            "non_root": security.get("non_root", True),
-            "secrets": security.get("secrets", []),
-        },
-        "inputs_dir": "./inputs",
-        "outputs_dir": "./outputs",
-    }
-    from agentcoop.backends.repo_sandbox import build_run_command
-
-    cmd = build_run_command(
-        manifest=payload["manifest"],
-        inputs_dir=payload["inputs_dir"],
-        outputs_dir=payload["outputs_dir"],
-        request_path=str(input_json) if input_json else "/inputs/request.json",
-        result_path="/outputs/result.json",
-    )
-    summary = {"status": "dry_run", "command": cmd}
-    if out:
-        Path(out).parent.mkdir(parents=True, exist_ok=True)
-        Path(out).write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    typer.echo(json.dumps(summary, indent=2))
-
-
 # ---------------------------------------------------------------------------
 # `agentcoop collaborate` — generic external-repo collaboration entrypoint
 #
-# Reads a request YAML matching `case_study_1.md` §3.3 and runs the
+# Reads a request YAML matching `docs/experiments/case_study_1.md` §3.3 and runs the
 # external_repo_collaboration meta-skill end-to-end. Generic across repo
 # pairs — TissueAgent × GeneAgent is only the inaugural request fixture.
 # ---------------------------------------------------------------------------

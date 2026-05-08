@@ -1,4 +1,4 @@
-# Ablation method config (`ablation.md` §3) — AC-NoGate.
+# Ablation method config (`docs/experiments/ablation.md` §3) — AC-NoGate.
 method: ac_nogate
 ablation_variant: AC-NoGate
 skills_tools: true

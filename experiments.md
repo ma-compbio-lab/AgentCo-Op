@@ -3,7 +3,7 @@
 This file is the short experiment overview. Detailed implementation guides are split into:
 
 - `benchmarks.md`: AFlow-aligned standard benchmark protocol.
-- `case_study.md`: detailed biological and dynamic-workflow case studies.
+- `docs/experiments/case_study.md`: detailed biological and dynamic-workflow case studies.
 
 ## 1. Experimental goals
 
@@ -32,7 +32,7 @@ The case studies are designed to show capabilities that the six standard benchma
 | Case Study 2 | parallel specialist collaboration | scGPT, GEARS, scFoundation, Geneformer-style embeddings, and simple baselines run in parallel; a high-level agent ensembles, benchmarks, and analyzes the results. |
 | Case Study 3 | dynamic topology refinement | Start from an AFlow-discovered or AFlow-like topology on code/math benchmarks, attach skills and tools, then trigger local repair at runtime. |
 
-The detailed protocol is in `case_study.md`.
+The detailed protocol is in `docs/experiments/case_study.md`.
 
 ## 3. Core method variants
 

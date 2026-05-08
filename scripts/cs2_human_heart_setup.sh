@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AgentCo-Op CS2 (human heart 10x multiome — GSE270788 MA7) end-to-end
-# setup. See `case_study_2_human_heart.md` for the design.
+# setup. See `docs/experiments/case_study_2_human_heart.md` for the design.
 #
 # Idempotent. Runs everything the case-study Docker run needs that
 # `agentcoop collaborate` doesn't do itself:

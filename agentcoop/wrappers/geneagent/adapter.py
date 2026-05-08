@@ -1,6 +1,6 @@
 """GeneAgent adapter stub (Case Study 1).
 
-Contract (per case_study.md §2): read `--input /inputs/request.json` with
+Contract (per docs/experiments/case_study.md §2): read `--input /inputs/request.json` with
 {command, params:{gene_symbols, context, organism, direction}}; write
 `--output /outputs/result.json` per the `geneagent_report_v1` schema.
 

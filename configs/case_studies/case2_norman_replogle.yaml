@@ -1,5 +1,5 @@
 # Case Study 2 — parallel single-cell foundation-model perturbation benchmark
-# See case_study.md §3.
+# See docs/experiments/case_study.md §3.
 
 case_study: case2_perturb
 description: >

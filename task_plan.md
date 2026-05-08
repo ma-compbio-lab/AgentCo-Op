@@ -129,10 +129,10 @@ Add `configs/external_commits.yaml`, `data/data_hashes.json` schema, and update 
 
 ---
 
-## Session 3 phases — Refactor to experiments.md v2 / benchmarks.md / case_study.md
+## Session 3 phases — Refactor to experiments.md v2 / benchmarks.md / docs/experiments/case_study.md
 
 `experiments.md` has been rewritten as a short overview. `benchmarks.md`
-supersedes the per-dataset experiment detail. `case_study.md` replaces
+supersedes the per-dataset experiment detail. `docs/experiments/case_study.md` replaces
 SpatialBench / BioDiscovery with three case studies:
 CS1 bulk RNA-seq (airway + GeneAgent), CS2 parallel single-cell
 (GEARS / scGPT / scFoundation / Geneformer on Norman + Replogle K562),
@@ -163,7 +163,7 @@ git_state.txt, model_versions.json, data_hashes.json into
 **Verify:** `agentcoop benchmark --dry-run` produces the required files.
 
 ### Phase 29: Gate + patch extensions — status: pending
-Add new triggers referenced by benchmarks.md §5 and case_study.md §4.5-6:
+Add new triggers referenced by benchmarks.md §5 and docs/experiments/case_study.md §4.5-6:
 `answer_format_invalid`, `solver_disagreement`, `symbolic_check_fail`,
 `boxed_answer_missing`, `domain_mismatch`, `method_disagreement`,
 `numeric_inconsistency`, `multi_span_conflict`, `model_env_fail`,
@@ -180,7 +180,7 @@ cards and tools and writes the augmented graph JSON. Gate YAML reader.
 with dummy skill cards; round-trip through JSON.
 
 ### Phase 31: Case Study 1 scaffolding — status: pending
-R sandbox profile doc; `scripts/case1_airway_de.R` per case_study.md
+R sandbox profile doc; `scripts/case1_airway_de.R` per docs/experiments/case_study.md
 §2.5; `agentcoop bio select-markers` / `agentcoop bio enrich` CLI
 commands (Python); GeneAgent wrapper manifest + adapter stub; airway
 loader reads an R-produced TSV stub when R isn't installed.
@@ -414,7 +414,7 @@ Add a generalized capability so that AgentCo-Op can take any two GitHub
 repository URLs + a task description, build per-repo sandboxes,
 register each as an agent backend, and orchestrate upstream/downstream
 collaboration. First user is the TissueAgent × GeneAgent CS1 from
-`case_study_1.md`. LLM model: `gpt-5` (reasoning_effort=medium).
+`docs/experiments/case_study_1.md`. LLM model: `gpt-5` (reasoning_effort=medium).
 
 ### Hard constraints (Session 7)
 - **Minimize codebase changes** — protect Sessions 4–6 benchmark
@@ -434,7 +434,7 @@ collaboration. First user is the TissueAgent × GeneAgent CS1 from
 
 ### Phase 58: external_repo_collaboration meta-skill (NEW file) — status: pending
 - `agentcoop/skills/meta/external_repo_collaboration.md` — L7 topology,
-  G0–G7 gates per `case_study_1.md` §4.5.
+  G0–G7 gates per `docs/experiments/case_study_1.md` §4.5.
 **Verify:** registry test still passes.
 
 ### Phase 59: Surgical edits — status: pending
@@ -454,7 +454,7 @@ Only:
   because Docker daemon is down on this host.
 **Verify:** `agentcoop collaborate --request case_study_1.request.yaml
 --no-docker --workdir runs/case1/heart_merfish` produces every
-artifact in `case_study_1.md` §12.
+artifact in `docs/experiments/case_study_1.md` §12.
 
 ### Phase 61: Run CS1 end-to-end — status: pending
 Use `gpt-5` reasoning. Try Dryad fetch; fall back to deterministic
@@ -464,7 +464,7 @@ artifacts in §12.
 `compiled_workflow_graph.json`, `agent_registry.json`, etc.
 
 ### Phase 62: Doc sync — status: pending
-- `case_study.md` — point CS1 to `case_study_1.md` + new run dir.
+- `docs/experiments/case_study.md` — point CS1 to `docs/experiments/case_study_1.md` + new run dir.
 - `report.md` §8.1 — replace airway numbers with heart-MERFISH summary.
 - `implement.md`, `progress.md`, `findings.md` — Session 7 entries.
 - `runs/case1/heart_merfish/README.md` — per-run writeup.
@@ -745,7 +745,7 @@ Cost estimate: ~3x the seed = $0.06–0.10 / 257 tasks. Trivial.
 ### Goal (per user)
 Swap CS2 dataset from SHARE-seq mouse skin to GSE270788 human heart paired
 single-nucleus multiome (10x Chromium Multiome ATAC + Gene Expression),
-sample MA7. Spec is in `case_study_2_human_heart.md`. Configure + launch
+sample MA7. Spec is in `docs/experiments/case_study_2_human_heart.md`. Configure + launch
 the experiment, execute end-to-end via live Docker backend so any user
 can reproduce. Constraint: no backbone changes; if code edits are
 needed they must be general-purpose, not ad-hoc patches.
@@ -799,7 +799,7 @@ needed they must be general-purpose, not ad-hoc patches.
 ### Goal (per user)
 Configure + launch CS2 Lite using the smaller 10x Genomics PBMC
 Multiome dataset (`pbmc_granulocyte_sorted_10k`, ~11 909 cells), per
-`case_study_2_lite.md`. Execute end-to-end via live Docker. Constraint:
+`docs/experiments/case_study_2_lite.md`. Execute end-to-end via live Docker. Constraint:
 no AC backbone changes; only general-purpose improvements if needed.
 
 ### Key challenge — no author-provided cell-type labels

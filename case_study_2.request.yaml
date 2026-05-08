@@ -94,7 +94,7 @@ parameters:
     peak_to_gene: closest_feature
     extend_upstream_bp: 2000
     max_dist_bp: 100000
-    # Method selector. case_study_2.md §11 declares peak-to-nearest-gene
+    # Method selector. docs/experiments/case_study_2.md §11 declares peak-to-nearest-gene
     # as the primary ATAC marker-gene method, with GeneActivity (§11.2)
     # as an optional sensitivity analysis. peak_to_gene is the default
     # for end-to-end runs because it fits on a 16 GB host; switch to

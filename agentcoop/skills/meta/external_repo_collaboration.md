@@ -44,7 +44,7 @@ expected_benefit: |
   and synthesise the results with an LLM-backed integrator. Generic across
   repo pairs (TissueAgent × GeneAgent is the inaugural case).
 evidence_refs:
-  - "case_study_1.md (TissueAgent × GeneAgent external collaboration)"
+  - "docs/experiments/case_study_1.md (TissueAgent × GeneAgent external collaboration)"
   - "architecture.md §4.3 L7 sandbox_repo_execution"
   - "Anthropic upstream/downstream agent collaboration pattern"
 ---

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AgentCo-Op CS2 Lite (10x PBMC multiome — granulocytes-sorted 10k)
-# end-to-end setup. See `case_study_2_lite.md` for the design.
+# end-to-end setup. See `docs/experiments/case_study_2_lite.md` for the design.
 #
 # Idempotent. Runs everything the case-study Docker run needs that
 # `agentcoop collaborate` doesn't do itself:

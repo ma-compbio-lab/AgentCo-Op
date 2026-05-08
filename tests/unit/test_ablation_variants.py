@@ -1,4 +1,4 @@
-"""Tests for the Session-8 ablation variants (per `ablation.md`).
+"""Tests for the Session-8 ablation variants (per `docs/experiments/ablation.md`).
 
 The variants are defined in `configs/benchmarks/_base.yaml` and inherit
 into every per-dataset config via `extends: _base`. The four ablation

@@ -1,6 +1,6 @@
 # Case Study 2 (human heart) request — Seurat × Signac collaboration on
 # the GSE270788 paired single-nucleus 10x Multiome ATAC + Gene Expression
-# dataset, sample MA7. Spec: case_study_2_human_heart.md.
+# dataset, sample MA7. Spec: docs/experiments/case_study_2_human_heart.md.
 #
 # Loaded by: python -m agentcoop.cli collaborate
 #                   --request case_study_2_human_heart.request.yaml

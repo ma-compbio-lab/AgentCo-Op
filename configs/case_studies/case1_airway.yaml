@@ -1,6 +1,6 @@
 # Case Study 1 — bulk RNA-seq differential expression → gene-set interpretation
 # Dataset: Bioconductor `airway` (dexamethasone vs untreated)
-# See case_study.md §2.
+# See docs/experiments/case_study.md §2.
 
 case_study: case1_airway
 dataset: airway

@@ -1,7 +1,7 @@
 """Case Study 1 — bulk RNA-seq bio utilities.
 
 Implements the three `agentcoop bio ...` CLI commands referenced in
-`case_study.md` §2.5:
+`docs/experiments/case_study.md` §2.5:
 
 - `select-markers` — filter DE results by padj/log2fc and emit typed
   `up_genes.json` / `down_genes.json`.

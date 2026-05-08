@@ -1,6 +1,6 @@
 """Signac local-Python adapter.
 
-Mirrors the R wrapper specified in `case_study_2.md` §11 using
+Mirrors the R wrapper specified in `docs/experiments/case_study_2.md` §11 using
 scanpy + scipy + a small lazily-fetched mm10 gene-coordinate cache.
 The Docker manifest + Dockerfile are kept alongside this module and
 used whenever the Docker daemon is available; this local-Python

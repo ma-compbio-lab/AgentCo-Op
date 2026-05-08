@@ -1,4 +1,4 @@
-"""End-to-end offline smoke tests for Case Studies 1 & 2.
+"""End-to-end offline tests for Case Studies 1 & 2.
 
 CS3 is covered by test_aflow_importer.py.
 """

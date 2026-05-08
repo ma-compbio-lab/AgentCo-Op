@@ -6,7 +6,7 @@ and `topology.dot` (Graphviz source for users who prefer to render
 themselves with `dot -Tpng topology.dot -o topology.png`).
 
 The two artifacts make the multi-agent topology auditable at a glance,
-which is what `case_study_1.md` §12.2 asks for.
+which is what `docs/experiments/case_study_1.md` §12.2 asks for.
 """
 
 from __future__ import annotations

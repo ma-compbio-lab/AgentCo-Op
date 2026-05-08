@@ -1,7 +1,7 @@
 """Seurat local-Python adapter.
 
 Implements the scRNA-seq marker-discovery workflow specified in
-`case_study_2.md` §10 inside the AgentCo-Op host process when Docker
+`docs/experiments/case_study_2.md` §10 inside the AgentCo-Op host process when Docker
 is unavailable. Mirrors the Seurat R wrapper one-for-one but uses
 scanpy + numpy + pandas + scipy under the hood:
 

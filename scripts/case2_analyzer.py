@@ -2,7 +2,7 @@
 
 Reads: per-model metrics + the three ensemble outputs.
 Calls OpenAI to produce the structured benchmark report described in
-case_study.md §3.7 (compare against simple baselines, identify
+docs/experiments/case_study.md §3.7 (compare against simple baselines, identify
 dataset-specific failure modes, ensemble decision).
 
 Writes: `final_report.md` + `final_report.json`.
@@ -28,7 +28,7 @@ SYSTEM_PROMPT = (
     "study. You receive per-model metrics on a synthetic Norman-like dataset "
     "(perturbation-level split) plus three ensemble results "
     "(validation_winner / rank_fusion / weighted_average).\n\n"
-    "Rules (from case_study.md §3.7):\n"
+    "Rules (from docs/experiments/case_study.md §3.7):\n"
     " - Do not claim a model is better unless the metric table supports it.\n"
     " - Always compare against simple baselines.\n"
     " - Identify dataset-specific failure modes, systematic-variation risks, "

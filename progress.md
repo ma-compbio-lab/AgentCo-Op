@@ -70,7 +70,7 @@ Pushed to `origin/clean-dev` (ffac7c5..94ff027). Remote: git@github.com:Eurekash
 
 ---
 
-## Session 3 — experiments.md v2 + benchmarks.md + case_study.md (2026-04-22)
+## Session 3 — experiments.md v2 + benchmarks.md + docs/experiments/case_study.md (2026-04-22)
 
 Phases 26 – 36 complete. 82 unit tests pass.
 
@@ -134,7 +134,7 @@ metric.
 ### Actions logged
 | Step | Action | Outcome |
 |------|--------|---------|
-| 0 | Read benchmarks.md / experiments.md / case_study.md / implement.md | Picked AFlow paper targets: HumanEval≈95, MBPP≈80, GSM8K≈93, MATH(L5×4)≈56, HotpotQA≈73, DROP≈80 |
+| 0 | Read benchmarks.md / experiments.md / docs/experiments/case_study.md / implement.md | Picked AFlow paper targets: HumanEval≈95, MBPP≈80, GSM8K≈93, MATH(L5×4)≈56, HotpotQA≈73, DROP≈80 |
 | 0 | Inspected runner.py, llm.py, configs | Real OpenAI client + parallelism + price table all missing — confirmed Session-4 phases needed |
 | 1 | Built `agentcoop/backends/prompts.py` | Per-role × per-dataset system & user prompts; LaTeX-backslash repair for MATH; JSON mode opt-in by role/dataset |
 | 1 | Implemented `OpenAIClient` (httpx) | Chat Completions with retry on 429/5xx, no SDK dependency, JSON mode opt-in |
@@ -316,7 +316,7 @@ deterministic). Total Session 6 API spend: $1.31.
 ## Session 7 — External-repo collaboration framework + CS1 (Tissue × Gene) (2026-05-01)
 
 ### Objective
-User updated `case_study_1.md` to specify a TissueAgent × GeneAgent
+User updated `docs/experiments/case_study_1.md` to specify a TissueAgent × GeneAgent
 external-collaboration experiment and asked for a **generalised**
 framework so the same CLI can collaborate any two GitHub agents on any
 task. LLM model: `gpt-5` ("thinking" reasoning model family).
@@ -408,7 +408,7 @@ Steps:
 
 Real-data results (`status: success`, no synthetic fallback):
 
-| Metric | Value | case_study_1.md target |
+| Metric | Value | docs/experiments/case_study_1.md target |
 |---|---|---|
 | n_target | 576 cells (aFibro × AVN/AV Ring) | non-zero |
 | n_control | 5 685 cells (aFibro × Left + Right Atria) | non-zero |
@@ -446,7 +446,7 @@ field in the request YAML.
 ## Session 7.3 — `parallel_then_join` topology + CS2 (Seurat × Signac × CellMarker) (2026-05-02)
 
 ### Objective
-User updated `case_study_2.md` to require AgentCo-Op to take Seurat
+User updated `docs/experiments/case_study_2.md` to require AgentCo-Op to take Seurat
 + Signac GitHub URLs + the SHARE-seq mouse skin RNA/ATAC GEO files
 (real, in `data/shareseq_skin/`) + CellMarker 2.0 mouse markers and
 **autonomously sandbox both R tools, register them as agent nodes,
@@ -579,9 +579,9 @@ profiler, runner, compiler, or `workflows/*.json` — Sessions 4–6
 benchmark numbers remain reproducible.
 
 
-## Session 8 — `ablation.md` 2 × 2 factorial (2026-05-02 / 03)
+## Session 8 — `docs/experiments/ablation.md` 2 × 2 factorial (2026-05-02 / 03)
 
-User asked for the ablation declared in `ablation.md`:
+User asked for the ablation declared in `docs/experiments/ablation.md`:
 two factors × two levels = four variants, each on the full AFlow
 splits of all six benchmarks. Hard constraint from the user:
 **YAML configuration changes only — no edits to core code.**
@@ -678,7 +678,7 @@ backends; end-to-end single-command reproduction.
 | 9 | `biovizBase` Bioconductor pkg missing | added to leaf layer |
 | 10 | Fragments-vs-MTX barcode mismatch (P1.0X vs P1.5X) | `cells = setNames()` mapping via celltype.txt |
 | 11 | data.table `[, atac_col]` literal-column gotcha | `[[col]]` indexing |
-| 12 | `Signac::GeneActivity` OOM at 14 GB colima ("extracting reads overlapping genomic regions") | doc-defined fallback to peak-to-gene as `signac_method=peak_to_gene` (case_study_2.md §11 primary) |
+| 12 | `Signac::GeneActivity` OOM at 14 GB colima ("extracting reads overlapping genomic regions") | doc-defined fallback to peak-to-gene as `signac_method=peak_to_gene` (docs/experiments/case_study_2.md §11 primary) |
 | 13 | Orchestrator 30 min timeout hit | bumped to 7 200 s + env override |
 | 14 | `FindAllMarkers` on 344 k peaks single-thread > 2 h | `FindTopFeatures(min.cutoff="q75")` → 86 k variable peaks |
 | 15 | Still slow on 32 k cells × 86 k peaks | added `presto` to image |
@@ -978,7 +978,7 @@ Test-phase tokens / cost (Session 12 re-runs):
 ### Goal
 Swap CS2 dataset from SHARE-seq mouse skin to GSE270788 human heart
 paired single-nucleus 10x Multiome ATAC + Gene Expression (sample MA7).
-Spec: `case_study_2_human_heart.md`. Configure + launch + execute
+Spec: `docs/experiments/case_study_2_human_heart.md`. Configure + launch + execute
 end-to-end via live Docker backend. Constraint: no AC backbone changes;
 only general-purpose code edits.
 
@@ -1040,7 +1040,7 @@ Wall: **540.6 s** (~ 9 min). Status: **success**. n_handoffs: 2.
 ## Session 14 — CS2 Lite (10x PBMC multiome — granulocyte-sorted 10k) (2026-05-05)
 
 ### Goal
-Run CS2 Lite per spec `case_study_2_lite.md`: smaller 10x PBMC multiome
+Run CS2 Lite per spec `docs/experiments/case_study_2_lite.md`: smaller 10x PBMC multiome
 dataset (~11k cells), Hao reference label transfer, end-to-end via Docker.
 Constraint: no AC backbone changes.
 

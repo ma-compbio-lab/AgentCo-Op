@@ -1,4 +1,4 @@
-# Ablation method config (`ablation.md` §3) — AC-NoSkillsTools.
+# Ablation method config (`docs/experiments/ablation.md` §3) — AC-NoSkillsTools.
 method: ac_noskillstools
 ablation_variant: AC-NoSkillsTools
 skills_tools: false

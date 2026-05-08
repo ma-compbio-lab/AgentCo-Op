@@ -14,7 +14,7 @@ This file tracks the framework implementation. Treat it as the single entry poin
 AgentCo-Op/
   agentcoop/
     __init__.py                   re-exports core Pydantic models
-    cli.py                        Typer CLI (compile / run / benchmark / repo wrap / repo smoke)
+    cli.py                        Typer CLI (compile / run / benchmark / repo wrap)
     core/
       schema.py                   TaskProfile, NodeSpec, EdgeSpec, GatePolicy, WorkflowBlueprint,
                                   NodeResult, RunState, MetaSkill, AgentSkill, EvalContract, MemoryPlan
@@ -138,8 +138,6 @@ python -m agentcoop.cli repo wrap \
   --repo https://github.com/Genentech/SpatialAgent \
   --commit <sha> --name SpatialAgent --out runs/spatial_manifest.yaml
 
-# Dry-run the sandbox command builder
-python -m agentcoop.cli repo smoke --manifest runs/spatial_manifest.yaml
 ```
 
 Tests cover schema round-trip, memory permissions, cost ledger, registry loading, profiler rules, compiler routing on GSM8K/code/HotpotQA/DROP/repo shapes, gate activation limits, patch application, integrator/reviewer clamp, runtime DAG walk (including a cyclic code blueprint), and wrapper adapter contracts.
@@ -250,9 +248,6 @@ YAML loading supports `extends: <name>` → deep-merge with `_base`.
   `external/<repo>` + the wrapper adapter + Dockerfile, verifies the
   pinned SHA, and runs `docker build`. Script-syntax OK; actual build
   deferred until the Docker daemon is running.
-- `scripts/smoke_repo_wrappers.py` — offline dry-run: emits the exact
-  `docker run` command and verifies each adapter parses a valid request.
-
 ### Running the benchmark harness
 
 ```bash
@@ -283,7 +278,7 @@ python -m agentcoop.cli benchmark --dataset gsm8k --limit 10 -v AC-Gated
 
 ---
 
-## Session 3 — Experiments refactored to benchmarks.md + case_study.md (2026-04-22)
+## Session 3 — Experiments refactored to benchmarks.md + docs/experiments/case_study.md (2026-04-22)
 
 The v1 specialized track (SpatialBench / BioDiscoveryAgent /
 cross-specialist pilot) was removed and replaced with three case
@@ -365,7 +360,7 @@ runs/{dataset}/{method}/{timestamp}/
 - `agentcoop run-node geneagent` — dry-run the GeneAgent wrapper.
 - `agentcoop aflow import-workflow` / `agentcoop aflow augment-graph`.
 - `agentcoop perturb {download, synth, run, evaluate, ensemble}` — CS2 pipeline.
-- `agentcoop repo {wrap, smoke}` — unchanged contract, now covers the new wrappers.
+- `agentcoop repo wrap` — unchanged contract, now covers the new wrappers.
 
 ### Gate catalogue (expanded)
 
@@ -560,7 +555,7 @@ Add a generalised framework so that AgentCo-Op can take any two
 GitHub repository URLs + a task description, build per-repo sandboxes,
 register each as an agent backend, and orchestrate upstream/downstream
 collaboration. First user is the TissueAgent × GeneAgent CS1 from
-`case_study_1.md`. LLM model: `gpt-5` ("thinking" reasoning model
+`docs/experiments/case_study_1.md`. LLM model: `gpt-5` ("thinking" reasoning model
 family) with `reasoning_effort=medium`.
 
 **Hard constraint** — minimise codebase changes; protect Sessions 4–6
@@ -572,16 +567,16 @@ files only touched with surgical, additive edits.
 | Module | Purpose |
 |---|---|
 | `agentcoop/core/repo_profile.py` | `RepoProfile` Pydantic model + `profile_repo()` (clones + inspects environment files / READMEs / scripts; detects API-key envs, package managers, run modes, candidate capabilities) |
-| `agentcoop/core/sandbox_build.py` | `SandboxSpec` + `SandboxBuilder` (renders Dockerfile per `conda` / `uv` / `pip` strategy + `docker-compose.yml` + per-image smoke test; `dry_run=True` writes specs without invoking docker) |
-| `agentcoop/core/agent_card.py` | `AgentCard` (matches `case_study_1.md` §4.3 schema) + `AgentRegistry` (YAML-loadable) |
+| `agentcoop/core/sandbox_build.py` | `SandboxSpec` + `SandboxBuilder` (renders Dockerfile per `conda` / `uv` / `pip` strategy + `docker-compose.yml`; `dry_run=True` writes specs without invoking docker) |
+| `agentcoop/core/agent_card.py` | `AgentCard` (matches `docs/experiments/case_study_1.md` §4.3 schema) + `AgentRegistry` (YAML-loadable) |
 | `agentcoop/core/artifact_broker.py` | Typed handoff broker with `gene_set` / `csv_path` / `image_path` / generic-file validators; writes a JSONL audit log |
 | `agentcoop/core/repo_collaboration.py` | `RepoCollaborationOrchestrator` — end-to-end driver consuming a request YAML, runs adapters in declaration order, brokers handoffs, integrates outputs via the existing `OpenAIClient`, writes `run_manifest.json` + `compiled_workflow_graph.json` + `agent_registry.json` + traces |
 | `agentcoop/skills/meta/external_repo_collaboration.md` | L7 meta-skill (12 meta total; the registry test was bumped 11 → 12) |
 | `agentcoop/wrappers/__init__.py` | Side-effect imports register the local-Python adapters used in `--no-docker` mode |
 | `agentcoop/wrappers/tissueagent/{__init__.py, manifest.yaml, Dockerfile.agentcoop, adapter.py}` | TissueAgent local adapter — log-norm + Welch t-test + BH FDR + volcano + coding report; deterministic synthetic-MERFISH fallback when the real h5ad is absent |
-| `agentcoop/wrappers/geneagent_local/{__init__.py, adapter.py}` | GeneAgent local adapter — direct OpenAI Chat-Completions call shaped per `case_study_1.md` §11.4, JSON-mode with deterministic fallback when no API key |
+| `agentcoop/wrappers/geneagent_local/{__init__.py, adapter.py}` | GeneAgent local adapter — direct OpenAI Chat-Completions call shaped per `docs/experiments/case_study_1.md` §11.4, JSON-mode with deterministic fallback when no API key |
 | `case_study_1.request.yaml` | User-facing request fixture (the inaugural CS1 case) |
-| `tests/unit/test_repo_collaboration.py` | 12 new unit tests covering each new module + an offline orchestrator smoke test |
+| `tests/unit/test_repo_collaboration.py` | Unit tests covering each new module + an offline orchestrator end-to-end test |
 
 ### Surgical edits to existing files (kept intentionally tiny)
 
@@ -606,7 +601,7 @@ files only touched with surgical, additive edits.
 | Total LLM tokens (GeneAgent + integrator) | 5 048 (gpt-5, medium reasoning) |
 
 `runs/case1/heart_merfish/` carries the full artifact tree per
-`case_study_1.md` §12 (run_manifest, compiled_workflow_graph,
+`docs/experiments/case_study_1.md` §12 (run_manifest, compiled_workflow_graph,
 agent_registry, broker.jsonl, repo profiles, Dockerfiles, smoke tests,
 DE table, marker CSV/JSON, volcano plot, GeneAgent report MD/JSON,
 final hypothesis report MD/JSON).
@@ -676,7 +671,7 @@ changed.
 
 ### Goal
 
-User updated `case_study_2.md` to require AgentCo-Op to take the
+User updated `docs/experiments/case_study_2.md` to require AgentCo-Op to take the
 Seurat / Signac GitHub URLs, the SHARE-seq mouse skin RNA/ATAC GEO
 files, the cell-type label file, and CellMarker 2.0 mouse markers,
 then **autonomously sandbox both R tools, register them as agent
@@ -694,7 +689,7 @@ CellMarker 2.0**. Same constraints as Sessions 7 / 7.1 / 7.2:
 
 | Module | Role |
 |---|---|
-| `agentcoop/wrappers/seurat_local/{__init__, manifest, Dockerfile, adapter}` | Python local Seurat-equivalent: scanpy Wilcoxon RNA marker discovery from a comma-id dense TSV; mirrors the R wrapper in `case_study_2.md` §10. |
+| `agentcoop/wrappers/seurat_local/{__init__, manifest, Dockerfile, adapter}` | Python local Seurat-equivalent: scanpy Wilcoxon RNA marker discovery from a comma-id dense TSV; mirrors the R wrapper in `docs/experiments/case_study_2.md` §10. |
 | `agentcoop/wrappers/signac_local/{__init__, manifest, Dockerfile, adapter}` | Python local Signac-equivalent: scanpy Wilcoxon DA on MatrixMarket peak counts + lazy-fetched GENCODE vM25 mm10 nearest-gene mapping; mirrors §11. Also bundles a `data_cache/` dir for the auto-downloaded GTF + parsed gene-coord TSV. |
 | `agentcoop/wrappers/cellmarker_evaluator_local/{__init__, adapter}` | Python join-agent: parses `Cell_marker_Mouse.xlsx`, applies primary `Skin` + extended `Skin/Hair follicle/Epidermis/Dermis/Hair` filters, builds gold marker sets, computes per-cell-type set ops + precision / recall + collaboration_gain + heatmap + barplot; mirrors §13–§14. |
 | `case_study_2.request.yaml` | User-facing inaugural CS2 request fixture (loads with the same generic `agentcoop collaborate` CLI as CS1). |
@@ -725,7 +720,7 @@ CellMarker 2.0**. Same constraints as Sessions 7 / 7.1 / 7.2:
 | Total LLM tokens (integrator) | 5 679 (`gpt-5`, `reasoning_effort=medium`) |
 
 `runs/case2/shareseq_skin/` carries the full artifact tree per
-`case_study_2.md` §19 (run_manifest, compiled_workflow_graph,
+`docs/experiments/case_study_2.md` §19 (run_manifest, compiled_workflow_graph,
 agent_registry, env_manifest, broker.jsonl, repo profiles,
 Dockerfiles, smoke tests, full marker tables, peak-to-gene mapping,
 gold marker sets, label mapping, P/R per-celltype + summary,
@@ -746,7 +741,7 @@ report MD/JSON, collaboration_log, topology PNG/DOT, final_report).
   for any N-branch fan-out + evaluator pattern. Just register a
   local adapter per branch and one for the join_agent, then write a
   request YAML — no framework code edits needed.
-- The `case_study_2.md` Seurat/Signac specifics live entirely under
+- The `docs/experiments/case_study_2.md` Seurat/Signac specifics live entirely under
   `agentcoop/wrappers/{seurat,signac,cellmarker_evaluator}_local/`;
   none of the framework code names them.
 
@@ -805,9 +800,9 @@ the 9 declared Python packages auto-resolved by the EnvManager (all
 already present on this host; the install path is exercised when a
 package is missing).
 
-## Session 8 — `ablation.md` 2 × 2 factorial (2026-05-02 / 03)
+## Session 8 — `docs/experiments/ablation.md` 2 × 2 factorial (2026-05-02 / 03)
 
-User asked for the ablation declared in `ablation.md` — two factors
+User asked for the ablation declared in `docs/experiments/ablation.md` — two factors
 (skills+tools, gate repair) × two levels = four variants, run on the
 full AFlow splits of all six benchmarks. Hard constraint:
 **YAML configuration changes only — no edits to core code.**
@@ -1338,7 +1333,7 @@ Total wall: ~ 10 min. Total cost: ~ $0.27.
 
 ### Goal
 Switch CS2 from SHARE-seq mouse skin to GSE270788 human heart 10x
-multiome (sample MA7), per `case_study_2_human_heart.md`. Configure +
+multiome (sample MA7), per `docs/experiments/case_study_2_human_heart.md`. Configure +
 launch + execute end-to-end via live Docker. No backbone changes;
 only general-purpose code edits.
 

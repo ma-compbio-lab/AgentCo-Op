@@ -1,5 +1,5 @@
 # Case Study 3 — AFlow workflow import + dynamic gated refinement
-# See case_study.md §4.
+# See docs/experiments/case_study.md §4.
 
 case_study: case3_aflow_dynamic
 description: >
