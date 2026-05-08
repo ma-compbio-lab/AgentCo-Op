@@ -12,13 +12,12 @@ behaviour.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal, Optional
+from typing import Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -305,9 +304,10 @@ class SandboxBuilder:
     ) -> BuildResult:
         notes: list[str] = []
         df_path = self.write_dockerfile(spec, profile)
-        if dry_run or not _docker_available():
-            if not _docker_available():
-                notes.append("docker daemon not available; sandbox spec written for later build")
+        if not dry_run and not _docker_available():
+            notes.append("docker daemon not available; sandbox spec written for later build")
+            dry_run = True
+        if dry_run:
             return BuildResult(
                 spec=spec,
                 dockerfile_path=df_path,
