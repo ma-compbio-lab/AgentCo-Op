@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AgentCo-Op — Retrieval-Based Synthesis of Interoperable Multi-Agent
+      Workflows</title>
+    <meta name="description"
+      content="AgentCo-Op: a retrieval-based synthesis framework that composes reusable skills, tools, and external agents into executable multi-agent workflows through typed artifact handoffs and bounded evidence-guided local repair.">
+    <meta property="og:title"
+      content="AgentCo-Op — Retrieval-Based Synthesis of Interoperable Multi-Agent Workflows">
+    <meta property="og:description"
+      content="A synthesis-first framework for automatic multi-agent workflow design, with case studies on TissueAgent+GeneAgent, Seurat+Signac, and six standard benchmarks.">
+    <meta property="og:image" content="assets/paper/concept.png">
+    <meta property="og:type" content="website">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+
+    <!-- TOPBAR -->
+    <nav class="topbar">
+      <a class="logo" href="#">
+        <div class="logo-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="7" y1="6" x2="17" y2="6" />
+            <line x1="7" y1="6" x2="12" y2="13" />
+            <line x1="17" y1="6" x2="12" y2="13" />
+            <line x1="12" y1="13" x2="12" y2="18" />
+            <circle cx="7" cy="6" r="2.1" fill="#fff" stroke="none" />
+            <circle cx="17" cy="6" r="2.1" fill="#fff" stroke="none" />
+            <circle cx="12" cy="13" r="2.1" fill="#fff" stroke="none" />
+            <circle cx="12" cy="18.5" r="1.4" fill="#fff" stroke="none"
+              opacity="0.7" />
+          </svg>
+        </div>
+        <span class="logo-text">AgentCo-Op</span>
+      </a>
+      <div class="topbar-spacer"></div>
+      <div class="topbar-right">
+        <a class="topbar-link" href="assets/paper/paper.pdf" target="_blank"
+          rel="noopener">
+          <svg viewBox="0 0 24 24"><path
+              d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline
+              points="14 2 14 8 20 8" /></svg>
+          <span>Paper</span>
+        </a>
+        <a class="topbar-link" href="https://github.com/Eurekashen/AgentCo-Op"
+          target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path
+              d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
+          <span>Code</span>
+        </a>
+        <span class="badge-venue">NeurIPS 2026 · Preprint</span>
+      </div>
+    </nav>
+
+    <div class="page">
+      <div class="paper-wrap">
+
+        <!-- ── Hero ── -->
+        <div class="paper-hero">
+          <div class="paper-venue-badge">Carnegie Mellon University · Lane
+            Computational Biology</div>
+
+          <h1 class="paper-title">
+            <span class="method-name">AgentCo-Op</span>: Retrieval-Based
+            Synthesis of
+            Interoperable Multi-Agent Workflows
+          </h1>
+
+          <div class="paper-author-list">
+            <span>Shuaike Shen<sup>1,*</sup></span>
+            <span>Wenduo Cheng<sup>1,*</sup></span>
+            <span>Shike Wang<sup>1</sup></span>
+            <span>Mingqian Ma<sup>2</sup></span>
+            <span>Jian Ma<sup>1,&dagger;</sup></span>
+          </div>
+
+          <div class="paper-affil">
+            <span class="paper-affil-item">
+              <svg class="paper-affil-icon" viewBox="0 0 24 24"
+                stroke="currentColor"
+                fill="none" stroke-width="1.8"><path
+                  d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><polyline
+                  points="9 22 9 12 15 12 15 22" /></svg>
+              <sup>1</sup>Ray &amp; Stephanie Lane Computational Biology
+              Department,
+              School of Computer Science, Carnegie Mellon University
+            </span>
+            <span class="paper-affil-item">
+              <svg class="paper-affil-icon" viewBox="0 0 24 24"
+                stroke="currentColor"
+                fill="none" stroke-width="1.8"><path
+                  d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><polyline
+                  points="9 22 9 12 15 12 15 22" /></svg>
+              <sup>2</sup>Machine Learning Department, School of Computer
+              Science,
+              Carnegie Mellon University
+            </span>
+          </div>
+
+          <div class="paper-eq-note">
+            <sup>*</sup>Equal contribution &nbsp;·&nbsp;
+            <sup>&dagger;</sup>Correspondence:
+            <a href="mailto:jianma@cs.cmu.edu">jianma@cs.cmu.edu</a>
+          </div>
+
+          <!-- Action buttons -->
+          <div class="paper-btns">
+            <a class="paper-btn btn-primary" href="assets/paper/paper.pdf"
+              title="Paper PDF" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24"><path
+                  d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline
+                  points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12"
+                  y2="12" /><polyline
+                  points="9 15 12 18 15 15" /></svg>
+              Paper (PDF)
+            </a>
+            <a class="paper-btn btn-gh"
+              href="https://github.com/Eurekashen/AgentCo-Op"
+              target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path
+                  d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
+              Code
+            </a>
+            <a class="paper-btn" href="#citation" title="Citation">
+              <svg viewBox="0 0 24 24"><path
+                  d="M3 21v-4a4 4 0 014-4h4" /><path
+                  d="M21 21v-4a4 4 0 00-4-4h-4" /><path
+                  d="M7 7a3 3 0 100 6 3 3 0 000-6z" /><path
+                  d="M17 7a3 3 0 100 6 3 3 0 000-6z" /></svg>
+              BibTeX
+            </a>
+          </div>
+        </div>
+
+        <!-- ── Abstract ── -->
+        <section class="paper-section">
+          <h2 class="paper-section-title">Abstract</h2>
+          <div class="paper-abstract">
+            <p>
+              Designing multi-agent workflows is especially difficult in
+              open-ended
+              scientific settings where tasks lack curated training sets,
+              reliable
+              scalar evaluation metrics, and standardized interfaces between
+              existing tools and agents.
+            </p>
+            <p>
+              We propose <span class="method-name">AgentCo-Op</span>, a
+              retrieval-based synthesis framework that composes reusable skills,
+              tools, and external agents into executable workflows through typed
+              artifact handoffs, then applies bounded self-guided local repair
+              to
+              implicated components when execution evidence indicates failure.
+              In two open-world genomics case studies,
+              <span class="method-name">AgentCo-Op</span> composes independently
+              developed scientific agents and external tool repositories into
+              auditable workflows without redesigning them or running global
+              topology search.
+            </p>
+            <p>
+              It coordinates specialized agents for spatial transcriptomics and
+              gene-set interpretation to enable collaborative discovery from
+              spatial transcriptomics data, and builds a parallel workflow for
+              cross-modality marker analysis on single-cell multiome data.
+              <span class="method-name">AgentCo-Op</span> can also import a
+              searched workflow as a structural prior and improve it by
+              grounding
+              nodes with retrieved components and applying local repair, showing
+              that synthesis and search are complementary. On six coding, math,
+              and question-answering benchmarks,
+              <span class="method-name">AgentCo-Op</span> achieves the best
+              result
+              on four benchmarks and the best average score under a unified
+              backbone setting, while consistently reducing per-task cost
+              relative
+              to multi-agent baselines.
+            </p>
+          </div>
+        </section>
+
+        <!-- ── At a Glance ── -->
+        <section class="paper-section">
+          <h2 class="paper-section-title">At a Glance</h2>
+          <div class="paper-highlights">
+            <a class="paper-highlight" href="#benchmarks">
+              <span class="ph-num">4 / 6</span>
+              <span class="ph-lab">Best on benchmarks</span>
+            </a>
+            <a class="paper-highlight" href="#benchmarks">
+              <span class="ph-num">80.6%</span>
+              <span class="ph-lab">Best average (matched backbone)</span>
+            </a>
+            <a class="paper-highlight" href="#benchmarks">
+              <span class="ph-num">87.1%</span>
+              <span class="ph-lab">MBPP pass@1 (best)</span>
+            </a>
+            <a class="paper-highlight" href="#case1">
+              <span class="ph-num">3</span>
+              <span class="ph-lab">Open-world case studies</span>
+            </a>
+          </div>
+        </section>
+
+        <!-- ── Overview figure ── -->
+        <section class="paper-section">
+          <h2 class="paper-section-title">Framework Overview</h2>
+          <figure class="paper-figure-full">
+            <img src="assets/paper/concept.png"
+              alt="AgentCo-Op framework overview diagram" loading="lazy">
+            <figcaption>
+              <strong>Figure 1.</strong> Overview of AgentCo-Op. AgentCo-Op
+              synthesizes multi-agent workflows through five stages — Planning,
+              Retrieval, Synthesis, Execution, and Review. Given a typed task
+              specification <em>x = (g, c, r, &Omega;)</em>, the system
+              retrieves
+              relevant knowledge, skills, tools, repositories, and datasets, and
+              synthesizes an executable workflow graph <em>G = (V, E)</em>.
+              Synthesis includes initial graph construction, Dockerfile /
+              executor
+              wrapping, node grounding with skills and tools, and interface
+              alignment through standardized message and artifact schemas.
+              During execution, the reviewer monitors outputs, tests, tool
+              behavior, budget, and interfaces; when failures arise, AgentCo-Op
+              performs bounded local repair, producing a patched graph
+              <em>G' = (V', E')</em> and the final task output.
+            </figcaption>
+          </figure>
+        </section>
+
+        <!-- ── Method ── -->
+        <section class="paper-section">
+          <h2 class="paper-section-title">Method</h2>
+          <p
+            style="font-size:0.9rem;color:var(--ink-3);margin-bottom:16px;line-height:1.65">
+            AgentCo-Op reframes automated multi-agent workflow design as
+            <em>retrieval-based synthesis</em>: rather than searching over
+            candidate topologies against a scalar reward, it composes reusable
+            components into a task-specific workflow, coordinates them through
+            typed artifact handoffs, and repairs implicated components from
+            execution evidence. The pipeline runs in five stages.
+          </p>
+          <div class="paper-method">
+            <div class="paper-step">
+              <div class="paper-step-num">1</div>
+              <div class="paper-step-content">
+                <h4>Planning</h4>
+                <p>Parse the typed task specification <code>x = (g, c, r,
+                    Ω)</code>
+                  — goal, context, resources, and constraints — and formulate a
+                  retrieval plan that identifies the artifacts and roles needed
+                  to solve the task.</p>
+              </div>
+            </div>
+            <div class="paper-step">
+              <div class="paper-step-num">2</div>
+              <div class="paper-step-content">
+                <h4>Retrieval</h4>
+                <p>Retrieve task-relevant artifacts from curated libraries and
+                  user-provided repositories: related materials informing
+                  workflow topology, agent skills encoding procedural knowledge,
+                  tools exposing callable operations, and GitHub repository
+                  metadata.</p>
+              </div>
+            </div>
+            <div class="paper-step">
+              <div class="paper-step-num">3</div>
+              <div class="paper-step-content">
+                <h4>Synthesis</h4>
+                <p>Construct an executable workflow graph <code>G = (V,
+                    E)</code>:
+                  build the initial topology, wrap external repos/methods in
+                  Docker containers or executors, ground each node with
+                  retrieved
+                  skills and tools, and align inputs/outputs through
+                  standardized
+                  typed message and artifact schemas.</p>
+              </div>
+            </div>
+            <div class="paper-step">
+              <div class="paper-step-num">4</div>
+              <div class="paper-step-content">
+                <h4>Execution</h4>
+                <p>Run the synthesized workflow while a reviewer continuously
+                  monitors execution evidence — logs, intermediate outputs,
+                  validation signals, tool errors, interface checks, and cost
+                  signals.</p>
+              </div>
+            </div>
+            <div class="paper-step">
+              <div class="paper-step-num">5</div>
+              <div class="paper-step-content">
+                <h4>Review &amp; Bounded Local Repair</h4>
+                <p>On failure or uncertainty, consult a small set of repair
+                  policies and revise <em>only the implicated</em> nodes,
+                  attached skills/tools, or communication edges — producing a
+                  patched graph <code>G' = (V', E')</code> rather than
+                  restarting
+                  the entire synthesis pipeline.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── Experiments ── -->
+        <section class="paper-section">
+          <h2 class="paper-section-title">Experiments</h2>
+          <p
+            style="font-size:0.9rem;color:var(--ink-3);margin-bottom:24px;line-height:1.65">
+            We evaluate AgentCo-Op in two complementary regimes: three
+            open-world
+            scientific workflow composition tasks that motivate the
+            synthesis-first
+            design, and six standard QA, math, and code benchmarks under a
+            unified
+            matched-backbone setting (GPT-4o-mini).
+          </p>
+
+          <!-- Case Study 1: TissueAgent + GeneAgent -->
+          <div class="paper-exp-block" id="case1">
+            <h3 class="paper-exp-title">Case Study 1 · Coordinating Domain
+              Agents
+              (TissueAgent &times; GeneAgent)</h3>
+            <p class="paper-exp-desc">
+              On a developing human heart MERFISH dataset, AgentCo-Op is asked
+              whether <em>aFibro</em> cells in the AVN / AV-ring cellular
+              community exhibit a distinct transcriptional program relative to
+              aFibro cells in the left and right atria. From only a task
+              description and the GitHub URLs of
+              <strong>TissueAgent</strong> (spatial transcriptomics) and
+              <strong>GeneAgent</strong> (gene-set interpretation), AgentCo-Op
+              profiles both repositories, builds isolated Docker containers,
+              registers each as an external workflow node, and synthesizes a
+              broker-mediated handoff workflow. The synthesized pipeline
+              identifies 576 target aFibro cells against 5,685 controls,
+              recovers
+              <strong>53 upregulated markers</strong>, and the downstream
+              GeneAgent interprets them as an <em>AV-canal- and
+                node-associated fibroblast program</em> — concluding that AVN /
+              AV-ring aFibro cells represent a developmentally specialized,
+              ECM-rich, conduction-niche-associated state.
+            </p>
+            <figure class="paper-figure-full paper-figure-sm">
+              <img src="assets/paper/external-agent.png"
+                alt="AgentCo-Op orchestrates TissueAgent and GeneAgent through a broker-mediated typed handoff."
+                loading="lazy">
+              <figcaption>
+                <strong>Figure 2.</strong> AgentCo-Op orchestrates domain agents
+                for collaborative biological analysis. Given a developing human
+                heart MERFISH dataset and a task description, AgentCo-Op
+                profiles
+                repositories, builds containers, and coordinates a collaborative
+                workflow for TissueAgent and GeneAgent.
+              </figcaption>
+            </figure>
+          </div>
+
+          <!-- Case Study 2: Seurat + Signac -->
+          <div class="paper-exp-block" id="case2">
+            <h3 class="paper-exp-title">Case Study 2 · Composing Domain
+              Workflows
+              (Seurat &times; Signac)</h3>
+            <p class="paper-exp-desc">
+              On the 10x PBMC multiome dataset, AgentCo-Op composes
+              <strong>Seurat</strong> (scRNA-seq) and <strong>Signac</strong>
+              (scATAC-seq) into a parallel cross-modality marker-discovery
+              workflow with an explicit join step. Markers are evaluated against
+              <em>CellMarker 2.0</em> and <em>PanglaoDB</em>: the intersection
+              of
+              modalities yields jointly supported markers (evaluated for
+              precision), and the union captures all recovered markers
+              (evaluated
+              for recall). Combining the two modalities improves both
+              <strong>macro precision</strong> and <strong>recall</strong> over
+              either modality alone across both reference databases.
+            </p>
+            <figure class="paper-figure-full">
+              <img src="assets/paper/external-tool.png"
+                alt="AgentCo-Op composes Seurat and Signac into a parallel workflow with a typed join step."
+                loading="lazy">
+              <figcaption>
+                <strong>Figure 3.</strong> AgentCo-Op coordinates external tools
+                for cross-modal marker discovery. AgentCo-Op registers Seurat
+                and
+                Signac as tool nodes, runs parallel RNA / ATAC marker-discovery
+                branches, validates typed artifacts, evaluates marker support
+                against CellMarker 2.0 and PanglaoDB, and integrates the
+                evidence
+                into a final report.
+              </figcaption>
+            </figure>
+
+            <div class="paper-results-table-wrap">
+              <table class="paper-results-table">
+                <colgroup>
+                  <col><col><col><col>
+                  <col class="col-best">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th rowspan="2" class="setting">Database</th>
+                    <th rowspan="2">Metric</th>
+                    <th>RNA</th>
+                    <th>ATAC</th>
+                    <th class="th-best">Combined</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="row-base">
+                    <td class="setting" rowspan="2">CellMarker&nbsp;2.0</td>
+                    <td>Precision</td>
+                    <td>0.195</td><td>0.110</td>
+                    <td class="td-best">0.303</td>
+                  </tr>
+                  <tr class="row-base">
+                    <td>Recall</td>
+                    <td>0.102</td><td>0.061</td>
+                    <td class="td-best">0.124</td>
+                  </tr>
+                  <tr class="row-base">
+                    <td class="setting" rowspan="2">PanglaoDB</td>
+                    <td>Precision</td>
+                    <td>0.231</td><td>0.131</td>
+                    <td class="td-best">0.333</td>
+                  </tr>
+                  <tr class="row-base">
+                    <td>Recall</td>
+                    <td>0.097</td><td>0.054</td>
+                    <td class="td-best">0.117</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="paper-results-table-caption">
+              <strong>Table 1.</strong> Macro precision (on the intersection)
+              and
+              recall (on the union) of cross-modality marker integration on the
+              PBMC multiome dataset. The
+              <span class="best">Combined</span> column is the
+              cross-modality result.
+            </p>
+          </div>
+
+          <!-- Case Study 3: Reusing existing graphs -->
+          <div class="paper-exp-block" id="case3">
+            <h3 class="paper-exp-title">Case Study 3 · Reusing Existing Agent
+              Graphs (AFlow &rarr; AgentCo-Op)</h3>
+            <p class="paper-exp-desc">
+              AgentCo-Op imports the multi-agent graph produced by a trained
+              <strong>AFlow</strong> search on MBPP and treats it as a
+              structural
+              prior in &Omega;. AgentCo-Op then resynthesizes the agent graph,
+              grounds its nodes with retrieved skills and tools, and applies
+              bounded local repair during execution. The hybrid
+              <em>AFlow&nbsp;+&nbsp;AgentCo-Op</em> outperforms both AFlow alone
+              and AgentCo-Op built from scratch — showing that synthesis and
+              search are <strong>complementary</strong>.
+            </p>
+            <div class="paper-results-table-wrap">
+              <table class="paper-results-table">
+                <thead>
+                  <tr>
+                    <th class="setting">Strategy</th>
+                    <th>MBPP pass@1</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="row-base">
+                    <td class="setting">AFlow</td><td>78.2</td>
+                  </tr>
+                  <tr class="row-base">
+                    <td class="setting">AgentCo-Op (from
+                      scratch)</td><td>87.1</td>
+                  </tr>
+                  <tr class="row-ours">
+                    <td class="setting">AFlow + AgentCo-Op</td>
+                    <td class="best">87.5</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="paper-results-table-caption">
+              <strong>Table 2.</strong> MBPP performance of different agentic
+              workflow design strategies. Initializing AgentCo-Op from an
+              AFlow-searched graph improves performance compared with
+              initializing it from scratch.
+            </p>
+          </div>
+
+          <!-- Benchmarks -->
+          <div class="paper-exp-block" id="benchmarks">
+            <h3 class="paper-exp-title">Standard Benchmarks (Matched Backbone:
+              GPT-4o-mini)</h3>
+            <p class="paper-exp-desc">
+              Across six benchmarks spanning QA (HotpotQA, DROP), code
+              generation
+              (HumanEval, MBPP) and math reasoning (GSM8K, MATH), AgentCo-Op
+              achieves the <strong>best result on 4 / 6 benchmarks</strong> and
+              the <strong>best average score</strong> under matched-backbone
+              conditions — without any workflow search or training stage.
+              AFlow<sup>*</sup> denotes results reported in the original AFlow
+              paper (mixed backbones); AFlow (GPT-4o-mini) is our
+              matched-backbone
+              rerun.
+            </p>
+            <div class="paper-results-table-wrap">
+              <table class="paper-results-table">
+                <thead>
+                  <tr>
+                    <th rowspan="2" class="setting">Method</th>
+                    <th colspan="6" class="col-group">Benchmarks</th>
+                    <th rowspan="2">Avg.</th>
+                  </tr>
+                  <tr>
+                    <th>HotpotQA</th><th>DROP</th>
+                    <th>HumanEval</th><th>MBPP</th>
+                    <th>GSM8K</th><th>MATH</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="row-base"><td class="setting">IO (GPT-4o-mini)</td>
+                    <td>68.1</td><td>68.3</td><td>87.0</td><td>71.8</td>
+                    <td>92.7</td><td>48.6</td><td>72.8</td></tr>
+                  <tr class="row-base"><td class="setting">CoT</td>
+                    <td>67.9</td><td>78.5</td><td>88.6</td><td>71.8</td>
+                    <td>92.4</td><td>48.8</td><td>74.7</td></tr>
+                  <tr class="row-base"><td class="setting">CoT-SC (5-shot)</td>
+                    <td>68.9</td><td>78.8</td><td>91.6</td><td>73.6</td>
+                    <td>92.7</td><td>50.4</td><td>76.0</td></tr>
+                  <tr class="row-base"><td class="setting">MedPrompt</td>
+                    <td>68.3</td><td>78.0</td><td>91.6</td><td>73.6</td>
+                    <td>90.0</td><td>50.0</td><td>75.3</td></tr>
+                  <tr class="row-base"><td class="setting">MultiPersona</td>
+                    <td>69.2</td><td>74.4</td><td>89.3</td><td>73.6</td>
+                    <td>92.8</td><td>50.8</td><td>75.0</td></tr>
+                  <tr class="row-base"><td class="setting">Self-Refine</td>
+                    <td>60.8</td><td>70.2</td><td>87.8</td><td>69.8</td>
+                    <td>89.6</td><td>46.1</td><td>70.7</td></tr>
+                  <tr class="row-base"><td class="setting">ADAS</td>
+                    <td>64.5</td><td>76.6</td><td>82.4</td><td>53.4</td>
+                    <td>90.8</td><td>35.4</td><td>67.2</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">AFlow<sup>*</sup></td>
+                    <td>73.5</td><td>80.6</td><td
+                      class="best">94.7</td><td>83.4</td>
+                    <td>93.5</td><td>56.2</td><td>80.3</td></tr>
+                  <tr class="row-base"><td class="setting">LLM-Debate</td>
+                    <td>71.8</td><td>81.4</td><td>91.4</td><td>70.7</td>
+                    <td>92.4</td><td>50.0</td><td>76.3</td></tr>
+                  <tr class="row-base"><td class="setting">ReConcile</td>
+                    <td>73.8</td><td
+                      class="best">82.1</td><td>89.3</td><td>70.3</td>
+                    <td>93.7</td><td>44.1</td><td>75.6</td></tr>
+                  <tr class="row-base"><td class="setting">AFlow
+                      (GPT-4o-mini)</td>
+                    <td>71.4</td><td>68.9</td><td>89.3</td><td>78.2</td>
+                    <td>86.8</td><td>53.1</td><td>74.3</td></tr>
+                  <tr class="row-ours"><td class="setting">AgentCo-Op
+                      (GPT-4o-mini)</td>
+                    <td class="best">76.5</td><td>77.2</td><td>90.2</td>
+                    <td class="best">87.1</td><td class="best">94.4</td>
+                    <td class="best">58.2</td><td class="best">80.6</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="paper-results-table-caption">
+              <strong>Table 3.</strong> Performance across six benchmarks using
+              GPT-4o-mini as the backbone. <span class="best">Bold</span>
+              indicates the best score.
+            </p>
+          </div>
+
+          <!-- Cost analysis -->
+          <div class="paper-exp-block" id="cost">
+            <h3 class="paper-exp-title">Cost Analysis</h3>
+            <p class="paper-exp-desc">
+              AgentCo-Op is substantially more efficient than discussion-based
+              multi-agent baselines. It separates one-time workflow synthesis
+              from bounded instance-level repair, avoiding both the
+              training-time
+              search cost of AFlow and the per-instance round-trip cost of
+              LLM-Debate / ReConcile. Test-time cost is lower than ReConcile on
+              all six benchmarks and lower than LLM-Debate on five of six.
+            </p>
+            <div class="paper-results-table-wrap">
+              <table class="paper-results-table">
+                <thead>
+                  <tr>
+                    <th class="setting">Dataset</th>
+                    <th class="setting">Method</th>
+                    <th>Score</th>
+                    <th>Train Cost</th>
+                    <th>Test Cost</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="row-base"><td class="setting"
+                      rowspan="4">HotpotQA</td>
+                    <td class="setting">LLM-Debate</td><td>71.8</td><td>—</td>
+                    <td>$1.5200</td><td>$1.5200</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">ReConcile</td><td>73.8</td><td>—</td>
+                    <td>$3.7600</td><td>$3.7600</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">AFlow</td><td>20.0</td>
+                    <td>$4.6104</td><td>$1.3398</td><td>$5.9502</td></tr>
+                  <tr class="row-ours"><td class="setting">AgentCo-Op</td>
+                    <td
+                      class="best">76.5</td><td>—</td><td>$0.4284</td><td>$0.4284</td></tr>
+
+                  <tr class="row-base"><td class="setting" rowspan="4">DROP</td>
+                    <td class="setting">LLM-Debate</td><td>81.4</td><td>—</td>
+                    <td>$0.7200</td><td>$0.7200</td></tr>
+                  <tr class="row-base"><td class="setting">ReConcile</td>
+                    <td
+                      class="best">82.1</td><td>—</td><td>$1.6800</td><td>$1.6800</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">AFlow</td><td>68.9</td>
+                    <td>$1.6798</td><td>$0.3235</td><td>$2.0033</td></tr>
+                  <tr class="row-ours"><td class="setting">AgentCo-Op</td>
+                    <td>77.2</td><td>—</td><td>$0.3853</td><td>$0.3853</td></tr>
+
+                  <tr class="row-base"><td class="setting"
+                      rowspan="4">HumanEval</td>
+                    <td class="setting">LLM-Debate</td><td
+                      class="best">91.4</td>
+                    <td>—</td><td>$0.1572</td><td>$0.1572</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">ReConcile</td><td>89.3</td>
+                    <td>—</td><td>$0.4061</td><td>$0.4061</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">AFlow</td><td>89.3</td>
+                    <td>$0.2258</td><td>$0.0371</td><td>$0.2629</td></tr>
+                  <tr class="row-ours"><td class="setting">AgentCo-Op</td>
+                    <td>90.2</td><td>—</td><td>$0.1062</td><td>$0.1062</td></tr>
+
+                  <tr class="row-base"><td class="setting" rowspan="4">MBPP</td>
+                    <td class="setting">LLM-Debate</td><td>70.7</td><td>—</td>
+                    <td>$0.1705</td><td>$0.1705</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">ReConcile</td><td>70.3</td>
+                    <td>—</td><td>$0.7502</td><td>$0.7502</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">AFlow</td><td>72.4</td>
+                    <td>$0.3475</td><td>$0.1152</td><td>$0.4627</td></tr>
+                  <tr class="row-ours"><td class="setting">AgentCo-Op</td>
+                    <td
+                      class="best">87.1</td><td>—</td><td>$0.1791</td><td>$0.1791</td></tr>
+
+                  <tr class="row-base"><td class="setting"
+                      rowspan="4">GSM8K</td>
+                    <td class="setting">LLM-Debate</td><td>92.4</td><td>—</td>
+                    <td>$1.6880</td><td>$1.6880</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">ReConcile</td><td>93.7</td>
+                    <td>—</td><td>$1.8990</td><td>$1.8990</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">AFlow</td><td>86.8</td>
+                    <td>$0.0469</td><td>$0.2000</td><td>$0.2469</td></tr>
+                  <tr class="row-ours"><td class="setting">AgentCo-Op</td>
+                    <td
+                      class="best">94.4</td><td>—</td><td>$0.2537</td><td>$0.2537</td></tr>
+
+                  <tr class="row-base"><td class="setting" rowspan="4">MATH</td>
+                    <td class="setting">LLM-Debate</td><td>50.0</td><td>—</td>
+                    <td>$1.7982</td><td>$1.7982</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">ReConcile</td><td>44.1</td>
+                    <td>—</td><td>$1.6038</td><td>$1.6038</td></tr>
+                  <tr class="row-base"><td
+                      class="setting">AFlow</td><td>53.1</td>
+                    <td>$0.0781</td><td>$0.2691</td><td>$0.3472</td></tr>
+                  <tr class="row-ours"><td class="setting">AgentCo-Op</td>
+                    <td
+                      class="best">58.2</td><td>—</td><td>$0.3670</td><td>$0.3670</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="paper-results-table-caption">
+              <strong>Table 4.</strong> Per-dataset performance and aggregate
+              cost. A dash in <em>Train Cost</em> indicates that the method
+              requires no workflow search or training stage.
+              <span class="best">Bold</span> = best score per dataset.
+            </p>
+          </div>
+        </section>
+
+        <!-- ── Citation ── -->
+        <section class="paper-section" id="citation">
+          <h2 class="paper-section-title">Citation</h2>
+          <div class="paper-citation">
+            <div class="paper-citation-head">
+              <span>BibTeX · Preprint</span>
+              <button class="paper-citation-copy" id="copy-bibtex"
+                type="button">
+                <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13"
+                    height="13"
+                    rx="2" ry="2" /><path
+                    d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                <span id="copy-bibtex-label">Copy</span>
+              </button>
+            </div>
+            <pre id="bibtex-block">@misc{shen2026agentcoop,
+  <span class="tok-key">title</span>={<span class="tok-str">AgentCo-Op: Retrieval-Based Synthesis of Interoperable Multi-Agent Workflows</span>},
+  <span class="tok-key">author</span>={<span class="tok-str">Shen, Shuaike and Cheng, Wenduo and Wang, Shike and Ma, Mingqian and Ma, Jian</span>},
+  <span class="tok-key">year</span>={<span class="tok-str">2026</span>},
+  <span class="tok-key">eprint</span>={<span class="tok-str">arXiv:TBD</span>},
+  <span class="tok-key">note</span>={<span class="tok-str">Preprint. Under review at NeurIPS 2026.</span>},
+  <span class="tok-key">url</span>={<span class="tok-str">https://github.com/Eurekashen/AgentCo-Op</span>}
+}</pre>
+          </div>
+        </section>
+
+        <footer class="paper-footer">
+          <p>
+            &copy; 2026 The AgentCo-Op authors ·
+            <a href="https://www.cs.cmu.edu/~jianma/" target="_blank"
+              rel="noopener">Ma Lab</a> ·
+            <a href="https://github.com/Eurekashen/AgentCo-Op" target="_blank"
+              rel="noopener">GitHub</a>
+          </p>
+        </footer>
+
+      </div>
+    </div>
+
+    <script>
+(function () {
+  const btn = document.getElementById('copy-bibtex');
+  const lbl = document.getElementById('copy-bibtex-label');
+  const pre = document.getElementById('bibtex-block');
+  if (!btn || !pre) return;
+  btn.addEventListener('click', () => {
+    const text = pre.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      const prev = lbl.textContent;
+      lbl.textContent = 'Copied!';
+      setTimeout(() => { lbl.textContent = prev; }, 1600);
+    }).catch(() => {
+      lbl.textContent = 'Press Ctrl+C';
+      setTimeout(() => { lbl.textContent = 'Copy'; }, 2000);
+    });
+  });
+})();
+</script>
+
+  </body>
+</html>

@@ -37,3 +37,5 @@ data/*
 external/
 .secrets/
 docs/agents/
+# Local-only paper source archive (web copy lives at assets/paper/paper.pdf).
+pdf/
