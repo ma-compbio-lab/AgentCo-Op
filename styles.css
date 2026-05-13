@@ -470,46 +470,6 @@ button, input, select { font: inherit; }
   line-height: 1.5; text-align: center;
 }
 
-/* Citation block */
-.paper-citation {
-  position: relative;
-  padding: 0;
-  background: #0f1424;
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-  border: 1px solid #1f2540;
-}
-.paper-citation-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid #1f2540;
-  background: #131830;
-}
-.paper-citation-head span {
-  font-family: var(--mono); font-size: 0.74rem;
-  color: #8a8fae; letter-spacing: 0.08em; text-transform: uppercase;
-}
-.paper-citation-copy {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 10px; border-radius: var(--r-sm);
-  font-family: var(--sans); font-size: 0.76rem; font-weight: 500;
-  background: transparent; color: #b9bdde;
-  border: 1px solid #2a3057; cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.paper-citation-copy:hover { background: #1a2046; color: #fff; border-color: #3b6cef; }
-.paper-citation-copy svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
-.paper-citation pre {
-  margin: 0; padding: 16px 18px;
-  font-family: var(--mono); font-size: 0.8rem;
-  color: #d3d6f0; line-height: 1.65;
-  white-space: pre; overflow-x: auto;
-}
-.paper-citation .tok-key { color: #f1c46a; }
-.paper-citation .tok-str { color: #a8e6cf; }
-.paper-citation .tok-cite { color: #8ab4ff; }
-
 /* Footer */
 .paper-footer {
   margin-top: 56px;
