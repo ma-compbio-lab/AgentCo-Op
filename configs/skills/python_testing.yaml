@@ -14,3 +14,4 @@ output_contract:
 cost_class: low
 risk_level: low
 applicable_tags: [code, humaneval, mbpp, tests]
+tools: [sandbox_python, generated_tests]

@@ -720,13 +720,32 @@ The importer should convert AFlow operators into AgentCo-Op node manifests:
 
 2. **Skill/tool augmentation API**
 
-```bash
-agentcoop augment-graph \
-  --graph configs/imported_graphs/humaneval_aflow.json \
-  --skills configs/skills/code_debugging.yaml configs/skills/python_testing.yaml \
-  --tools sandbox_python static_analyzer generated_tests \
-  --out configs/imported_graphs/humaneval_aflow_augmented.json
+Skills and tools are derived dynamically by the framework from the task
+profile — driver scripts and case-study configs never name them. The
+canonical entry point is
+`agentcoop.core.augment_graph.select_skills_and_tools_for_profile`,
+which scores agent skills loaded by `SkillRegistry` against the
+profile's `domain` and returns their declared tools:
+
+```python
+from agentcoop.core.augment_graph import (
+    attach_skills_and_tools,
+    select_skills_and_tools_for_profile,
+)
+from agentcoop.core.profiler import profile_task
+from agentcoop.skills import SkillRegistry
+
+registry = SkillRegistry().load_dir("agentcoop/skills").load_dir("configs/skills")
+profile  = profile_task(prompt, dataset="humaneval").profile
+skills, tools = select_skills_and_tools_for_profile(profile, registry)
+attach_skills_and_tools(blueprint, skills=skills, tools=tools)
 ```
+
+The low-level `agentcoop augment-graph` CLI still accepts `--skills` /
+`--tools` for manual experiments, but production paths route through
+the helper above so the "which skills" decision lives in the skill
+cards' `applicable_tags` and `tools:` fields, not in any benchmark
+config.
 
 3. **Local topology mutation API**
 
@@ -926,14 +945,28 @@ agentcoop run-benchmark \
   --out runs/case3/humaneval/aflow_imported
 ```
 
-3. Attach skills and tools.
+3. Attach skills and tools — derived from the registry, not from a
+   hand-curated list.
 
-```bash
-agentcoop augment-graph \
-  --graph configs/imported_graphs/humaneval_aflow.json \
-  --skills configs/skills/code_debugging.yaml configs/skills/python_testing.yaml \
-  --tools sandbox_python generated_tests static_analyzer \
-  --out configs/imported_graphs/humaneval_aflow_skills.json
+```python
+from agentcoop.core.augment_graph import (
+    attach_skills_and_tools,
+    select_skills_and_tools_for_profile,
+)
+from agentcoop.core.profiler import profile_task
+from agentcoop.core.schema import WorkflowBlueprint
+from agentcoop.skills import SkillRegistry
+
+bp = WorkflowBlueprint.model_validate_json(
+    open("configs/imported_graphs/humaneval_aflow.json").read()
+)
+registry = SkillRegistry().load_dir("agentcoop/skills").load_dir("configs/skills")
+profile  = profile_task(prompt, dataset="humaneval").profile
+skills, tools = select_skills_and_tools_for_profile(profile, registry)
+attach_skills_and_tools(bp, skills=skills, tools=tools)
+open("configs/imported_graphs/humaneval_aflow_skills.json", "w").write(
+    bp.model_dump_json(indent=2)
+)
 ```
 
 4. Enable gates.

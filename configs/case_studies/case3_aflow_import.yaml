@@ -1,5 +1,14 @@
 # Case Study 3 — AFlow workflow import + dynamic gated refinement
 # See docs/experiments/case_study.md §4.
+#
+# Skill / tool selection is intentionally **not** declared here. At run
+# time, `scripts/case3_aflow_dynamic.py` builds the framework's
+# SkillRegistry from `agentcoop/skills/` + `configs/skills/`, profiles
+# the task with `agentcoop.core.profiler.profile_task`, and calls
+# `agentcoop.core.augment_graph.select_skills_and_tools_for_profile` to
+# choose skills and tools by tag overlap with the task profile. The
+# "which skills" logic therefore lives in the skill cards themselves
+# (their `applicable_tags` and `tools:` fields), not in this YAML.
 
 case_study: case3_aflow_dynamic
 description: >
@@ -13,32 +22,14 @@ benchmarks:
     # When a specific workflow is pinned, use:
     #   workflow_file: external/AFlow/workspace/HumanEval/workflows/round_1/graph.py
     gates_file: configs/gates/code_runtime_gates.yaml
-    skills_files:
-      - configs/skills/code_debugging.yaml
-      - configs/skills/python_testing.yaml
-    tools:
-      - sandbox_python
-      - generated_tests
-      - static_analyzer
     benchmark_config: configs/benchmarks/humaneval.yaml
   mbpp:
     imported_graph_source: external/AFlow/workspace/MBPP
     gates_file: configs/gates/code_runtime_gates.yaml
-    skills_files:
-      - configs/skills/code_debugging.yaml
-      - configs/skills/python_testing.yaml
-    tools:
-      - sandbox_python
-      - generated_tests
     benchmark_config: configs/benchmarks/mbpp.yaml
   math:
     imported_graph_source: external/AFlow/workspace/MATH
     gates_file: configs/gates/math_gates.yaml
-    skills_files:
-      - configs/skills/math_skills.yaml
-    tools:
-      - sympy_checker
-      - numeric_checker
     benchmark_config: configs/benchmarks/math.yaml
 
 variants:

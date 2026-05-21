@@ -18,3 +18,4 @@ output_contract:
 cost_class: medium
 risk_level: low
 applicable_tags: [code, humaneval, mbpp, debug, repair]
+tools: [sandbox_python, static_analyzer]

@@ -12,7 +12,7 @@ from typing import Iterable
 
 import yaml
 
-from agentcoop.core.schema import GatePolicy, NodeSpec, WorkflowBlueprint
+from agentcoop.core.schema import GatePolicy, NodeSpec, TaskProfile, WorkflowBlueprint
 from agentcoop.skills.registry import SkillRegistry
 
 
@@ -90,4 +90,44 @@ def apply_gates(blueprint: WorkflowBlueprint, gates: Iterable[GatePolicy]) -> Wo
     return blueprint
 
 
-__all__ = ["attach_skills_and_tools", "load_gate_yaml", "apply_gates"]
+def select_skills_and_tools_for_profile(
+    profile: TaskProfile,
+    registry: SkillRegistry,
+    *,
+    top_k: int = 12,
+) -> tuple[list[str], list[str]]:
+    """Derive (skill_names, tool_names) for `profile` from the registry.
+
+    The selection is entirely tag-driven: an agent skill is included
+    when its `applicable_tags ∪ capabilities` intersects the profile's
+    `domain`, and tools come from each chosen skill's own `tools:`
+    declaration (read from the skill card's extra fields).
+
+    This is the framework-level alternative to passing literal skill /
+    tool names from a benchmark config or driver script.
+    """
+    domain = {str(d).lower() for d in profile.domain or []}
+    skills: list[str] = []
+    tools: list[str] = []
+    for skill in registry.search_agents(profile, top_k=top_k):
+        tags = {str(t).lower() for t in (skill.applicable_tags or [])} | {
+            str(c).lower() for c in (skill.capabilities or [])
+        }
+        if not (tags & domain):
+            continue
+        if skill.name not in skills:
+            skills.append(skill.name)
+        extra = getattr(skill, "model_extra", None) or {}
+        for t in extra.get("tools", []) or []:
+            t = str(t)
+            if t and t not in tools:
+                tools.append(t)
+    return skills, tools
+
+
+__all__ = [
+    "attach_skills_and_tools",
+    "load_gate_yaml",
+    "apply_gates",
+    "select_skills_and_tools_for_profile",
+]

@@ -14,7 +14,14 @@ from agentcoop.core.aflow_import import (
     import_aflow_workflow,
     parse_aflow_workflow,
 )
-from agentcoop.core.augment_graph import attach_skills_and_tools, load_gate_yaml, apply_gates
+from agentcoop.core.augment_graph import (
+    apply_gates,
+    attach_skills_and_tools,
+    load_gate_yaml,
+    select_skills_and_tools_for_profile,
+)
+from agentcoop.core.profiler import profile_task
+from agentcoop.skills import SkillRegistry
 
 
 def _aflow_mbpp_graph() -> Path:
@@ -74,3 +81,38 @@ def test_load_gate_yaml_and_apply(tmp_path: Path) -> None:
     bp = call_sequence_to_blueprint(calls, dataset="mbpp", source_path="-")
     apply_gates(bp, gates)
     assert any(g.name == "public_or_generated_test_failure" for g in bp.gate_policies)
+
+
+def _registry_with_configs() -> SkillRegistry:
+    reg = SkillRegistry().load_dir(REPO_ROOT / "agentcoop" / "skills")
+    reg.load_dir(REPO_ROOT / "configs" / "skills")
+    return reg
+
+
+def test_select_skills_and_tools_for_mbpp_profile() -> None:
+    """MBPP profile must dynamically pull the code skills + sandbox tools."""
+    reg = _registry_with_configs()
+    profile = profile_task("Write a Python function.", dataset="mbpp").profile
+    skills, tools = select_skills_and_tools_for_profile(profile, reg)
+    assert "code_debugging" in skills
+    assert "python_testing" in skills
+    assert "sandbox_python" in tools
+    assert "generated_tests" in tools
+
+
+def test_select_skills_and_tools_for_math_profile() -> None:
+    """MATH profile must pull the math-family skills + symbolic tools."""
+    reg = _registry_with_configs()
+    profile = profile_task("Solve the equation x^2 = 4.", dataset="math").profile
+    skills, tools = select_skills_and_tools_for_profile(profile, reg)
+    assert any(s in skills for s in ("algebraic_simplification", "math_algebra_solver"))
+    assert "sympy_checker" in tools
+
+
+def test_select_skills_skips_unrelated_domains() -> None:
+    """A code profile must NOT pick up math-only skills."""
+    reg = _registry_with_configs()
+    profile = profile_task("Write a Python function.", dataset="mbpp").profile
+    skills, _ = select_skills_and_tools_for_profile(profile, reg)
+    assert "algebraic_simplification" not in skills
+    assert "number_theory" not in skills

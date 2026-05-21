@@ -39,10 +39,13 @@ from agentcoop.core.augment_graph import (  # noqa: E402
     apply_gates,
     attach_skills_and_tools,
     load_gate_yaml,
+    select_skills_and_tools_for_profile,
 )
 from agentcoop.core.aflow_import import import_aflow_workflow  # noqa: E402
+from agentcoop.core.profiler import profile_task  # noqa: E402
 from agentcoop.core.runtime import RuntimeConfig, run_blueprint  # noqa: E402
 from agentcoop.core.schema import EdgeSpec, NodeSpec, WorkflowBlueprint  # noqa: E402
+from agentcoop.skills import SkillRegistry  # noqa: E402
 
 
 def _ensure_formatter_sink(bp: WorkflowBlueprint) -> WorkflowBlueprint:
@@ -65,7 +68,51 @@ def _ensure_formatter_sink(bp: WorkflowBlueprint) -> WorkflowBlueprint:
     return bp
 
 
-def _make_variants(repo_root: Path, dataset: str, round_num: int = 1) -> dict[str, WorkflowBlueprint]:
+def _build_registry(repo_root: Path) -> SkillRegistry:
+    """Load every skill card the framework knows about.
+
+    Roots:
+      * `agentcoop/skills/` — the framework's canonical meta + agent
+        skill cards.
+      * `configs/skills/`   — additional agent-skill cards published
+        alongside the experiment configs.
+    The two are merged so dynamic selection sees the full catalogue
+    rather than only one tree.
+    """
+    registry = SkillRegistry().load_dir(repo_root / "agentcoop" / "skills")
+    extra = repo_root / "configs" / "skills"
+    if extra.is_dir():
+        registry.load_dir(extra)
+    return registry
+
+
+def _derive_skills_and_tools(
+    repo_root: Path, dataset: str, tasks
+) -> tuple[list[str], list[str]]:
+    """Ask the framework which skills/tools fit `dataset` (no hardcoding).
+
+    Profiles the first task of the dataset to obtain a `TaskProfile`,
+    then lets `select_skills_and_tools_for_profile` choose by tag
+    overlap. Falls back to a bare profile (`dataset=` override only) if
+    `tasks` is empty.
+    """
+    registry = _build_registry(repo_root)
+    probe = tasks[0] if tasks else None
+    profile = profile_task(
+        getattr(probe, "prompt", "") or "",
+        task_id=getattr(probe, "task_id", None),
+        dataset=dataset,
+    ).profile
+    return select_skills_and_tools_for_profile(profile, registry)
+
+
+def _make_variants(
+    repo_root: Path,
+    dataset: str,
+    round_num: int = 1,
+    *,
+    tasks=None,
+) -> dict[str, WorkflowBlueprint]:
     aflow_workflow = (
         repo_root / "external" / "AFlow" / "workspace" / dataset.upper() /
         "workflows" / f"round_{round_num}" / "graph.py"
@@ -73,12 +120,10 @@ def _make_variants(repo_root: Path, dataset: str, round_num: int = 1) -> dict[st
     imported = import_aflow_workflow(aflow_workflow, dataset=dataset)
     imported = _ensure_formatter_sink(imported)
 
+    skills, tools = _derive_skills_and_tools(repo_root, dataset, tasks or [])
+
     skills_tools = copy.deepcopy(imported)
-    attach_skills_and_tools(
-        skills_tools,
-        skills=["code_debugging", "python_testing"],
-        tools=["sandbox_python", "generated_tests", "static_analyzer"],
-    )
+    attach_skills_and_tools(skills_tools, skills=skills, tools=tools)
 
     skills_tools_gates = copy.deepcopy(skills_tools)
     gate_yaml = repo_root / "configs" / "gates" / "code_runtime_gates.yaml"
@@ -337,7 +382,7 @@ async def amain(
 ) -> dict:
     repo_root = Path(__file__).resolve().parent.parent
     tasks = load_dataset(dataset, split="test", limit=limit, aflow=True)
-    variants = _make_variants(repo_root, dataset, round_num=aflow_round)
+    variants = _make_variants(repo_root, dataset, round_num=aflow_round, tasks=tasks)
     variants = _add_canonical(repo_root, dataset, variants)
     if keep_variants:
         wanted = set(keep_variants)

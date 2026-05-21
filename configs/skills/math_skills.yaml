@@ -4,21 +4,25 @@ skills:
     backend_type: llm
     capabilities: [counting, probability, inclusion_exclusion]
     applicable_tags: [math, combinatorics, probability]
+    tools: [sympy_checker, numeric_checker]
   - name: number_theory
     kind: agent_skill
     backend_type: llm
     capabilities: [modular_arithmetic, divisibility, primes, diophantine]
     applicable_tags: [math, number_theory]
+    tools: [sympy_checker, numeric_checker]
   - name: algebraic_simplification
     kind: agent_skill
     backend_type: llm
     capabilities: [equations, inequalities, transformations]
     applicable_tags: [math, algebra, pre_algebra]
+    tools: [sympy_checker, numeric_checker]
   - name: pre_calculus
     kind: agent_skill
     backend_type: llm
     capabilities: [functions, trigonometry, limits, sequences]
     applicable_tags: [math, pre_calculus]
+    tools: [sympy_checker, numeric_checker]
   - name: answer_normalization
     kind: agent_skill
     backend_type: llm

@@ -84,6 +84,32 @@ def load_agent_skill(path: Path) -> AgentSkill:
     return AgentSkill.model_validate(data)
 
 
+def load_agent_skills(path: Path) -> list[AgentSkill]:
+    """Load one or more `AgentSkill`s from a YAML file.
+
+    Accepts two layouts so a single file can declare a family of related
+    skills (e.g. `configs/skills/math_skills.yaml`) without forcing a
+    one-file-per-skill split:
+
+      single:  {name: ..., kind: agent_skill, ...}
+      bundle:  {skills: [{name: ..., ...}, {name: ..., ...}]}
+    """
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: agent skill file must be a YAML mapping")
+    items = data.get("skills") if "skills" in data and "name" not in data else [data]
+    if not isinstance(items, list):
+        raise ValueError(f"{path}: 'skills' must be a list")
+    skills: list[AgentSkill] = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            raise ValueError(f"{path}: each skill entry must be a mapping")
+        entry = dict(entry)
+        entry.setdefault("source_path", str(path))
+        skills.append(AgentSkill.model_validate(entry))
+    return skills
+
+
 class SkillRegistry:
     def __init__(self) -> None:
         self.meta: dict[str, MetaSkill] = {}
@@ -92,17 +118,33 @@ class SkillRegistry:
     # -- loading --------------------------------------------------------------
 
     def load_dir(self, root: str | Path) -> "SkillRegistry":
+        """Load skill cards from a directory tree.
+
+        Two layouts are recognized:
+          * `root/meta/*.md` + `root/agents/*.yaml` — the canonical
+            framework layout (used by `agentcoop/skills/`).
+          * `root/*.yaml` — a flat directory of agent-skill cards
+            (used by `configs/skills/`). Both single-skill and
+            `{skills: [...]}` bundle layouts are accepted.
+        """
         root = Path(root)
         meta_dir = root / "meta"
         agents_dir = root / "agents"
+        loaded_structured = False
         if meta_dir.is_dir():
+            loaded_structured = True
             for p in sorted(meta_dir.glob("*.md")):
                 skill = load_meta_skill(p)
                 self.meta[skill.name] = skill
         if agents_dir.is_dir():
+            loaded_structured = True
             for p in sorted(agents_dir.glob("*.yaml")):
-                skill = load_agent_skill(p)
-                self.agents[skill.name] = skill
+                for skill in load_agent_skills(p):
+                    self.agents[skill.name] = skill
+        if not loaded_structured and root.is_dir():
+            for p in sorted(root.glob("*.yaml")):
+                for skill in load_agent_skills(p):
+                    self.agents[skill.name] = skill
         return self
 
     # -- retrieval ------------------------------------------------------------
@@ -189,5 +231,6 @@ __all__ = [
     "SkillRegistry",
     "load_meta_skill",
     "load_agent_skill",
+    "load_agent_skills",
     "parse_skill_markdown",
 ]
