@@ -10,30 +10,14 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
+# Run outputs. Nothing under here is a deliverable; `agentcoop run --out` and
+# `agentcoop bench run --out` write self-contained JSON that can be regenerated.
 runs/
-!runs/.gitkeep
-# Per-case-study writeups + summaries are part of the deliverable.
-!runs/case1/
-!runs/case2/
-!runs/case3/
-runs/case*/**
-!runs/case*/**/
-!runs/case*/**/README.md
-!runs/case*/**/summary.json
-!runs/case*/**/SESSION_*_NOTES.md
-# Ablation deliverable — README narrative + the four §6 tables.
-!runs/ablations/
-!runs/ablations/README.md
-!runs/ablations/*.csv
-!runs/ablations/summary.json
-# Wrapper data caches are lazy-fetched on first run; keep out of VCS.
-agentcoop/wrappers/*/data_cache/
+# Raw datasets, kept on disk but never in VCS.
 data/*
 !data/.gitkeep
-# Keep the dataset manifest for reproducibility even though the raw data is ignored.
 !data/data_hashes.json
 !data/README.md
-# External repos (cloned for reference / image builds; commit SHAs pinned in configs/external_commits.yaml)
+# External repositories, cloned for reference.
 external/
 .secrets/
-docs/agents/

@@ -87,13 +87,13 @@ single component suffices, composing is a measurable mistake, and the benchmark 
 ```bash
 git clone https://github.com/ma-compbio-lab/AgentCo-Op.git
 cd AgentCo-Op
-pip install -e .[dev]                  # core + pytest
-pip install -e .[dev,bench,repo]       # + datasets/pandas + docker/gitpython
+pip install -e .[dev]                  # everything, plus pytest
 ```
 
 Requires Python ≥ 3.11. **Every core mechanism runs offline with no API key.** The compiler,
 diagnoser, and repairer are deterministic; LLM components are one adapter among several, never a
-dependency of the method.
+dependency of the method. The dependency list is four packages and includes no numerical or ML
+stack — that is a property of the design, not an omission.
 
 ## Quick start
 
@@ -200,10 +200,17 @@ pytest -k "silent or regime"
 ## Relationship to the published version
 
 The version of AgentCo-Op described in the paper below — task profiling, skill retrieval, gate-based
-local repair, and the external-repo `collaborate` pipeline — is preserved unchanged under
-[`legacy/`](legacy/), because it is the reproducibility record for the numbers already reported. The
-benchmark table on the [project page](https://ma-compbio-lab.github.io/AgentCo-Op#benchmarks) and
-the two genomics case studies were produced by that code, not by this one.
+local repair, and the external-repo `collaborate` pipeline — is a different system from this one.
+The benchmark table on the [project page](https://ma-compbio-lab.github.io/AgentCo-Op#benchmarks)
+and the two genomics case studies were produced by that code, and none of those results carry over.
+
+That code is no longer in the working tree. It remains in git history at commit `94c3750` on this
+branch, which is the reproducibility record for the published numbers:
+
+```bash
+git show 94c3750:README.md          # the v1 README
+git checkout 94c3750 -- agentcoop   # restore v1 into the working tree
+```
 
 ## Citation
 

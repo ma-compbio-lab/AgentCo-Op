@@ -5,13 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 Research artifact for the AgentCo-Op paper. The `revision` branch is a **ground-up rebuild** (v2)
-of the method. The published version (v1) is preserved untouched under [legacy/](legacy/) because
-it is the reproducibility record for numbers already in the paper — do not "fix" anything in there,
-and do not import from it.
+of the method, and the working tree contains v2 only.
 
 v2 is a compiler for heterogeneous agent workflows built on one rule: **every structural decision
 must rest on evidence produced by execution, never asserted by a model.** Most of the surprising
 code in this repo exists to enforce that rule against the easier alternative.
+
+The published version (v1) — task profiling, skill retrieval, gate-based repair, the external-repo
+`collaborate` pipeline, its configs/scripts/workflows, and every experiment output — was deleted
+from the tree. It survives in git history at `94c3750`, which is the reproducibility record for the
+numbers already in the paper. None of those results carry over to v2; do not cite them as v2
+results, and do not restore v1 code into `agentcoop/`.
 
 ## Commands
 
@@ -120,8 +124,9 @@ the mechanism that answers it. Read those before making a design change.
   are even feasible.
 - Node ids are `<subgoal_id>__<component>`; artifact ids are `<producer>::<type>::<hash>`. Several
   tests and the blame matcher depend on those shapes.
-- `data/`, `runs/`, `external/`, and `docs/agents/` are gitignored. `docs/agents/*.request.yaml` are
-  referenced by the legacy docs but exist only in a local working copy.
+- `data/` (~15 GB of genomics data) and `external/` (cloned reference repos) are gitignored and kept
+  on disk from the v1 era. Nothing in v2 reads them; they are retained only in case a real
+  biological benchmark is built later. `runs/` is gitignored output.
 - `Compiler.compile` refuses a dossier with specification defects unless `allow_defects=True`. An
   empty result from a compile is often this, not a regression — check `result.dossier_defects` first.
 - Node failures inside the engine are captured as failed `NodeResult`s rather than raised.

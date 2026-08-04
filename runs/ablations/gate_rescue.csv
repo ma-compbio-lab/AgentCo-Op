@@ -1,7 +1,0 @@
-dataset,gate_trigger_count,rescue_count,harm_count,rescue_rate,harm_rate,avg_cost_added_usd,n_common_tasks
-hotpotqa,0,14,14,,,1e-06,800
-drop,13,18,23,1.3846,1.7692,1e-06,800
-humaneval,0,4,1,,,6e-06,132
-mbpp,0,2,1,,,-2e-06,342
-gsm8k,0,20,7,,,-1e-06,1056
-math,0,37,31,,,-2e-05,477
