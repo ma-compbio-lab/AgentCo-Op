@@ -31,6 +31,7 @@ from agentcoop.components.base import (
     behavior_of,
     error_line,
 )
+from agentcoop.ir.artifacts import Artifact
 from agentcoop.ir.capability import BehaviorContract, CostProfile
 from agentcoop.ir.dossier import TaskEvidenceDossier
 from agentcoop.ir.faults import FaultClass
@@ -184,68 +185,60 @@ class FaultyAdapter:
             art = outputs.get(type_name)
             if art is None:
                 continue
-            facets = {**art.facets, facet: value}
-            # Re-finalize: the content hash covers facets, so a corrupted
-            # artifact must not keep the clean one's identity.
-            corrupted = art.model_copy(
-                update={"facets": facets, "content_hash": ""}
-            ).finalize()
-            corrupted.artifact_id = (
-                f"{corrupted.producer}::{type_name}::{corrupted.content_hash}"
-            )
-            outputs[type_name] = corrupted
+            outputs[type_name] = _remint(art, facets={**art.facets, facet: value})
             if type_name in observed:
                 observed[type_name][facet] = value
         return result.model_copy(update={"outputs": outputs, "observed_facets": observed})
 
     def _empty(self, result: InvocationResult) -> InvocationResult:
-        outputs = {}
-        for type_name, art in result.outputs.items():
-            emptied = art.model_copy(
-                update={"payload": _empty_like(art.payload), "content_hash": ""}
-            ).finalize()
-            emptied.artifact_id = (
-                f"{emptied.producer}::{type_name}::{emptied.content_hash}"
-            )
-            outputs[type_name] = emptied
-        return result.model_copy(update={"outputs": outputs})
+        return self._rewrite(result, lambda art: _empty_like(art.payload))
 
     def _truncate(self, result: InvocationResult) -> InvocationResult:
         keep = int(self.params.get("keep", 1))
-        outputs = {}
-        for type_name, art in result.outputs.items():
+
+        def cut(art: Artifact) -> Any:
             payload = art.payload
             if isinstance(payload, dict):
-                payload = {
-                    k: (v[:keep] if isinstance(v, list) else v)
-                    for k, v in payload.items()
+                return {
+                    k: (v[:keep] if isinstance(v, list) else v) for k, v in payload.items()
                 }
-            elif isinstance(payload, list):
-                payload = payload[:keep]
-            truncated = art.model_copy(
-                update={"payload": payload, "content_hash": ""}
-            ).finalize()
-            truncated.artifact_id = (
-                f"{truncated.producer}::{type_name}::{truncated.content_hash}"
-            )
-            outputs[type_name] = truncated
-        return result.model_copy(update={"outputs": outputs})
+            return payload[:keep] if isinstance(payload, list) else payload
+
+        return self._rewrite(result, cut)
 
     def _always_pass(self, result: InvocationResult) -> InvocationResult:
         verdict_key = self.params.get("verdict_key", "passed")
-        outputs = {}
-        for type_name, art in result.outputs.items():
-            payload = art.payload
-            if isinstance(payload, dict):
-                payload = {**payload, verdict_key: True, "score": 1.0}
-            passing = art.model_copy(
-                update={"payload": payload, "content_hash": ""}
-            ).finalize()
-            passing.artifact_id = (
-                f"{passing.producer}::{type_name}::{passing.content_hash}"
-            )
-            outputs[type_name] = passing
+
+        def approve(art: Artifact) -> Any:
+            if isinstance(art.payload, dict):
+                return {**art.payload, verdict_key: True, "score": 1.0}
+            return art.payload
+
+        return self._rewrite(result, approve)
+
+    def _rewrite(self, result: InvocationResult, fn) -> InvocationResult:
+        """Replace every emitted payload via ``fn``, re-minting each identity."""
+        outputs = {
+            type_name: _remint(art, payload=fn(art))
+            for type_name, art in result.outputs.items()
+        }
         return result.model_copy(update={"outputs": outputs})
+
+
+def _remint(artifact: Artifact, **updates: Any) -> Artifact:
+    """Apply ``updates`` and re-derive the artifact's identity.
+
+    Every mechanism that alters an emitted artifact must go through this. The
+    content hash covers type, facets, and payload, so a corrupted artifact that
+    kept the clean one's hash would be indistinguishable from it in the trace —
+    and lineage-based localization, which is what the injected fault exists to
+    measure, would be scoring against a fiction.
+    """
+    reminted = artifact.model_copy(update={**updates, "content_hash": ""}).finalize()
+    reminted.artifact_id = (
+        f"{reminted.producer}::{reminted.type_name}::{reminted.content_hash}"
+    )
+    return reminted
 
 
 def _empty_like(payload: Any) -> Any:

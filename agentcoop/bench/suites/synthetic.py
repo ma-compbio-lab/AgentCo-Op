@@ -5,20 +5,13 @@ mapped identifiers get looked up in a table, and results get summarized — but
 the *shape* of each task differs deliberately:
 
 ``single_sufficient``
-    One component covers every subgoal, and does it well. Composing works but
-    buys nothing. A system that composes here has not failed the task; it has
-    failed the decision.
-
+    One component covers every subgoal and does it well; composing buys nothing.
 ``multi_necessary``
-    The lookup component refuses identifiers in the source namespace, and the
-    generalist is genuinely weak at the lookup subgoal. No single component
-    can produce a correct answer, so composition is the only route.
-
+    The analyst refuses source-namespace identifiers and the generalist is weak
+    at that subgoal, so composition is the only route to a correct answer.
 ``multi_harmful``
-    Composition is available and *worse*: the mapping step is lossy, so
-    routing through it discards data that the direct component would have
-    kept. This is the case that makes "correctly declines to compose" a
-    measurable success rather than a claim.
+    The mapping step is lossy, so routing through it discards data the direct
+    component would have kept. Composing here is a measurable mistake.
 
 Every table here is small and explicit. The point of a synthetic suite is that
 the right answer is knowable by construction — the moment the ground truth has

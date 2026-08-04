@@ -14,10 +14,12 @@ Layout::
     execute/    typed execution with artifact lineage
     diagnose/   detect -> localize -> diagnose
     repair/     propose -> shadow validate -> commit/rollback
-    evaluate/   the six-level evaluation contract stack and claim bundles
-    memory/     reliability statistics and outcome evidence
-    components/ concrete component adapters
+    components/ the invocation boundary and its concrete adapters
     bench/      task suites, fault injection, and baseline harnesses
+
+The six evaluation levels live in ``ir.checks.CheckLevel`` and are reported
+per level by ``bench.harness.contract_summary``; there is deliberately no
+separate evaluation package re-deriving what the harness already computes.
 """
 
 __version__ = "0.2.0"

@@ -170,8 +170,8 @@ class InvocationResult(BaseModel):
     """What came back.
 
     ``ok`` means "this component discharged its contract", not "the workflow
-    may proceed" and certainly not "the answer is good". Contract-level and
-    claim-level judgment belong to :mod:`agentcoop.evaluate`.
+    may proceed" and certainly not "the answer is good". Whether the result is
+    any good is decided later, against the evaluation contract.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -88,13 +88,11 @@ class ExecutionEngine:
         type_registry: Optional[TypeRegistry] = None,
         library: Optional[ComponentLibrary] = None,
         merges: Optional[MergeRegistry] = None,
-        check_registry: Any = None,
     ) -> None:
         self.adapters = adapters
         self.types = type_registry or TypeRegistry()
         self.library = library or ComponentLibrary()
         self.merges = merges or default_merge_registry()
-        self.checks = check_registry
 
     # -- public -------------------------------------------------------------
 

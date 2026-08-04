@@ -1,32 +1,14 @@
 """Systems under test: AgentCo-Op and the baselines it has to beat.
 
-The baselines exist to close specific escape routes, and each one closes a
-different one:
+Each baseline closes one escape route — access to the good tool, a larger
+budget, or the possibility that the compiled *structure* is doing nothing that
+a single model walking the same steps would not do. ``SameWorkflowSingleAgent``
+is the sharp one: it replays AgentCo-Op's own graph with one component, so a
+tie says the topology did not matter, and that is a result worth reporting.
 
-``BestSingleComponent``
-    Closes "the workflow only won because it had access to the good tool."
-    Give the single best component the whole task and see how far it gets.
-
-``EqualBudgetSingleAgent``
-    Closes "the workflow only won because it spent more." One capable
-    generalist, one shot, the same budget.
-
-``SameWorkflowSingleAgent``
-    Closes the important one: "the *structure* is doing nothing; a single
-    model walking the same steps would do just as well." It takes
-    AgentCo-Op's own compiled graph and rebinds every node to one generalist.
-    A win here that AgentCo-Op does not also get means the topology mattered;
-    a tie means it did not, and that is a result worth reporting.
-
-``CodingAgentBaseline``
-    Closes "why not just use Codex or Claude Code?" — the question every agent
-    paper has to answer. It is a real arm, not a straw man: the coding agent
-    gets the same task and the same repositories.
-
-A baseline that cannot run in the current environment reports
-``available=False`` and is excluded from aggregates. It never reports a score
-of zero, because "we could not run it" and "it ran and failed" are different
-findings and averaging them together would flatter whatever did run.
+An arm that cannot run here reports ``available=False`` and is excluded from
+aggregates. It never scores zero — "we could not run it" and "it ran and
+failed" are different findings, and averaging them flatters whatever did run.
 """
 
 from __future__ import annotations

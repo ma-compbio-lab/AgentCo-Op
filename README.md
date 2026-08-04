@@ -78,7 +78,7 @@ single component suffices, composing is a measurable mistake, and the benchmark 
 |---|---|
 | Node selection, roles, and topology are just an LLM's imagination | [`ir/evidence.py`](agentcoop/ir/evidence.py) — every decision carries a `DesignEvidenceRecord`; an LLM proposal records as `ASSERTED` and **can never** make a decision admissible. [`compile/grammar.py`](agentcoop/compile/grammar.py) — each production has a stated applicability condition that must be discharged. |
 | Repair is unclear and entirely LLM-decided | [`ir/faults.py`](agentcoop/ir/faults.py) — a 10-class fault taxonomy where each class constrains which patch families are admissible. [`diagnose/localize.py`](agentcoop/diagnose/localize.py) — backward slicing over artifact lineage. [`repair/shadow.py`](agentcoop/repair/shadow.py) — a patch commits only if it fixed the symptom **and** regressed nothing. |
-| There is no optimization, only "make it run" | [`ir/utility.py`](agentcoop/ir/utility.py) — Pareto selection over seven objectives with no scalarization. Unmeasured dimensions earn no credit. [`evaluate/`](agentcoop/evaluate/) — a six-level contract stack where `UNAVAILABLE` is never `PASS`, so open-ended tasks with no oracle are handled rather than faked. |
+| There is no optimization, only "make it run" | [`ir/utility.py`](agentcoop/ir/utility.py) — Pareto selection over seven objectives with no scalarization. Unmeasured dimensions earn no credit. [`ir/checks.py`](agentcoop/ir/checks.py) — a six-level contract stack (hard / artifact / process / claim / preference / resource) where `UNAVAILABLE` is never `PASS`, so open-ended tasks with no oracle are handled rather than faked. |
 | Why not just use Codex / Claude Code? | [`components/coding_agent.py`](agentcoop/components/coding_agent.py) — a coding agent is a *node type*, not a rival. [`bench/baselines.py`](agentcoop/bench/baselines.py) — four comparison arms, including the coding agent alone and AgentCo-Op using it as executor. |
 | Benchmarks are too easy and don't show multi-agent advantage | [`bench/`](agentcoop/bench/) — three regimes (`single_sufficient`, `multi_necessary`, `multi_harmful`), ground-truth blame targets for injected faults, and silent faults that no exit-code-reading system can find. See [feasibility review](docs/experiments/feasibility.md) for why the public benchmarks were rejected. |
 
@@ -149,9 +149,8 @@ defects    cation    analyse,     with       rank       validate,
 | [`execute/`](agentcoop/execute/) | Typed execution with full artifact lineage. Every handoff is validated at the edge, before the consumer runs. |
 | [`diagnose/`](agentcoop/diagnose/) | Detect signals → backward-slice to the earliest bad artifact → rank fault hypotheses with an entropy that says when *not* to act. |
 | [`repair/`](agentcoop/repair/) | Three tiers (contract repair / local optimization / global redesign), 25 patch families constrained by fault class, transactional commit with rollback. |
-| [`evaluate/`](agentcoop/evaluate/) | The six-level contract stack (hard / artifact / process / claim / preference / resource). Levels are never collapsed into a scalar. |
-| [`components/`](agentcoop/components/) | The invocation boundary: LLM, container, subprocess, Python function, converter, evaluator, human, coding agent. |
-| [`bench/`](agentcoop/bench/) | Task suites, fault injection with ground-truth blame, and the four baseline arms. |
+| [`components/`](agentcoop/components/) | The invocation boundary, and the four adapters that cross it: Python function, subprocess, container, and headless coding agent. |
+| [`bench/`](agentcoop/bench/) | Task suites, fault injection with ground-truth blame, and the four baseline arms. Also where the six check levels are reported per level, by `contract_summary`. |
 
 Two design documents carry the full argument:
 [`docs/architecture/v2_method.md`](docs/architecture/v2_method.md) maps each objection to its
@@ -189,7 +188,7 @@ scored zero, and it is never quietly dropped from the table.
 ## Testing
 
 ```bash
-pytest                                     # ~535 tests, ~1s, fully offline
+pytest                                     # ~474 tests, ~1s, fully offline
 pytest tests/unit/test_probe.py -v
 pytest tests/integration -q                # the cross-subsystem properties
 pytest -k "silent or regime"

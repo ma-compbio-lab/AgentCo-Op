@@ -72,141 +72,55 @@ class AdapterRegistry:
     def names(self) -> list[str]
 ```
 
-Adapters to implement, each in its own module:
+Adapters, each in its own module:
 
 | Module | Class | Notes |
 |---|---|---|
-| `python_fn.py` | `PythonFunctionAdapter` | wraps a callable; the deterministic workhorse used by tests and by built-in analysis steps |
+| `python_fn.py` | `PythonFunctionAdapter` | wraps a callable; the deterministic workhorse |
 | `subprocess_adapter.py` | `SubprocessAdapter` | runs a command, collects declared output files, enforces timeout, captures exit code |
 | `container.py` | `ContainerAdapter` | `docker run`; must degrade to a clear `ok=False` with a `FaultClass.ENVIRONMENT`-shaped error when Docker is absent — never silently fall back to the host |
-| `llm.py` | `LLMAdapter`, `LLMClient` (Protocol), `MockLLM`, `OpenAIClient` | `MockLLM` is deterministic and keyed by (role, subgoal); `OpenAIClient` uses httpx, no SDK |
 | `coding_agent.py` | `CodingAgentAdapter` | headless `codex exec` / `claude -p`; **this is the Codex/Claude-Code-as-executor path**, see §10 |
-| `human.py` | `HumanReviewAdapter` | writes a review request artifact; non-blocking `deferred` status by default |
-| `converter.py` | `ConverterAdapter` | executes an `ir.artifacts.Converter`; reports realized coverage so a lossy mapping is caught |
-| `evaluator.py` | `EvaluatorAdapter` | runs a named check from `agentcoop.evaluate.registry` |
 
 Every adapter records `observed_facets` where it can. `ContainerAdapter` and
 `CodingAgentAdapter` must be importable and unit-testable without Docker or the
-CLIs present.
+CLIs present, which is why each exposes a pure `plan()`.
+
+Four further adapters were specified and built — `llm.py`, `human.py`,
+`converter.py`, `evaluator.py` — and then deleted for the reason given in §2–3:
+nothing called them and nothing tested them. `evaluator.py` in particular
+existed only to dynamically import the withdrawn `evaluate` package. Reinstate
+them when there is a caller, not before.
 
 ---
 
-## 2. `agentcoop/evaluate/` — the six-level contract stack
+## 2–3. `agentcoop/evaluate/` and `agentcoop/memory/` — WITHDRAWN
 
-```python
-class CheckSpec(BaseModel):
-    check_id: str
-    level: CheckLevel
-    impl: str                    # key into the check registry
-    params: dict[str, Any]
-    blocking: bool = False
-    subject: str | None = None
+Both packages were specified here, implemented, and then deleted. The reason is
+worth recording, because the same mistake is easy to repeat.
 
-class CheckContext(BaseModel):       # what a check implementation receives
-    dossier: TaskEvidenceDossier
-    workflow: CompiledWorkflow | None
-    artifacts: dict[str, Artifact]
-    trace: Trace | None
-    cost: CostProfile
-    params: dict[str, Any]
-    subject: str | None
+`evaluate/` was specified as a six-level contract stack with its own check
+registry and its own metrics module. What got built duplicated work that the
+wired pipeline already did: `metrics.py` reimplemented localization accuracy,
+detection recall, repair success, and collateral-regression rate, all of which
+`bench/harness.py` computes from the run record; `contract.py` re-declared
+`payload_is_empty` and the trace accessors from `components/base.py`, against
+`Any`-typed duck-typing rather than the real models. Nothing in the pipeline
+ever imported it — `ExecutionEngine` accepted a `check_registry` argument and
+never read it — so 5,192 lines existed only to be unit-tested.
 
-CheckFn = Callable[[CheckContext], CheckResult]
+The *idea* survives where it belongs: `CheckLevel` in `ir/checks.py` defines the
+six levels, `CheckStatus.UNAVAILABLE` is never `PASS`, and
+`bench/harness.contract_summary` reports coverage and pass rate per level for
+tasks with no scalar oracle. That is the whole load-bearing content of the
+section this replaces.
 
-class CheckRegistry:
-    def register(self, name: str, fn: CheckFn) -> None
-    def get(self, name: str) -> CheckFn
-    def names(self) -> list[str]
+`memory/` was specified as reliability statistics and outcome evidence. Nothing
+supplied it and nothing consumed it. `ReliabilityPosterior` lives in
+`ir/capability.py`, where the certification ladder actually reads it to decide
+`TRUSTED`, and `EvidenceLedger.observed_fraction` covers outcome evidence.
 
-class EvaluationContract(BaseModel):
-    specs: list[CheckSpec]
-    @classmethod
-    def from_dossier(cls, dossier) -> EvaluationContract
-    def runnable_specs(self, dossier) -> tuple[list[CheckSpec], list[CheckSpec]]
-        # (runnable, unavailable) based on dossier.availability(level)
-    def evaluate(self, ctx_factory, registry) -> CheckReport
-```
-
-Built-in checks, at minimum:
-
-- **hard**: `exit_status`, `schema_valid`, `required_outputs_present`,
-  `invariant` (dispatches on `Invariant.check`), `no_empty_result`
-- **artifact**: `facets_declared`, `facet_match`, `coverage_threshold`,
-  `provenance_complete`, `no_silent_empty`
-- **process**: `required_steps_ran`, `verifier_present`, `sensitivity_ran`,
-  `negative_control_ran`
-- **claim**: `claim_bundle_wellformed`, `claim_traceable`, `claim_has_alternatives`,
-  `claim_uncertainty_declared`
-- **preference**: `expert_pairwise` (reads recorded judgments; returns
-  `UNAVAILABLE` when there are none — never fabricates a preference)
-- **resource**: `within_budget`, `within_wall_time`, `reproducible`
-
-`claim.py` defines the structured scientific output:
-
-```python
-class ClaimBundle(BaseModel):
-    claim: str
-    supporting_evidence: list[EvidenceRef]
-    contradicting_evidence: list[EvidenceRef]
-    assumptions: list[str]
-    sensitivity_analyses: list[SensitivityResult]
-    alternative_explanations: list[str]
-    uncertainty: str
-    provenance: list[str]            # artifact ids
-```
-
-`utility_eval.py`:
-
-```python
-def utility_from_report(report: CheckReport, *, cost: CostProfile,
-                        ledger: EvidenceLedger, limits: ResourceLimits,
-                        dossier: TaskEvidenceDossier) -> UtilityVector
-```
-
-Mapping — and this is load-bearing, get it right: a dimension whose checks were
-all `UNAVAILABLE` must be marked `unavailable` on the vector, **not** set to 0.
-
-- `validity` ← pass rate of HARD checks, 0.0 if any blocking check failed
-- `evidence` ← `ledger.evidence_coverage()` blended with ARTIFACT provenance checks
-- `robustness` ← PROCESS sensitivity/negative-control checks
-- `scientific_utility` ← CLAIM checks
-- `cost`/`latency` ← from `CostProfile`, normalized against `limits`
-- `risk` ← fraction of component nodes with no downstream verifier, plus
-  silent-failure exposure from capability cards
-
-`metrics.py` implements the repair-quality metrics (detection recall, false
-repair rate, localization accuracy, diagnosis top-k accuracy, patch precision,
-repair success, collateral regression, utility improvement, repair regret,
-time-to-recovery, escalation calibration) as pure functions over recorded runs
-plus injected ground truth.
-
----
-
-## 3. `agentcoop/memory/` — outcome evidence
-
-```python
-class RunRecord(BaseModel): run_id, task_id, workflow_id, structural_key,
-                            utility, checks, diagnoses, repairs, cost, status
-class RunStore:      # jsonl-backed, append-only
-    def append(self, record: RunRecord) -> None
-    def by_task(self, task_id: str) -> list[RunRecord]
-    def all(self) -> list[RunRecord]
-
-class StatisticsStore:
-    # Beta posteriors, all with Beta(1,1) priors.
-    def component_reliability(self, component: str) -> ReliabilityPosterior
-    def edge_compatibility(self, producer: str, consumer: str,
-                           artifact_type: str) -> ReliabilityPosterior
-    def repair_success(self, fault_class: FaultClass,
-                       patch_family: str) -> ReliabilityPosterior
-    def failure_distribution(self, component: str) -> dict[FaultClass, float]
-    def observe_run(self, record: RunRecord) -> None
-    def save(self, path) -> None ; @classmethod load(cls, path)
-```
-
-`retrieval.py` turns statistics into `EvidenceItem`s of kind `OUTCOME`, using
-`outcome_evidence(...)` so that anything with `n < 3` is correctly downgraded to
-`ASSERTED` and therefore not load-bearing.
+**If either is reintroduced, wire it before writing it.** A subsystem with no
+caller cannot be kept honest by its own tests.
 
 ---
 

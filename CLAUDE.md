@@ -21,7 +21,7 @@ results, and do not restore v1 code into `agentcoop/`.
 
 ```bash
 pip install -e .[dev]                 # core + pytest
-pytest                                # ~535 tests, ~1s, fully offline
+pytest                                # ~474 tests, ~1s, fully offline
 pytest tests/unit/test_probe.py -v
 pytest tests/integration -q
 pytest -k "silent or regime"
@@ -105,7 +105,9 @@ the mechanism that answers it. Read those before making a design change.
   with an explicit applicability condition, a term to [ir/workflow.py](agentcoop/ir/workflow.py),
   and a case in `lower()`. A production with no stated condition is the thing this rebuild removed.
 - **A new component type** — implement the `ComponentAdapter` protocol in
-  [components/](agentcoop/components/). Emit facets you actually observed via
+  [components/](agentcoop/components/) and add a case to `tests/unit/test_components.py`; each
+  adapter's `plan()` is pure so it can be asserted on without executing anything. Emit facets you
+  actually observed via
   `finalize_outputs(observers=...)`; facets that come from static config are applied to the artifact
   but deliberately excluded from `observed_facets`.
 - **A new fault class** — add to `FaultClass` *and* `FAULT_TAXONOMY` with its `admissible_patches`,
