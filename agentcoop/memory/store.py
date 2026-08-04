@@ -279,17 +279,37 @@ class RepairAttempt(BaseModel):
                 "fixed_original_failure=True requires verified=True; an unmeasured "
                 "patch cannot be known to have fixed anything"
             )
-        if self.tier is not None and self.tier is not spec.tier:
-            raise ValueError(
-                f"repair tier '{self.tier.value}' contradicts the taxonomy tier "
-                f"'{spec.tier.value}' for fault class '{self.fault_class.value}'"
-            )
         return self
 
 
 # ---------------------------------------------------------------------------
 # Run record
 # ---------------------------------------------------------------------------
+
+
+#: Dotted paths, relative to a dumped :class:`RunRecord`, whose value came from
+#: a Python ``set`` and therefore has no inherent order.
+_SET_VALUED_PATHS: tuple[tuple[str, ...], ...] = (("utility", "unavailable"),)
+
+
+def canonicalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Sort every list that was dumped from a ``set``.
+
+    ``UtilityVector.unavailable`` is a ``set[Objective]``. Python randomizes
+    string hashing per process, so its iteration order — and hence the bytes of
+    a dumped run record — differs between interpreters. Two identical
+    histories must produce identical files, or diffing runs and hashing a
+    memory directory both become meaningless.
+    """
+    for path in _SET_VALUED_PATHS:
+        node: Any = payload
+        for key in path[:-1]:
+            node = node.get(key) if isinstance(node, dict) else None
+            if node is None:
+                break
+        if isinstance(node, dict) and isinstance(node.get(path[-1]), list):
+            node[path[-1]] = sorted(node[path[-1]])
+    return payload
 
 
 class RunRecord(BaseModel):
@@ -360,17 +380,8 @@ class RunRecord(BaseModel):
     # -- canonical serialization -------------------------------------------
 
     def canonical_dict(self) -> dict[str, Any]:
-        """JSON-ready payload with every set rendered in a stable order.
-
-        ``UtilityVector.unavailable`` is a ``set``; Python set iteration order
-        for strings varies with the interpreter's hash seed, so serializing it
-        raw would make two identical histories produce different bytes.
-        """
-        payload = self.model_dump(mode="json")
-        utility = payload.get("utility")
-        if isinstance(utility, dict) and isinstance(utility.get("unavailable"), list):
-            utility["unavailable"] = sorted(utility["unavailable"])
-        return payload
+        """JSON-ready payload with every set rendered in a stable order."""
+        return canonicalize_payload(self.model_dump(mode="json"))
 
     def to_json_line(self) -> str:
         return json.dumps(self.canonical_dict(), sort_keys=True, ensure_ascii=False)
@@ -487,6 +498,7 @@ class RunStore:
 __all__ = [
     "Outcome",
     "RunStatus",
+    "canonicalize_payload",
     "ComponentOutcome",
     "EdgeOutcome",
     "RepairAttempt",

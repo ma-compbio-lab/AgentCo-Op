@@ -4,161 +4,124 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Research artifact for the AgentCo-Op paper: a **task-conditioned workflow compiler** for multi-agent
-systems. Given a task, it profiles it, retrieves skills, compiles the minimum sufficient workflow
-graph, executes it, and repairs only the implicated nodes when execution evidence indicates failure.
-Everything is designed to run offline/deterministically by default, with live LLM calls as an opt-in.
+Research artifact for the AgentCo-Op paper. The `revision` branch is a **ground-up rebuild** (v2)
+of the method. The published version (v1) is preserved untouched under [legacy/](legacy/) because
+it is the reproducibility record for numbers already in the paper — do not "fix" anything in there,
+and do not import from it.
+
+v2 is a compiler for heterogeneous agent workflows built on one rule: **every structural decision
+must rest on evidence produced by execution, never asserted by a model.** Most of the surprising
+code in this repo exists to enforce that rule against the easier alternative.
 
 ## Commands
 
 ```bash
 pip install -e .[dev]                 # core + pytest
-pip install -e .[dev,bench,repo]      # + datasets/pandas + docker/gitpython
-
-pytest                                # full suite (~150 tests, ~5s, fully offline)
-pytest tests/unit/test_gates.py -v    # one file
-pytest tests/unit/test_gates.py::test_name -v
-pytest -k "gate and not extension"    # by expression
+pytest                                # ~535 tests, ~1s, fully offline
+pytest tests/unit/test_probe.py -v
+pytest tests/integration -q
+pytest -k "silent or regime"
 ```
 
 `asyncio_mode = "auto"` is set in [pyproject.toml](pyproject.toml) — async tests need no marker.
-There is no linter/formatter configured; match surrounding style.
+No linter/formatter is configured; match surrounding style. Every core mechanism is deterministic
+and needs no API key.
 
 ```bash
-# Compile + run a blueprint (mock backends, no API key)
-agentcoop compile --task "What is 13 * 17?" --out runs/demo/blueprint.json
-agentcoop run --blueprint runs/demo/blueprint.json --out runs/demo
-
-# Benchmarks: compile → execute → grade → write a reproducibility dir
-agentcoop run-benchmark --dataset mbpp --limit 10 -v AC-Gated
-agentcoop run-benchmark --dataset gsm8k --limit 5 --dry-run     # force offline
-agentcoop evaluate --predictions <run>/predictions.jsonl --dataset mbpp   # re-grade only
-agentcoop analyze-gates --runs runs/mbpp                        # gate rescue/harm rates
-
-# External-repo collaboration (the case studies)
-agentcoop collaborate --request docs/agents/case_study_1.request.yaml \
-  --workdir runs/case1/heart_merfish --no-docker
-
-# Data (both dirs are gitignored; regenerate from scratch)
-python scripts/download_datasets.py
-python -m agentcoop.benchmarks.aflow_splits
+agentcoop bench list                       # tasks, regimes, injected faults
+agentcoop probe   --task syn-multi         # certify by executing probes
+agentcoop compile --task syn-multi         # candidates, evidence, Pareto, choice
+agentcoop run     --task syn-silent-empty --out runs/demo
+agentcoop diagnose runs/demo               # works offline from runs/demo/run.json
+agentcoop repair  runs/demo                # needs live components (shadow validation)
+agentcoop bench run --system agentcoop --system best_single_component
+agentcoop dossier lint path/to/dossier.yaml
+agentcoop explain runs/demo/workflow.json
 ```
-
-Benchmark runs land in `runs/{dataset}/{method}/{timestamp}/` with `config.yaml`, `git_state.txt`,
-`data_hashes.json`, `model_versions.json`, `workflow_blueprint.json`, `predictions.jsonl`,
-`metrics.json`, `traces/`, `sandbox_logs/`, `artifacts/`.
 
 ## Architecture
 
-There are **two independent execution paths**. They share the typed IR and the skill library but
-nothing else — [repo_collaboration.py](agentcoop/core/repo_collaboration.py) deliberately does not
-import the compiler or runtime, so changes to one path cannot break the other's results.
-
-### Path A — compile & run (benchmarks, `compile`/`run`/`run-benchmark`)
-
 ```
-raw task ─▶ profile_task ─▶ compile_workflow ─▶ run_blueprint ─▶ grade
-           (profiler.py)     (compiler.py)       (runtime.py)     (graders.py)
-                                  ▲                    │
-                            SkillRegistry         evaluate_gates
-                          (skills/registry.py)    → plan_patch → apply_patch
-                                                     (gates.py)
+dossier ─▶ probe ─▶ compile ─▶ execute ─▶ diagnose ─▶ repair
 ```
 
-- [core/schema.py](agentcoop/core/schema.py) is the single source of truth for the IR:
-  `TaskProfile`, `NodeSpec`/`EdgeSpec`, `GatePolicy`, `WorkflowBlueprint`, `NodeResult`, `RunState`.
-  These use `extra="forbid"` — adding a field to a serialized blueprint without updating the model
-  will fail validation.
-- [core/profiler.py](agentcoop/core/profiler.py) is regex-rule-based (deterministic), with an
-  optional LLM layer. It never persists chain-of-thought — only a one-paragraph `rationale_summary`.
-- [core/compiler.py](agentcoop/core/compiler.py) **does not search**. It instantiates each candidate
-  meta-skill's `topology_template`, binds agent-skills, filters on hard constraints
-  (`_satisfies_hard_constraints`) and capability coverage, then maximizes
-  `coverage + evidence + verification − complexity − cost − risk` with an explicit simplicity bias
-  toward the L0–L7 topology ladder (`_DIFFICULTY_TARGET_LEVEL`). Falls back to a two-node
-  solver→formatter graph when no candidate qualifies.
-- [core/runtime.py](agentcoop/core/runtime.py) walks the DAG with networkx, rebuilding it each outer
-  loop because patches mutate the blueprint in place. Cycles are handled by detecting back-edges and
-  treating them as optional. Retries are consumed via `state.node_retries`, never by removing a node
-  from the `executed` set. **Ready nodes run sequentially**, even for parallel topologies.
-- [core/gates.py](agentcoop/core/gates.py) — `_match_trigger` is one long dispatch over ~35 trigger
-  names (schema_invalid, test_failure, low_confidence, budget_near_limit, plus per-case-study
-  triggers like `gene_mapping_low`, `gene_universe_mismatch`). Each fired gate maps to one of the
-  bounded `GraphPatchOp`s. Repair is always *local* and capped by `GateLimits`
-  (`max_total_activations`, `max_same_node_repairs`, `max_graph_patches`).
-- [backends/](agentcoop/backends/) — every backend implements the same
-  `async execute(node, payload, ctx) -> NodeResult`. `default_registry()` wires llm / mcp /
-  python_sandbox / sandbox_repo / human_review. The runtime never sees a concrete SDK.
-  [backends/prompts.py](agentcoop/backends/prompts.py) holds all role × dataset prompt construction
-  and output parsing (boxed answers, code fences, JSON); dataset-specific answer extraction belongs
-  there, not in the backends.
+Each stage is a package; [ir/](agentcoop/ir/) is the typed IR they all compile against and has no
+I/O and no LLM dependency. [docs/architecture/v2_interfaces.md](docs/architecture/v2_interfaces.md)
+is the interface contract the implementation was written against;
+[docs/architecture/v2_method.md](docs/architecture/v2_method.md) maps each reviewer objection to
+the mechanism that answers it. Read those before making a design change.
 
-### Path B — external-repo collaboration (`collaborate`)
+### The invariants that most edits will be tempted to break
 
-Driven by a request YAML (`repositories`, `dataset`, `task`, `topology`, `required_outputs`).
-[RepoCollaborationOrchestrator.run()](agentcoop/core/repo_collaboration.py) executes fixed stages:
+- **`UNAVAILABLE` is never `PASS`.** A check that could not run does not satisfy anything
+  ([ir/checks.py](agentcoop/ir/checks.py)). `certification_report` emits an entry for every probe
+  kind including the ones never run, precisely so the gap is visible.
+- **`Compatibility.UNDERSPECIFIED` is not compatible.** A producer that does not declare a facet
+  the consumer requires is a compile-time failure, not an optimistic wiring
+  ([ir/artifacts.py](agentcoop/ir/artifacts.py)).
+- **`certification_level` is a computed property, never assigned.** It is derived from executed
+  probes. `probe/certificate.py::derived_level` recomputes it from the same ladder the explanation
+  prints; a test pins the two together, so if you change one you must change both.
+- **An LLM assertion records as `EvidenceStrength.ASSERTED` and can never make a decision
+  admissible** ([ir/evidence.py](agentcoop/ir/evidence.py)). Only `DERIVED`/`OBSERVED`/`STATISTICAL`
+  are load-bearing.
+- **`Join` is unexpressible without a registered merge** ([merges.py](agentcoop/merges.py)).
+  Voting is not a default; `majority_vote` requires ≥3 branches.
+- **Repair must fix the symptom *and* regress nothing** ([repair/shadow.py](agentcoop/repair/shadow.py)).
+  A component whose `BehaviorContract.shadow_safe` is False is never speculatively re-run.
+- **`FaultSpec.admissible_patches` constrains repair.** A contract fault can never be "fixed" by
+  `retry_node`; an evaluator fault never patches the generator ([ir/faults.py](agentcoop/ir/faults.py)).
+- **Detectors must not trust the producer's self-report.** `detect_empty_output` recomputes
+  emptiness from the payload and treats adapter notes as a supplement — a component that lies about
+  succeeding is exactly the one that will not annotate its own emptiness. The same reasoning applies
+  in `probe/runner.py::_smoke`.
+- **Determinism**: no unseeded randomness, monotonic `Trace.step` rather than wall-clock, artifact
+  content hashes over type+facets+payload only. Bench adapters default to `zero_clock`.
 
-1. `profile_repo` → `manifests/repo_profile_<name>.json`
-2. `SandboxBuilder` → Dockerfiles + `manifests/docker_build_report.json`
-3. `AgentRegistry` of `AgentCard`s → `agent_registry.json`
-4. `EnvManager` auto-installs declared deps → `manifests/env_manifest.json`
-5. deterministic topology compile → `compiled_workflow_graph.json` + `topology.png/.dot`
-6. adapter execution per repo (Docker, or local Python under `--no-docker`)
-7. `ArtifactBroker` validates every typed handoff → `manifests/broker.jsonl`
-8. LLM integrator → `final_hypothesis_report.md` + `run_manifest.json`
+### Where the non-obvious coupling lives
 
-Two topologies exist: `linear_handoff` (default) and `parallel_then_join` (fan-out branches plus a
-`join_agent`). Adding a third means a new `_execute_*` method plus a `_compile_graph_*` counterpart.
+- `probe/suite.py::_output_contexts` emits **one schema/smoke probe per declared output** when a
+  card declares several. A multi-capability component (any generalist) emits one artifact per call,
+  so a single probe would fail it for a reason unrelated to quality. The way to elicit each output
+  is declared in `card.binding["probe_contexts"]`.
+- `execute/engine.py::_gather_inputs` takes `required` from the **subgoal**, not from the card. A
+  component certified for several capabilities declares the union of their inputs; treating all of
+  them as mandatory would fail a correctly-behaving generalist.
+- `bench/harness.py` certifies components **before** installing faults by default
+  (`certify_before_injection=True`). Probing an already-broken component makes the compiler refuse
+  to bind it, so no run happens and localization becomes unmeasurable. The other ordering is a
+  different, also-valid measurement — it is just not the default.
+- `bench/harness.py::blame_matches` allows an edge `A->B` to count as naming `A` or `B`, and an
+  artifact id `producer::type::hash` to count as naming its producer. Both tolerances are stated
+  once, structurally; `blame_exact` reports the strict rate beside it.
 
-Everything repo-specific lives in [agentcoop/wrappers/](agentcoop/wrappers/) — each wrapper ships
-`manifest.yaml` (typed agent card), `Dockerfile.agentcoop`, and `adapter.py`. Adapters register
-themselves via the `@register_local_adapter("<name>")` decorator, and
-[wrappers/__init__.py](agentcoop/wrappers/__init__.py) imports each subpackage for that side effect —
-**a new wrapper is invisible until it is added to that import list**.
+## Adding things
 
-See [docs/external_agent_collaboration.md](docs/external_agent_collaboration.md) for the full design.
-
-## Skills
-
-Two kinds, loaded by [SkillRegistry.load_dir](agentcoop/skills/registry.py):
-
-- **Meta-skills** — `agentcoop/skills/meta/*.md`: YAML frontmatter (`complexity_level`,
-  `task_signals`, `topology_template`, `gates`, `evidence_refs`) plus a body with
-  `# Intent` / `# When to use` / `# When not to use` sections that are parsed into the model.
-  A meta-skill is a compilation rule: it *is* the topology template the compiler instantiates.
-- **Agent-skills** — `agentcoop/skills/agents/*.yaml` and flat `configs/skills/*.yaml`: capability
-  contracts bound to nodes by backend match + tag overlap with `profile.domain`. Both single-mapping
-  and `{skills: [...]}` bundle layouts are accepted.
-
-To make the compiler produce a new topology, add a meta-skill markdown file — no compiler change is
-usually needed.
-
-## Configuration
-
-- `configs/benchmarks/*.yaml` — per-dataset; `extends: _base` is resolved by `load_config` with a
-  deep merge. Defines budget, model provider, gates, and the `variants` table.
-- `configs/ablations/*.yaml` — documentation-only records of the 2×2 factorial; the real switches
-  live in the `variants` block of `_base.yaml`.
-- `configs/external_commits.yaml` — pinned SHAs for cloned external repos (several still `TODO_PIN`).
+- **A new topology production** — add the rule to [compile/grammar.py](agentcoop/compile/grammar.py)
+  with an explicit applicability condition, a term to [ir/workflow.py](agentcoop/ir/workflow.py),
+  and a case in `lower()`. A production with no stated condition is the thing this rebuild removed.
+- **A new component type** — implement the `ComponentAdapter` protocol in
+  [components/](agentcoop/components/). Emit facets you actually observed via
+  `finalize_outputs(observers=...)`; facets that come from static config are applied to the artifact
+  but deliberately excluded from `observed_facets`.
+- **A new fault class** — add to `FaultClass` *and* `FAULT_TAXONOMY` with its `admissible_patches`,
+  plus a `LIKELIHOOD` row in [diagnose/diagnose.py](agentcoop/diagnose/diagnose.py).
+- **A new benchmark task** — add to [bench/suites/](agentcoop/bench/suites/) as pure data. Declare
+  its `regime` and, for any injected fault, the ground-truth `expected_blame`.
+  `BenchSuite.coverage_defects()` will tell you what your suite cannot support.
 
 ## Gotchas
 
-- **Dry-run is the default whenever no API key is set.** `run_benchmark` then uses `MockLLM` with a
-  deliberately empty canned answer, so scores are near zero by design — a low dry-run score is not a
-  regression. Set `OPENAI_API_KEY` for real numbers; only the `openai` provider is wired
-  (`_build_llm_client` raises `NotImplementedError` otherwise).
-- **Most variant knobs in the configs are declarative only.** `_apply_variant` in
-  [benchmarks/runner.py](agentcoop/benchmarks/runner.py) implements just `disable_gates` and
-  `disable_reviewer`; `force_topology_level` only appends a provenance string, and
-  `disable_python_sandbox` / `source_graph` / `augment_skills` / `retrieval_bias` have no effect
-  there (Case Study 3 applies its equivalents itself in
-  [scripts/case3_aflow_dynamic.py](scripts/case3_aflow_dynamic.py) via `core/augment_graph.py`).
-- `collaborate` defaults to `--no-docker`; `--docker` needs a running daemon and built images
-  (`scripts/build_repo_images.sh`, `docker/*.Dockerfile`).
-- `data/`, `runs/` (except curated case-study READMEs/summaries), `external/`, and `docs/agents/` are
-  gitignored. `docs/agents/*.request.yaml` are referenced by the README but not tracked — they exist
-  only in a local working copy.
-- Env vars: `AGENTCOOP_MODE=dry_run`, `AGENTCOOP_REPO_COLLAB_MODEL`, `AGENTCOOP_REPO_COLLAB_EFFORT`,
-  `AGENTCOOP_BRANCH_CONCURRENCY`, `AGENTCOOP_DOCKER_RUN_TIMEOUT_S`, `AGENTCOOP_RUN_ID`.
-- Node failures inside the runtime are captured as a failed `NodeResult` rather than raised, unless
-  `RuntimeConfig(raise_on_node_error=True)`. Tests that assert on exceptions must set it.
+- `bench/behaviors.py` is a **registry populated by decorator**; a behaviour is invisible until its
+  module is imported. `agentcoop.bench.behaviors` is the only module that defines them today.
+- `bench run` on the synthetic suite is not an experiment and its numbers are not results — it is a
+  self-test of the harness. Per the current plan, **do not run experiments**; see
+  [docs/experiments/feasibility.md](docs/experiments/feasibility.md) for which external benchmarks
+  are even feasible.
+- Node ids are `<subgoal_id>__<component>`; artifact ids are `<producer>::<type>::<hash>`. Several
+  tests and the blame matcher depend on those shapes.
+- `data/`, `runs/`, `external/`, and `docs/agents/` are gitignored. `docs/agents/*.request.yaml` are
+  referenced by the legacy docs but exist only in a local working copy.
+- `Compiler.compile` refuses a dossier with specification defects unless `allow_defects=True`. An
+  empty result from a compile is often this, not a regression — check `result.dossier_defects` first.
+- Node failures inside the engine are captured as failed `NodeResult`s rather than raised.

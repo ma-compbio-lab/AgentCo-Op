@@ -22,7 +22,10 @@ from agentcoop.ir.capability import (
 
 def probe(kind: str, passed: bool = True, **facets: str) -> ProbeOutcome:
     return ProbeOutcome(
-        probe_id=f"P-{kind}", kind=kind, passed=passed, observed_facets=dict(facets)
+        probe_id=f"P-{kind}",
+        kind=kind,
+        passed=passed,
+        observed_facets={"gene_set": dict(facets)} if facets else {},
     )
 
 

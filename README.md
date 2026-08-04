@@ -50,185 +50,160 @@
 
 ---
 
-## Abstract
+## What this is
 
-Designing multi-agent workflows is especially difficult in open-ended scientific settings where tasks lack curated training sets, reliable scalar evaluation metrics, and standardized interfaces between existing tools and agents.
+Designing multi-agent workflows is hard in open-ended scientific settings, where tasks have no
+curated training set, no reliable scalar metric, and no standard interface between the tools and
+agents that already exist.
 
-We propose **AgentCo-Op**, a retrieval-based synthesis framework that composes reusable skills, tools, and external agents into executable workflows through typed artifact handoffs, then applies bounded self-guided local repair to implicated components when execution evidence indicates failure. In two open-world genomics case studies, AgentCo-Op composes independently developed scientific agents and external tool repositories into auditable workflows without redesigning them or running global topology search.
+**AgentCo-Op** is a compiler for heterogeneous agent workflows built on one commitment: *every
+structural decision must rest on evidence that was produced by execution, not asserted by a model.*
+A component's capabilities are established by running probes against it. A node exists because a
+subgoal requires it and a certified component can serve it. An edge exists because the producer's
+artifact type is compatible with the consumer's — structurally *and* semantically. A repair happens
+because a diagnosis localized a fault to a specific artifact, and only after a shadow run showed the
+patch fixed the symptom without breaking anything that was working.
 
-It coordinates specialized agents for spatial transcriptomics and gene-set interpretation to enable collaborative discovery from spatial transcriptomics data, and builds a parallel workflow for cross-modality marker analysis on single-cell multiome data. AgentCo-Op can also import a searched workflow as a structural prior and improve it by grounding nodes with retrieved components and applying local repair, showing that synthesis and search are complementary. On six coding, math, and question-answering benchmarks, AgentCo-Op achieves the best result on four benchmarks and the best average score under a unified backbone setting, while consistently reducing per-task cost relative to multi-agent baselines.
+Where the evidence does not exist, the system says so and stops. It refuses to compile a defective
+specification, refuses to bind an uncertified component, refuses a join with no merge algebra,
+refuses to patch on an uncertain diagnosis, and refuses to report a workflow as successful when a
+node returned exit code 0 with an empty result.
 
-## At a Glance
+The most important thing it can do is **decline to build a multi-agent workflow**. On tasks where a
+single component suffices, composing is a measurable mistake, and the benchmark scores it as one.
 
-| | |
+## The five things this design is answering
+
+| Objection | Mechanism |
 |---|---|
-| **4 / 6** | best on benchmarks (matched backbone) |
-| **80.6%** | best average score (GPT-4o-mini, matched backbone) |
-| **87.1%** | MBPP pass@1 (best across all reported methods) |
-| **3** | open-world case studies in independently developed scientific repos |
-
-Per-task cost is lower than ReConcile on all six benchmarks and lower than LLM-Debate on five of six — AgentCo-Op separates one-time synthesis from bounded instance-level repair, avoiding both training-time search and per-instance multi-agent round-trips. See the [project page](https://ma-compbio-lab.github.io/AgentCo-Op#benchmarks) for full tables.
-
-## Method
-
-AgentCo-Op reframes automated multi-agent workflow design as **retrieval-based synthesis**: rather than searching over candidate topologies against a scalar reward, it composes reusable components into a task-specific workflow, coordinates them through typed artifact handoffs, and repairs implicated components from execution evidence. The pipeline runs in five stages:
-
-1. **Planning** — parse the typed task specification `x = (g, c, r, Ω)` (goal, context, resources, constraints) and formulate a retrieval plan.
-2. **Retrieval** — pull task-relevant artifacts from curated libraries and user-provided repositories: skills (procedural knowledge), tools (callable operations), GitHub repos, and reference materials.
-3. **Synthesis** — build the executable workflow graph `G = (V, E)`: initial topology, Docker / executor wrapping for external repos, node grounding with retrieved skills and tools, typed message and artifact schemas.
-4. **Execution** — run the synthesized workflow while a reviewer monitors execution evidence — logs, intermediate outputs, validation signals, tool errors, interface checks, and cost.
-5. **Review & Bounded Local Repair** — on failure or uncertainty, revise *only* the implicated nodes, attached skills/tools, or communication edges, producing a patched graph `G' = (V', E')` instead of restarting synthesis.
+| Node selection, roles, and topology are just an LLM's imagination | [`ir/evidence.py`](agentcoop/ir/evidence.py) — every decision carries a `DesignEvidenceRecord`; an LLM proposal records as `ASSERTED` and **can never** make a decision admissible. [`compile/grammar.py`](agentcoop/compile/grammar.py) — each production has a stated applicability condition that must be discharged. |
+| Repair is unclear and entirely LLM-decided | [`ir/faults.py`](agentcoop/ir/faults.py) — a 10-class fault taxonomy where each class constrains which patch families are admissible. [`diagnose/localize.py`](agentcoop/diagnose/localize.py) — backward slicing over artifact lineage. [`repair/shadow.py`](agentcoop/repair/shadow.py) — a patch commits only if it fixed the symptom **and** regressed nothing. |
+| There is no optimization, only "make it run" | [`ir/utility.py`](agentcoop/ir/utility.py) — Pareto selection over seven objectives with no scalarization. Unmeasured dimensions earn no credit. [`evaluate/`](agentcoop/evaluate/) — a six-level contract stack where `UNAVAILABLE` is never `PASS`, so open-ended tasks with no oracle are handled rather than faked. |
+| Why not just use Codex / Claude Code? | [`components/coding_agent.py`](agentcoop/components/coding_agent.py) — a coding agent is a *node type*, not a rival. [`bench/baselines.py`](agentcoop/bench/baselines.py) — four comparison arms, including the coding agent alone and AgentCo-Op using it as executor. |
+| Benchmarks are too easy and don't show multi-agent advantage | [`bench/`](agentcoop/bench/) — three regimes (`single_sufficient`, `multi_necessary`, `multi_harmful`), ground-truth blame targets for injected faults, and silent faults that no exit-code-reading system can find. See [feasibility review](docs/experiments/feasibility.md) for why the public benchmarks were rejected. |
 
 ## Install
 
 ```bash
 git clone https://github.com/ma-compbio-lab/AgentCo-Op.git
 cd AgentCo-Op
-pip install -e .[dev]                  # core + dev
-pip install -e .[dev,bench,repo]       # add benchmarks + Docker / external-repo extras
+pip install -e .[dev]                  # core + pytest
+pip install -e .[dev,bench,repo]       # + datasets/pandas + docker/gitpython
 ```
 
-Requires Python ≥ 3.11. The `[repo]` extra enables real external-agent coordination (clones GitHub repos and optionally builds Docker images); without it the `collaborate` command still works in `--no-docker` mode.
+Requires Python ≥ 3.11. **Every core mechanism runs offline with no API key.** The compiler,
+diagnoser, and repairer are deterministic; LLM components are one adapter among several, never a
+dependency of the method.
 
-## Quick start (framework basics)
+## Quick start
 
 ```bash
-# Profile a task and compile the minimum sufficient workflow.
-agentcoop compile --task "What is 13 * 17?" --out runs/demo/blueprint.json
-
-# Execute the blueprint with the mock backend (no API keys needed).
-agentcoop run --blueprint runs/demo/blueprint.json --out runs/demo
+agentcoop bench list                       # tasks, regimes, injected faults
+agentcoop probe   --task syn-multi         # certify components by executing probes
+agentcoop compile --task syn-multi         # candidates, evidence, Pareto front, choice
+agentcoop run     --task syn-silent-empty --out runs/demo
+agentcoop diagnose runs/demo               # detect -> localize -> diagnose
+agentcoop repair  runs/demo                # bounded, shadow-validated repair
+agentcoop bench run                        # every system on every task
 ```
 
-Set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` to run the same blueprint against a real LLM through `agentcoop run-benchmark`.
+`agentcoop probe` prints what a component actually earned, and why it stopped there:
 
-## Coordinating external agents
-
-AgentCo-Op's defining feature is treating *whole GitHub repositories* — TissueAgent, GeneAgent, Seurat, Signac, GEARS, scGPT, ... — as typed workflow nodes. You declare which repos and what task you want; the framework profiles each repo, builds an isolated sandbox, registers it as a node, synthesizes a collaboration graph between them, and runs the graph end-to-end with typed handoffs.
-
-### One command
-
-```bash
-agentcoop collaborate \
-  --request docs/agents/case_study_1.request.yaml \
-  --workdir runs/case1/heart_merfish \
-  --no-docker            # use --docker on a host with a running daemon
+```
+mapper: CERTIFIED
+  [ok  ] DECLARED  declares an input or output contract
+  [ok  ] REACHABLE was executed and its entrypoint resolved
+  [ok  ] PROBED    emits its declared outputs, structurally valid and non-vacuous
+  [ok  ] CERTIFIED refuses malformed input and honours a stated budget
+  [no  ] TRUSTED   has a reliability record over real runs of this task family
+              - only 0 real-run observations recorded; 5 are required
+                (probes do not count — reliability is earned in deployment)
 ```
 
-This drives the entire pipeline:
+`agentcoop run` distinguishes "the workflow completed" from "the result is good":
 
-1. **Repo retrieval & profiling** — clones each repository under `external/`, reads its README / pyproject / requirements, infers entry points and runtime image, and writes a `manifests/repo_profile_<name>.json`.
-2. **Sandbox synthesis** — generates a Dockerfile and `docker-compose.yml` per repo (or uses the local Python env when `--no-docker`).
-3. **Node registration & graph synthesis** — registers each repo as an agent backend, then composes a workflow graph from the request's `topology` (default: broker-mediated handoff; `parallel_then_join` is built in for two-modality fan-out + integrator patterns).
-4. **Execution with typed handoffs** — runs each node, validating inputs / outputs against typed schemas, and threading artifacts through the blackboard.
-5. **Review & bounded local repair** — when a node fails or a gate fires, repairs only that node, its skill bindings, or the edge that produced the offending artifact.
-
-A run produces `compiled_workflow_graph.json`, `agent_registry.json`, per-agent artifacts under `artifacts/`, a `traces/execution_trace.jsonl`, and a `run_manifest.json` for reproducibility.
-
-### Anatomy of a request YAML
-
-You bring (a) GitHub URLs of the repos you want to coordinate and (b) a task description. AgentCo-Op derives the rest.
-
-```yaml
-# docs/agents/<your-task>.request.yaml
-case_id: tissueagent_geneagent_external_collaboration
-mode: autonomous_repo_wrapping
-model: gpt-5
-reasoning_effort: medium
-
-repositories:
-  - name: TissueAgent
-    url: https://github.com/ma-compbio/TissueAgent
-    role_hint: Spatial transcriptomics differential-expression specialist
-  - name: GeneAgent
-    url: https://github.com/ncbi-nlp/GeneAgent
-    role_hint: Gene-set interpretation + self-verified annotation specialist
-
-dataset:
-  name: developing_human_heart_merfish_farah_2024
-  local_cache_dir: data/heart_merfish
-  preferred_files:
-    - overall_merfish.h5ad
-    - README.md
-
-task:
-  title: AVN/AV ring aFibro developmental-program test
-  description: >
-    Test whether atrial fibroblasts (aFibro) in the AVN/AV ring exhibit a
-    distinct program compared with aFibro in Left/Right Atria. Use
-    TissueAgent for spatial-transcriptomics differential expression and
-    GeneAgent for gene-set interpretation.
-
-required_outputs:
-  - artifacts/tissueagent_run/de_results.csv
-  - artifacts/tissueagent_run/avn_avring_marker_genes.json
-  - artifacts/geneagent_run/geneagent_report.md
-  - artifacts/integration/final_hypothesis_report.md
+```
+outputs  : report
+run completed, but 1 blocking signal(s) say the result should not be trusted:
+  [critical] empty_output: 'finding_set' from 'analyze__analyst' is empty
+             at results while the component reported success
 ```
 
-For two-modality cross-evaluation (Case Study 2), add `topology: parallel_then_join` and a `join_agent:` block that names the integrator — see [`docs/agents/case_study_2.request.yaml`](docs/agents/case_study_2.request.yaml).
+## Architecture
 
-### Shipped examples
+```
+dossier ──▶ probe ──▶ compile ──▶ execute ──▶ diagnose ──▶ repair
+   │          │          │           │           │           │
+lint for   earn a    enumerate,   typed      detect,    propose,
+spec       certifi-  justify,     handoffs   localize,  shadow-
+defects    cation    analyse,     with       rank       validate,
+           by        Pareto-      lineage    hypotheses commit or
+           running   select                             roll back
+```
 
-| Request file | What it does |
+| Package | What it owns |
 |---|---|
-| [`docs/agents/case_study_1.request.yaml`](docs/agents/case_study_1.request.yaml) | TissueAgent × GeneAgent on developing-heart MERFISH (broker-mediated handoff). |
-| [`docs/agents/case_study_2.request.yaml`](docs/agents/case_study_2.request.yaml) | Seurat × Signac on SHARE-seq mouse skin multiome (parallel_then_join with a CellMarker / PanglaoDB integrator). |
-| [`docs/agents/case_study_2_human_heart.request.yaml`](docs/agents/case_study_2_human_heart.request.yaml) | Same topology, 10x human-heart multiome. |
-| [`docs/agents/case_study_2_lite.request.yaml`](docs/agents/case_study_2_lite.request.yaml) | Lightweight CS2 fixture for offline runs. |
+| [`ir/`](agentcoop/ir/) | The typed IR everything compiles against: artifacts with semantic facets, capability cards, design evidence, the workflow grammar, the fault taxonomy, Pareto utility. No I/O, no LLMs. |
+| [`probe/`](agentcoop/probe/) | Executable certification. Six probe kinds; `invalid_input` is the one that matters — a component that returns success on garbage records a silent `FailureSignature` and can never reach `CERTIFIED`. |
+| [`compile/`](agentcoop/compile/) | Grammar-constrained synthesis. Enumerate candidates (always including the single-component one), justify each production, run 12 static checks, estimate utility, take the Pareto front, select. |
+| [`execute/`](agentcoop/execute/) | Typed execution with full artifact lineage. Every handoff is validated at the edge, before the consumer runs. |
+| [`diagnose/`](agentcoop/diagnose/) | Detect signals → backward-slice to the earliest bad artifact → rank fault hypotheses with an entropy that says when *not* to act. |
+| [`repair/`](agentcoop/repair/) | Three tiers (contract repair / local optimization / global redesign), 25 patch families constrained by fault class, transactional commit with rollback. |
+| [`evaluate/`](agentcoop/evaluate/) | The six-level contract stack (hard / artifact / process / claim / preference / resource). Levels are never collapsed into a scalar. |
+| [`components/`](agentcoop/components/) | The invocation boundary: LLM, container, subprocess, Python function, converter, evaluator, human, coding agent. |
+| [`bench/`](agentcoop/bench/) | Task suites, fault injection with ground-truth blame, and the four baseline arms. |
 
-### Wrap a single external repository
+Two design documents carry the full argument:
+[`docs/architecture/v2_method.md`](docs/architecture/v2_method.md) maps each objection to its
+mechanism; [`docs/architecture/v2_interfaces.md`](docs/architecture/v2_interfaces.md) is the
+interface contract the implementation was written against.
 
-When you just want a typed adapter without orchestration, scaffold a wrapper manifest:
+## What the benchmark measures
+
+A benchmark on which "build a multi-agent workflow" is always right cannot measure whether a system
+knows *when* to build one. So every task declares a regime:
+
+| Regime | Correct behaviour | What it rules out |
+|---|---|---|
+| `single_sufficient` | Use one component | A system that composes reflexively |
+| `multi_necessary` | Compose — no single component can produce the answer | A system that only ever does the simple thing |
+| `multi_harmful` | Decline to compose; composing loses data | A system whose "knows when to stop" is a claim rather than a result |
+
+Task success and the composition decision are scored **separately**. A system that gets the right
+answer by composing four components where one would do has succeeded at the task and failed at the
+decision, and both appear in the table.
+
+Faults are injected with the blame target written down in advance, so localization accuracy is
+measurable rather than asserted. Half the mechanisms are *silent* — namespace corruption, empty
+output with exit code 0, stale cache, a grader that passes everything — because loud faults only
+measure whether a system reads exit codes.
+
+An arm that cannot run in the current environment reports `n/a` with the reason. It is never
+scored zero, and it is never quietly dropped from the table.
+
+> **Note.** No experimental results are reported here yet. The harness is built; which external
+> benchmarks are even feasible is reviewed in
+> [`docs/experiments/feasibility.md`](docs/experiments/feasibility.md), which documents why no
+> existing public benchmark structurally requires heterogeneous composition.
+
+## Testing
 
 ```bash
-agentcoop repo wrap \
-  --repo  https://github.com/ncbi-nlp/GeneAgent \
-  --commit a1b2c3d \
-  --name   geneagent \
-  --out    agentcoop/wrappers/geneagent/manifest.yaml
+pytest                                     # ~535 tests, ~1s, fully offline
+pytest tests/unit/test_probe.py -v
+pytest tests/integration -q                # the cross-subsystem properties
+pytest -k "silent or regime"
 ```
 
-The resulting `manifest.yaml` is consumed by the `sandbox_repo` backend and can be referenced as a skill in any compiled workflow.
+`asyncio_mode = "auto"`, so async tests need no marker.
 
-## Case studies & benchmarks
+## Relationship to the published version
 
-- **Case Study 1 — Coordinating Domain Agents** · TissueAgent × GeneAgent. See [`docs/experiments/case_study_1.md`](docs/experiments/case_study_1.md).
-- **Case Study 2 — Composing Domain Workflows** · Seurat × Signac parallel cross-modal marker discovery. See [`docs/experiments/case_study_2.md`](docs/experiments/case_study_2.md).
-- **Case Study 3 — Reusing Existing Agent Graphs** · AFlow → AgentCo-Op hybrid (MBPP 87.5). See [`docs/experiments/case_study.md`](docs/experiments/case_study.md) and `scripts/case3_aflow_dynamic.py`.
-- **Standard benchmarks** · HotpotQA, DROP, HumanEval, MBPP, GSM8K, MATH. Run with:
-  ```bash
-  agentcoop run-benchmark --dataset mbpp --limit 10 -v AC-Gated
-  ```
-
-Headline matched-backbone numbers (GPT-4o-mini):
-
-| Method | HotpotQA | DROP | HumanEval | MBPP | GSM8K | MATH | Avg |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| AFlow (GPT-4o-mini) | 71.4 | 68.9 | 89.3 | 78.2 | 86.8 | 53.1 | 74.3 |
-| LLM-Debate | 71.8 | 81.4 | **91.4** | 70.7 | 92.4 | 50.0 | 76.3 |
-| ReConcile | 73.8 | **82.1** | 89.3 | 70.3 | 93.7 | 44.1 | 75.6 |
-| **AgentCo-Op (GPT-4o-mini)** | **76.5** | 77.2 | 90.2 | **87.1** | **94.4** | **58.2** | **80.6** |
-
-See [the project page](https://ma-compbio-lab.github.io/AgentCo-Op#benchmarks) for the full table and per-dataset cost breakdown.
-
-## Repository layout
-
-```
-agentcoop/
-  core/        schemas, compiler, runtime, gates, tracing, reviewer, integrator
-  skills/      meta-skill markdown + agent-skill YAML cards
-  backends/    llm, mcp, python_sandbox, repo_sandbox, human_review
-  memory/      blackboard, artifact_store, trace_store, skill_memory
-  wrappers/    per-repo docker/adapter bundles (GeneAgent, Seurat, Signac, GEARS, ...)
-  benchmarks/  graders + the matched-backbone benchmark runner
-configs/       benchmark / case-study / gate / skill configs
-docs/
-  agents/      external-agent collaboration request YAMLs (the inputs to `agentcoop collaborate`)
-  experiments/ case-study walkthroughs
-scripts/       driver scripts (case3_aflow_dynamic.py, etc.)
-tests/         unit + integration tests
-```
+The version of AgentCo-Op described in the paper below — task profiling, skill retrieval, gate-based
+local repair, and the external-repo `collaborate` pipeline — is preserved unchanged under
+[`legacy/`](legacy/), because it is the reproducibility record for the numbers already reported. The
+benchmark table on the [project page](https://ma-compbio-lab.github.io/AgentCo-Op#benchmarks) and
+the two genomics case studies were produced by that code, not by this one.
 
 ## Citation
 

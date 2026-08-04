@@ -245,9 +245,13 @@ class ProbeOutcome(BaseModel):
     passed: bool
     duration_s: float = 0.0
     detail: str = ""
-    #: Facets the probe actually *observed* on the emitted artifact. These
-    #: override declared facets, because observation beats documentation.
-    observed_facets: FacetSet = Field(default_factory=dict)
+    #: Facets the probe actually *observed*, keyed by artifact type name — the
+    #: same shape as :attr:`EmpiricalRecord.confirmed_facets`, which is where
+    #: certification promotes them. These override declared facets, because
+    #: observation beats documentation. Keying by type rather than flattening
+    #: matters for multi-output components, where two artifacts can legitimately
+    #: carry different values for the same facet key.
+    observed_facets: dict[str, FacetSet] = Field(default_factory=dict)
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
