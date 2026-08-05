@@ -60,7 +60,13 @@ from agentcoop.optimize.loop import (
     validate_cost_profile,
 )
 from agentcoop.optimize.judge import JudgePanel, JudgeRequest, JudgeResponse
-from agentcoop.optimize.mutations import MutationProposal, workflow_fingerprint
+from agentcoop.optimize.mutations import (
+    CertifiedParameterDomain,
+    ConfigGridMutationSource,
+    ConfigMutation,
+    MutationProposal,
+    workflow_fingerprint,
+)
 from agentcoop.optimize.state import (
     CandidateEvaluation,
     CaseExecution,
@@ -76,6 +82,7 @@ from agentcoop.optimize.state import (
     OptimizationStopReason,
     MutationRecord,
 )
+from agentcoop.probe import parameter_domain_suite
 
 
 def evaluation_case(case_id: str = "case-0", *, seed: int = 7) -> EvaluationCase:
@@ -154,20 +161,46 @@ def objective_fixture() -> tuple[
         ],
         evaluators={CheckLevel.PREFERENCE: EvaluatorAvailability.RUBRIC},
     )
-    probes = [
+    certification_probes = [
         ProbeOutcome(probe_id=f"probe-{kind}", kind=kind, passed=True)
         for kind in ("reachable", "schema", "smoke", "invalid_input", "resource")
     ]
-    library = ComponentLibrary()
-    library.add(
-        CapabilityCard(
-            name="writer",
-            kind=ComponentKind.PYTHON_FUNCTION,
-            functional_capabilities=["write_report"],
-            io=IOContract(produces=[report_type]),
-            empirical=EmpiricalRecord(probes=probes),
-        )
+    card = CapabilityCard(
+        name="writer",
+        kind=ComponentKind.PYTHON_FUNCTION,
+        functional_capabilities=["write_report"],
+        io=IOContract(
+            produces=[report_type],
+            parameters={"style": {"type": "string", "default": "default"}},
+        ),
+        empirical=EmpiricalRecord(probes=certification_probes),
     )
+    domain_specs = parameter_domain_suite(
+        card,
+        parameter="style",
+        values=("default", "concise"),
+    )
+    domain_probes = [
+        ProbeOutcome(
+            probe_id=spec.probe_id,
+            kind=spec.kind,
+            passed=True,
+            evidence={
+                **spec.expectations,
+                "contract_preserving": True,
+            },
+        )
+        for spec in domain_specs
+    ]
+    card = card.model_copy(
+        update={
+            "empirical": EmpiricalRecord(
+                probes=[*certification_probes, *domain_probes]
+            )
+        }
+    )
+    library = ComponentLibrary()
+    library.add(card)
     compiler = Compiler()
     compilation = compiler.compile(dossier, library)
     assert compilation.workflow is not None
@@ -285,6 +318,40 @@ def compilation_archive(
     )
 
 
+def authorized_mutation_source(
+    ctx: RuleContext,
+    compilation: CompilationResult,
+) -> ConfigGridMutationSource:
+    parent = compilation.workflows[sorted(compilation.workflows)[0]]
+    target = atomics(parent.term)[0]
+    card = ctx.library.require(target.component)
+    specs = parameter_domain_suite(
+        card,
+        parameter="style",
+        values=("default", "concise"),
+    )
+    domain = CertifiedParameterDomain(
+        domain_id="domain::style",
+        component=target.component,
+        key="style",
+        values=("default", "concise"),
+        probe_ids=tuple(spec.probe_id for spec in specs),
+    )
+    mutation = ConfigMutation(
+        mutation_id="mutation::style",
+        target=target.term_id,
+        key="style",
+        value="concise",
+        domain_id=domain.domain_id,
+        rationale="probe-certified concise style",
+    )
+    return ConfigGridMutationSource(
+        ctx.library,
+        domains=(domain,),
+        mutations=(mutation,),
+    )
+
+
 class RecordingHarness:
     def __init__(
         self,
@@ -303,7 +370,11 @@ class RecordingHarness:
     async def __call__(
         self, workflow: CompiledWorkflow, case: EvaluationCase
     ) -> CaseExecution:
-        candidate_id = workflow.workflow_id.rsplit("::", 1)[-1]
+        candidate_id = (
+            "child"
+            if any(term.config.get("style") == "concise" for term in atomics(workflow.term))
+            else workflow.workflow_id.rsplit("::", 1)[-1]
+        )
         self.calls.append((candidate_id, case.case_id, case.seed))
         return case_execution(
             workflow,
@@ -457,7 +528,7 @@ class ExplodingPanel:
         raise RuntimeError("panel failed after transport orchestration")
 
 
-class OneChildMutationSource:
+class ForgedMutationSource:
     def propose(
         self,
         parents: tuple[OptimizationCandidate, ...],
@@ -504,6 +575,54 @@ class OneChildMutationSource:
             generation=child.generation,
         )
         return (MutationProposal(candidate=child, record=record),)
+
+
+class MixedMutationSource:
+    def __init__(self, valid: ConfigGridMutationSource) -> None:
+        self.valid = valid
+
+    def propose(
+        self,
+        parents: tuple[OptimizationCandidate, ...],
+        *,
+        seen_fingerprints: set[str],
+    ) -> tuple[MutationProposal, ...]:
+        return (
+            *self.valid.propose(
+                parents,
+                seen_fingerprints=seen_fingerprints,
+            ),
+            *ForgedMutationSource().propose(
+                parents,
+                seen_fingerprints=seen_fingerprints,
+            ),
+        )
+
+
+class ExistingIdForgedMutationSource:
+    def propose(
+        self,
+        parents: tuple[OptimizationCandidate, ...],
+        *,
+        seen_fingerprints: set[str],
+    ) -> tuple[MutationProposal, ...]:
+        parent = sorted(parents, key=lambda item: item.candidate_id)[0]
+        forged = ForgedMutationSource().propose(
+            parents,
+            seen_fingerprints=seen_fingerprints,
+        )[0]
+        candidate = forged.candidate.model_copy(
+            update={
+                "candidate_id": parent.candidate_id,
+                "static_estimate": forged.candidate.static_estimate.model_copy(
+                    update={"candidate_id": parent.candidate_id}
+                ),
+            }
+        )
+        record = forged.record.model_copy(
+            update={"child_id": parent.candidate_id}
+        )
+        return (MutationProposal(candidate=candidate, record=record),)
 
 
 class TestOptimizationStateRecords:
@@ -751,6 +870,7 @@ class TestOptimizationStateRecords:
             "budget_exhausted",
             "resource_accounting_invalid",
             "evaluator_unstable",
+            "mutation_source_invalid",
             "verbosity_baseline_unavailable",
             "no_mutations",
             "front_stable_unresolved",
@@ -1270,6 +1390,94 @@ class TestOptimizationLoopTransitions:
         assert outcome.compiler_rejections == {"x": "not executable"}
         assert harness.calls == []
 
+    async def test_default_epsilon_is_frozen_for_every_dossier_preference(
+        self,
+    ) -> None:
+        ctx, compilation = compilation_archive(("a",))
+
+        outcome = await OptimizationLoop(ctx).run(
+            compilation,
+            (evaluation_case(),),
+            RecordingHarness(),
+        )
+
+        assert outcome.policy.epsilon == {"clarity": 0.0}
+
+    @pytest.mark.parametrize(
+        "configured",
+        [
+            {"other": 0.0},
+            {"clarity": 0.0, "other": 0.0},
+        ],
+    )
+    async def test_epsilon_keys_cannot_mismatch_dossier_preferences(
+        self, configured: dict[str, float]
+    ) -> None:
+        ctx, compilation = compilation_archive(("a",))
+        configured_policy = policy().model_copy(
+            update={"epsilon": configured}
+        )
+        harness = RecordingHarness()
+
+        with pytest.raises(
+            ValueError,
+            match="epsilon keys must exactly match dossier preference IDs",
+        ):
+            await OptimizationLoop(ctx, policy=configured_policy).run(
+                compilation,
+                (evaluation_case(),),
+                harness,
+            )
+
+        assert harness.calls == []
+
+    async def test_outcome_rejects_missing_packets_and_impossible_selection(
+        self,
+    ) -> None:
+        ctx, compilation = compilation_archive(("a", "b"))
+        outcome = await OptimizationLoop(ctx, policy=policy()).run(
+            compilation,
+            (evaluation_case(),),
+            RecordingHarness(),
+        )
+        assert outcome.stop_reason is OptimizationStopReason.NO_JUDGES
+
+        without_packets = outcome.model_dump()
+        without_packets["packet_archive"] = []
+        with pytest.raises(ValidationError, match="unknown packet"):
+            OptimizationOutcome.model_validate(without_packets)
+
+        impossible_selection = outcome.model_dump()
+        impossible_selection["selected_candidate_id"] = "a"
+        with pytest.raises(ValidationError, match="stop reason"):
+            OptimizationOutcome.model_validate(impossible_selection)
+
+    async def test_outcome_rejects_archive_records_outside_frozen_cases(
+        self,
+    ) -> None:
+        ctx, compilation = compilation_archive(("a", "b"))
+        verbosity = VerbosityPolicy(
+            mode=VerbosityMode.AUTO_LOSS,
+            baseline_candidate_id="a",
+            sigma=1.1,
+        )
+        configured = policy().model_copy(update={"verbosity": verbosity})
+        outcome = await OptimizationLoop(ctx, policy=configured).run(
+            compilation,
+            (evaluation_case(),),
+            RecordingHarness(
+                payloads={"a": {"text": "short"}, "b": {"text": "long " * 50}}
+            ),
+        )
+        observation = outcome.archive.policy_observations[0].model_copy(
+            update={"case_id": "unknown-case"}
+        )
+        invalid = outcome.model_dump()
+        invalid["archive"]["policy_observations"] = [observation.model_dump()]
+
+        with pytest.raises(ValidationError, match="unknown case"):
+            OptimizationOutcome.model_validate(invalid)
+
     async def test_incomplete_compiler_archive_cannot_select_a_biased_subset(
         self,
     ) -> None:
@@ -1615,7 +1823,7 @@ class TestOptimizationLoopTransitions:
         outcome = await OptimizationLoop(
             ctx,
             policy=policy(),
-            mutation_source=OneChildMutationSource(),
+            mutation_source=authorized_mutation_source(ctx, compilation),
         ).run(compilation, (evaluation_case(),), harness)
 
         assert outcome.stop_reason is OptimizationStopReason.OBJECTIVE_SINGLETON
@@ -1623,6 +1831,56 @@ class TestOptimizationLoopTransitions:
         assert outcome.ledger.candidate_executions == 2
         assert len(outcome.mutation_records) == 1
         assert any(event.state is OptimizationState.MUTATING for event in outcome.events)
+
+    async def test_injected_mutation_source_cannot_forge_authorization(
+        self,
+    ) -> None:
+        ctx, compilation = compilation_archive(("a",))
+
+        outcome = await OptimizationLoop(
+            ctx,
+            policy=policy(),
+            mutation_source=ForgedMutationSource(),
+        ).run(compilation, (evaluation_case(),), RecordingHarness())
+
+        assert outcome.stop_reason is OptimizationStopReason.MUTATION_SOURCE_INVALID
+        assert outcome.selected_candidate_id is None
+        assert outcome.ledger.candidate_executions == 1
+        assert outcome.mutation_records == ()
+        assert any("authorization" in note for note in outcome.notes)
+
+    async def test_mixed_valid_and_forged_mutation_batch_fails_closed(
+        self,
+    ) -> None:
+        ctx, compilation = compilation_archive(("a",))
+        source = MixedMutationSource(
+            authorized_mutation_source(ctx, compilation)
+        )
+
+        outcome = await OptimizationLoop(
+            ctx,
+            policy=policy(),
+            mutation_source=source,
+        ).run(compilation, (evaluation_case(),), RecordingHarness())
+
+        assert outcome.stop_reason is OptimizationStopReason.MUTATION_SOURCE_INVALID
+        assert outcome.ledger.candidate_executions == 1
+        assert outcome.mutation_records == ()
+
+    async def test_existing_candidate_id_does_not_skip_mutation_authorization(
+        self,
+    ) -> None:
+        ctx, compilation = compilation_archive(("a",))
+
+        outcome = await OptimizationLoop(
+            ctx,
+            policy=policy(),
+            mutation_source=ExistingIdForgedMutationSource(),
+        ).run(compilation, (evaluation_case(),), RecordingHarness())
+
+        assert outcome.stop_reason is OptimizationStopReason.MUTATION_SOURCE_INVALID
+        assert outcome.ledger.candidate_executions == 1
+        assert outcome.mutation_records == ()
 
     @pytest.mark.parametrize(
         "source",
@@ -1639,7 +1897,7 @@ class TestOptimizationLoopTransitions:
             mutation_source=source,  # type: ignore[arg-type]
         ).run(compilation, (evaluation_case(),), RecordingHarness())
 
-        assert outcome.stop_reason is OptimizationStopReason.FRONT_STABLE_UNRESOLVED
+        assert outcome.stop_reason is OptimizationStopReason.MUTATION_SOURCE_INVALID
         assert outcome.selected_candidate_id is None
         assert any(
             "mutation source" in note or "untyped proposal" in note
@@ -1664,7 +1922,7 @@ class TestOptimizationLoopTransitions:
         outcome = await OptimizationLoop(
             ctx,
             policy=constrained,
-            mutation_source=OneChildMutationSource(),
+            mutation_source=authorized_mutation_source(ctx, compilation),
         ).run(compilation, (evaluation_case(),), RecordingHarness())
 
         assert outcome.stop_reason is OptimizationStopReason.BUDGET_EXHAUSTED
@@ -1764,7 +2022,7 @@ class TestOptimizationLoopTransitions:
             ctx,
             panel=panel,
             policy=policy(),
-            mutation_source=OneChildMutationSource(),
+            mutation_source=authorized_mutation_source(ctx, compilation),
         ).run(compilation, cases, harness)
 
         assert outcome.stop_reason is OptimizationStopReason.CONFIDENT_PREFERENCE
@@ -1812,7 +2070,9 @@ class TestOptimizationLoopTransitions:
         assert outcome.ledger.judge_calls == 2
         assert len(outcome.archive.attempts) == 1
 
-    async def test_repeated_runs_and_replay_are_deterministic(self) -> None:
+    async def test_repeated_runs_and_serialized_outcomes_are_deterministic(
+        self,
+    ) -> None:
         ctx, compilation = compilation_archive(("a", "b"))
         cases = tuple(evaluation_case(f"case-{index}") for index in range(3))
 

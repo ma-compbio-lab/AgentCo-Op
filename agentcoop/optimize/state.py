@@ -1,4 +1,4 @@
-"""Typed, replayable state for evidence-constrained preference search."""
+"""Typed, auditable persisted state for preference search."""
 
 from __future__ import annotations
 
@@ -94,6 +94,7 @@ class OptimizationStopReason(str, Enum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     RESOURCE_ACCOUNTING_INVALID = "resource_accounting_invalid"
     EVALUATOR_UNSTABLE = "evaluator_unstable"
+    MUTATION_SOURCE_INVALID = "mutation_source_invalid"
     VERBOSITY_BASELINE_UNAVAILABLE = "verbosity_baseline_unavailable"
     NO_MUTATIONS = "no_mutations"
     FRONT_STABLE_UNRESOLVED = "front_stable_unresolved"
@@ -440,6 +441,108 @@ class OptimizationOutcome(_FrozenRecord):
         packet_ids = tuple(packet.packet_id for packet in self.packet_archive)
         if len(packet_ids) != len(set(packet_ids)):
             raise ValueError("duplicate packet ID in optimization outcome")
+        known_packets = set(packet_ids)
+        packets_by_id = {
+            packet.packet_id: packet for packet in self.packet_archive
+        }
+        known_case_ids = set(case_ids)
+        known_case_fingerprints = set(case_fingerprints)
+        if any(
+            packet.case_id not in known_case_ids
+            for packet in self.packet_archive
+        ):
+            raise ValueError("packet archive references an unknown case")
+        for evaluation in self.candidates:
+            execution_fingerprints = {
+                execution.case_fingerprint for execution in evaluation.executions
+            }
+            if execution_fingerprints - known_case_fingerprints:
+                raise ValueError("candidate execution references an unknown case")
+            if evaluation.feasible and execution_fingerprints != known_case_fingerprints:
+                raise ValueError(
+                    "feasible candidate must contain the complete matched case set"
+                )
+            if set(evaluation.packet_ids) - known_packets:
+                raise ValueError("candidate references an unknown packet")
+            packet_case_ids = {
+                packets_by_id[packet_id].case_id
+                for packet_id in evaluation.packet_ids
+                if packet_id in packets_by_id
+            }
+            if (
+                evaluation.candidate.candidate_id in self.objective_front
+                and packet_case_ids != known_case_ids
+            ):
+                raise ValueError(
+                    "objective-front candidate packets must cover the matched case set"
+                )
+
+        successful_reasons = {
+            OptimizationStopReason.OBJECTIVE_SINGLETON,
+            OptimizationStopReason.CONFIDENT_PREFERENCE,
+            OptimizationStopReason.VERBOSITY_POLICY_SINGLETON,
+        }
+        if self.stop_reason in successful_reasons:
+            if self.selected_candidate_id is None:
+                raise ValueError("successful stop reason requires a selected candidate")
+        elif self.selected_candidate_id is not None:
+            raise ValueError("stop reason does not permit a selected candidate")
+        if self.selected_candidate_id is not None and (
+            self.selected_candidate_id not in self.objective_front
+            or self.selected_candidate_id not in self.preference_front
+        ):
+            raise ValueError("selected candidate must belong to both final fronts")
+        feasible_ids = {
+            evaluation.candidate.candidate_id
+            for evaluation in self.candidates
+            if evaluation.feasible
+        }
+        if set(self.objective_front) - feasible_ids:
+            raise ValueError("objective front contains an infeasible candidate")
+        if set(self.preference_front) - set(self.objective_front):
+            raise ValueError("preference front must be a subset of the objective front")
+
+        known_preferences = set(self.policy.epsilon)
+        for attempt in self.archive.attempts:
+            if attempt.case_id not in known_case_ids:
+                raise ValueError("panel attempt references an unknown case")
+            if {
+                attempt.candidate_a_id,
+                attempt.candidate_b_id,
+            } - known_candidates:
+                raise ValueError("panel attempt references an unknown candidate")
+        for observation in self.archive.observations:
+            if observation.case_id not in known_case_ids:
+                raise ValueError("judge observation references an unknown case")
+            if {
+                observation.candidate_a_id,
+                observation.candidate_b_id,
+            } - known_candidates:
+                raise ValueError("judge observation references an unknown candidate")
+            if observation.preference_id not in known_preferences:
+                raise ValueError("judge observation references an unknown preference")
+        for observation in self.archive.policy_observations:
+            if observation.case_id not in known_case_ids:
+                raise ValueError("policy observation references an unknown case")
+            if {
+                observation.candidate_a_id,
+                observation.candidate_b_id,
+            } - known_candidates:
+                raise ValueError("policy observation references an unknown candidate")
+            if set(observation.preference_ids) != known_preferences:
+                raise ValueError(
+                    "policy observation preferences must match frozen policy"
+                )
+        for snapshot in self.model_snapshots:
+            if set(snapshot.candidate_ids) - known_candidates:
+                raise ValueError("preference model references an unknown candidate")
+            if {
+                model.preference_id for model in snapshot.models
+            } != known_preferences:
+                raise ValueError(
+                    "preference model criteria must match frozen policy"
+                )
+
         mutation_keys = tuple(
             (record.mutation_id, record.parent_id, record.child_id)
             for record in self.mutation_records

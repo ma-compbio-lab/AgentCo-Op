@@ -69,6 +69,12 @@ specification, refuses to bind an uncertified component, refuses a join with no 
 refuses to patch on an uncertain diagnosis, and refuses to report a workflow as successful when a
 node returned exit code 0 with an empty result.
 
+When several valid workflows remain incomparable after execution, optional
+**Evidence-Constrained Preference Search (ECPS)** compares only that objective Pareto front. It
+uses anonymous outcome packets, generated rubrics, evidence-citing scorepads, order swapping, and
+two judge families. Preference is a noisy selection signal—not design evidence or scientific
+truth—so cycles, unavailable judges, and weak coverage return an explicit unresolved front.
+
 The most important thing it can do is **decline to build a multi-agent workflow**. On tasks where a
 single component suffices, composing is a measurable mistake, and the benchmark scores it as one.
 
@@ -78,7 +84,7 @@ single component suffices, composing is a measurable mistake, and the benchmark 
 |---|---|
 | Node selection, roles, and topology are just an LLM's imagination | [`ir/evidence.py`](agentcoop/ir/evidence.py) — every decision carries a `DesignEvidenceRecord`; an LLM proposal records as `ASSERTED` and **can never** make a decision admissible. [`compile/grammar.py`](agentcoop/compile/grammar.py) — each production has a stated applicability condition that must be discharged. |
 | Repair is unclear and entirely LLM-decided | [`ir/faults.py`](agentcoop/ir/faults.py) — a 10-class fault taxonomy where each class constrains which patch families are admissible. [`diagnose/localize.py`](agentcoop/diagnose/localize.py) — backward slicing over artifact lineage. [`repair/shadow.py`](agentcoop/repair/shadow.py) — a patch commits only if it fixed the symptom **and** regressed nothing. |
-| There is no optimization, only "make it run" | [`ir/utility.py`](agentcoop/ir/utility.py) — Pareto selection over seven objectives with no scalarization. Unmeasured dimensions earn no credit. [`ir/checks.py`](agentcoop/ir/checks.py) — a six-level contract stack (hard / artifact / process / claim / preference / resource) where `UNAVAILABLE` is never `PASS`, so open-ended tasks with no oracle are handled rather than faked. |
+| There is no optimization, only "make it run" | [`ir/utility.py`](agentcoop/ir/utility.py) — Pareto selection over seven objectives with no scalarization; unmeasured dimensions earn no credit. [`optimize/`](agentcoop/optimize/) — matched execution, objective gating, order-swapped rubric/scorepad judgments, criterion-wise preference inference, and probe-authorized config search. Preference never becomes evidence, and unresolved is a valid result. |
 | Why not just use Codex / Claude Code? | [`components/coding_agent.py`](agentcoop/components/coding_agent.py) — a coding agent is a *node type*, not a rival. [`bench/baselines.py`](agentcoop/bench/baselines.py) — four comparison arms, including the coding agent alone and AgentCo-Op using it as executor. |
 | Benchmarks are too easy and don't show multi-agent advantage | [`bench/`](agentcoop/bench/) — three regimes (`single_sufficient`, `multi_necessary`, `multi_harmful`), ground-truth blame targets for injected faults, and silent faults that no exit-code-reading system can find. See [feasibility review](docs/experiments/feasibility.md) for why the public benchmarks were rejected. |
 
@@ -141,12 +147,16 @@ defects    cation    analyse,     with       rank       validate,
            running   select                             roll back
 ```
 
+After matched candidate executions, `optimize/` may branch from `execute/` to resolve the observed
+Pareto front; it returns either a stable candidate or an audited unresolved set.
+
 | Package | What it owns |
 |---|---|
 | [`ir/`](agentcoop/ir/) | The typed IR everything compiles against: artifacts with semantic facets, capability cards, design evidence, the workflow grammar, the fault taxonomy, Pareto utility. No I/O, no LLMs. |
 | [`probe/`](agentcoop/probe/) | Executable certification. Six probe kinds; `invalid_input` is the one that matters — a component that returns success on garbage records a silent `FailureSignature` and can never reach `CERTIFIED`. |
 | [`compile/`](agentcoop/compile/) | Grammar-constrained synthesis. Enumerate candidates (always including the single-component one), justify each production, run 12 static checks, estimate utility, take the Pareto front, select. |
 | [`execute/`](agentcoop/execute/) | Typed execution with full artifact lineage. Every handoff is validated at the edge, before the consumer runs. |
+| [`optimize/`](agentcoop/optimize/) | Optional non-gradient preference search over an execution-admissible Pareto front. The judge is dependency-injected; there is no default live provider. |
 | [`diagnose/`](agentcoop/diagnose/) | Detect signals → backward-slice to the earliest bad artifact → rank fault hypotheses with an entropy that says when *not* to act. |
 | [`repair/`](agentcoop/repair/) | Three tiers (contract repair / local optimization / global redesign), 25 patch families constrained by fault class, transactional commit with rollback. |
 | [`components/`](agentcoop/components/) | The invocation boundary, and the four adapters that cross it: Python function, subprocess, container, and headless coding agent. |
@@ -155,7 +165,9 @@ defects    cation    analyse,     with       rank       validate,
 Two design documents carry the full argument:
 [`docs/architecture/v2_method.md`](docs/architecture/v2_method.md) maps each objection to its
 mechanism; [`docs/architecture/v2_interfaces.md`](docs/architecture/v2_interfaces.md) is the
-interface contract the implementation was written against.
+interface contract the implementation was written against. The precise ECPS IR, state machine,
+budgets, and adversarial controls are in
+[`docs/architecture/ecps_preference_search.md`](docs/architecture/ecps_preference_search.md).
 
 ## What the benchmark measures
 
@@ -188,13 +200,16 @@ scored zero, and it is never quietly dropped from the table.
 ## Testing
 
 ```bash
-pytest                                     # ~474 tests, ~1s, fully offline
+pytest                                     # complete, fully offline suite
 pytest tests/unit/test_probe.py -v
 pytest tests/integration -q                # the cross-subsystem properties
 pytest -k "silent or regime"
+env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -p pytest_asyncio.plugin \
+  tests/integration/test_preference_optimization.py -q
 ```
 
-`asyncio_mode = "auto"`, so async tests need no marker.
+`asyncio_mode = "auto"`, so async tests need no marker. The last command runs the ECPS integration
+contract with only the repository's asyncio plugin enabled.
 
 ## Relationship to the published version
 

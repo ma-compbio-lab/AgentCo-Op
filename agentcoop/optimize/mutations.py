@@ -330,6 +330,72 @@ def apply_config_mutation(
     return child
 
 
+def validate_mutation_proposal(
+    proposal: MutationProposal,
+    *,
+    parent: OptimizationCandidate,
+    library: ComponentLibrary,
+) -> str:
+    """Rebuild and verify a proposal at the optimization trust boundary.
+
+    Mutation sources are discovery mechanisms, not authorization authorities.
+    The loop calls this function before accepting any proposal, including one
+    from a custom source.
+    """
+
+    record = proposal.record
+    candidate = proposal.candidate
+    if record.parent_id != parent.candidate_id:
+        raise ValueError("mutation proposal parent does not match")
+
+    domain = CertifiedParameterDomain(
+        domain_id=record.domain_id,
+        component=record.domain_component,
+        key=record.key,
+        values=record.domain_values,
+        probe_ids=record.probe_ids,
+    )
+    mutation = ConfigMutation(
+        mutation_id=record.mutation_id,
+        target=record.target,
+        key=record.key,
+        value=record.value,
+        domain_id=record.domain_id,
+        rationale=record.rationale,
+    )
+    expected_workflow = apply_config_mutation(
+        parent.workflow,
+        mutation,
+        domain=domain,
+        library=library,
+    )
+    fingerprint = workflow_fingerprint(expected_workflow)
+    child_id = f"config::{fingerprint}"
+    expected_workflow = expected_workflow.model_copy(
+        update={
+            "workflow_id": f"ecps::{expected_workflow.task_id}::{fingerprint}"
+        },
+        deep=True,
+    )
+    expected_candidate = OptimizationCandidate(
+        candidate_id=child_id,
+        workflow=expected_workflow,
+        parent_id=parent.candidate_id,
+        mutation_id=record.mutation_id,
+        generation=parent.generation + 1,
+        static_estimate=parent.static_estimate.model_copy(
+            update={"candidate_id": child_id}, deep=True
+        ),
+    )
+    if candidate != expected_candidate:
+        raise ValueError(
+            "mutation proposal is not the exact probe-authorized one-key child"
+        )
+    if record.child_id != child_id or record.generation != parent.generation + 1:
+        raise ValueError("mutation record identity or generation is invalid")
+    return fingerprint
+
+
 class ConfigGridMutationSource:
     """Finite deterministic source over probe-certified configuration values."""
 
@@ -444,5 +510,6 @@ __all__ = [
     "ConfigMutation",
     "MutationProposal",
     "apply_config_mutation",
+    "validate_mutation_proposal",
     "workflow_fingerprint",
 ]

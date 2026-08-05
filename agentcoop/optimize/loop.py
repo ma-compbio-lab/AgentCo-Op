@@ -39,7 +39,11 @@ from agentcoop.ir.preference import (
 from agentcoop.ir.utility import Objective, UtilityVector, dominates
 from agentcoop.ir.workflow import CompiledWorkflow, atomics
 from agentcoop.optimize.judge import JudgePanel, PanelResult
-from agentcoop.optimize.mutations import MutationProposal, workflow_fingerprint
+from agentcoop.optimize.mutations import (
+    MutationProposal,
+    validate_mutation_proposal,
+    workflow_fingerprint,
+)
 from agentcoop.optimize.packets import CandidateView, build_candidate_view
 from agentcoop.optimize.preference import (
     choose_next_comparison,
@@ -377,7 +381,7 @@ def compatible_observed_front(
 
 
 class MutationSource(Protocol):
-    """Finite, deterministic source of already-authorized mutation proposals."""
+    """Finite deterministic discovery source; the loop revalidates authorization."""
 
     def propose(
         self,
@@ -449,6 +453,7 @@ class OptimizationLoop:
         objective_front_ids: tuple[str, ...] = ()
         preference_front_ids: tuple[str, ...] = ()
         contender_ids: tuple[str, ...] = ()
+        effective_policy = self.policy
 
         candidate_executions = 0
         judge_calls = 0
@@ -511,7 +516,7 @@ class OptimizationLoop:
                 contender_ids=final_contenders,
                 dossier_fingerprint=_dossier_fingerprint(self.ctx),
                 cases=ordered_cases,
-                policy=self.policy,
+                policy=effective_policy,
                 candidates=tuple(evaluations[key] for key in sorted(evaluations)),
                 compiler_rejections=dict(sorted(compiler_rejections.items())),
                 packet_archive=tuple(
@@ -540,6 +545,24 @@ class OptimizationLoop:
         }:
             return finish(OptimizationStopReason.INELIGIBLE_EVALUATOR)
 
+        preference_ids = tuple(
+            preference.preference_id for preference in self.ctx.dossier.preferences
+        )
+        configured_epsilon = set(effective_policy.epsilon)
+        expected_epsilon = set(preference_ids)
+        if configured_epsilon and configured_epsilon != expected_epsilon:
+            raise ValueError(
+                "epsilon keys must exactly match dossier preference IDs"
+            )
+        if not configured_epsilon:
+            effective_policy = effective_policy.model_copy(
+                update={
+                    "epsilon": {
+                        preference_id: 0.0 for preference_id in preference_ids
+                    }
+                }
+            )
+
         incomplete_compiler_archive = False
         for candidate_id in sorted(compilation.workflows):
             estimate = compilation.estimates.get(candidate_id)
@@ -566,7 +589,7 @@ class OptimizationLoop:
         if not candidates:
             return finish(OptimizationStopReason.NO_ADMISSIBLE_CANDIDATES)
 
-        budget = self.policy.budget
+        budget = effective_policy.budget
         initial_execution_reservation = len(candidates) * len(ordered_cases)
         if (
             len(candidates) > budget.max_candidates
@@ -708,7 +731,7 @@ class OptimizationLoop:
                         self.ctx.dossier,
                         snapshot,
                         case_id=case.case_id,
-                        max_payload_chars=self.policy.max_payload_chars,
+                        max_payload_chars=effective_policy.max_payload_chars,
                     )
                     packet_archive.setdefault(view.packet_id, view)
                     packet_by_target[(candidate_id, case.case_id)] = view
@@ -765,20 +788,24 @@ class OptimizationLoop:
                     notes.append("mutation proposal is outside the requested parent frontier")
                     invalid_source_output = True
                     continue
-                if proposal.candidate.candidate_id in candidates:
-                    continue
                 try:
-                    fingerprint = workflow_fingerprint(proposal.candidate.workflow)
+                    fingerprint = validate_mutation_proposal(
+                        proposal,
+                        parent=parent,
+                        library=self.ctx.library,
+                    )
                 except (TypeError, ValueError):
                     notes.append(
-                        f"mutation {proposal.record.mutation_id} has non-canonical identity"
+                        f"mutation {proposal.record.mutation_id} failed authorization"
                     )
                     invalid_source_output = True
+                    continue
+                if proposal.candidate.candidate_id in candidates:
                     continue
                 if fingerprint in seen_fingerprints:
                     continue
                 unseen.append((fingerprint, proposal))
-            if not unseen and invalid_source_output:
+            if invalid_source_output:
                 return "error", None
             if not unseen:
                 return "exhausted", None
@@ -817,7 +844,7 @@ class OptimizationLoop:
         ) -> tuple[tuple[str, ...] | None, OptimizationStopReason | None]:
             nonlocal archive
 
-            verbosity = self.policy.verbosity
+            verbosity = effective_policy.verbosity
             if verbosity.mode is VerbosityMode.NONE:
                 return tuple(front), None
             baseline_id = verbosity.baseline_candidate_id
@@ -945,13 +972,7 @@ class OptimizationLoop:
                 notes=(*archive.notes, *result.notes),
             )
 
-        preference_ids = tuple(
-            preference.preference_id for preference in self.ctx.dossier.preferences
-        )
-        epsilon = {
-            preference_id: self.policy.epsilon.get(preference_id, 0.0)
-            for preference_id in preference_ids
-        }
+        epsilon = dict(effective_policy.epsilon)
         pending = list(sorted(candidates))
 
         while True:
@@ -996,7 +1017,7 @@ class OptimizationLoop:
                     )
                 if mutation_status == "error":
                     return finish(
-                        OptimizationStopReason.FRONT_STABLE_UNRESOLVED,
+                        OptimizationStopReason.MUTATION_SOURCE_INVALID,
                         contenders=objective_front_ids,
                         detail="mutation neighborhood could not be enumerated",
                     )
@@ -1030,7 +1051,7 @@ class OptimizationLoop:
                     contenders=verbosity_contenders,
                 )
             families = configured_panel_families()
-            if len(families) < self.policy.min_judge_families:
+            if len(families) < effective_policy.min_judge_families:
                 return finish(
                     OptimizationStopReason.INSUFFICIENT_JUDGE_DIVERSITY,
                     contenders=verbosity_contenders,
@@ -1046,25 +1067,25 @@ class OptimizationLoop:
                     verbosity_contenders,
                     preference_ids,
                     archive.observations,
-                    ridge=self.policy.ridge,
-                    max_iterations=self.policy.max_iterations,
-                    tolerance=self.policy.tolerance,
+                    ridge=effective_policy.ridge,
+                    max_iterations=effective_policy.max_iterations,
+                    tolerance=effective_policy.tolerance,
                 )
                 preference_front_ids = infer_preference_front(
                     models,
                     epsilon=epsilon,
-                    delta=self.policy.delta,
+                    delta=effective_policy.delta,
                 )
                 winner = stable_selected_candidate(
                     verbosity_contenders,
                     preference_ids,
                     archive,
                     epsilon=epsilon,
-                    delta=self.policy.delta,
-                    min_judge_families=self.policy.min_judge_families,
-                    ridge=self.policy.ridge,
-                    max_iterations=self.policy.max_iterations,
-                    tolerance=self.policy.tolerance,
+                    delta=effective_policy.delta,
+                    min_judge_families=effective_policy.min_judge_families,
+                    ridge=effective_policy.ridge,
+                    max_iterations=effective_policy.max_iterations,
+                    tolerance=effective_policy.tolerance,
                 )
                 if winner is not None:
                     preference_front_ids = (winner,)
@@ -1080,7 +1101,7 @@ class OptimizationLoop:
                         )
                     if mutation_status == "error":
                         return finish(
-                            OptimizationStopReason.FRONT_STABLE_UNRESOLVED,
+                            OptimizationStopReason.MUTATION_SOURCE_INVALID,
                             contenders=(winner,),
                             detail="mutation neighborhood could not be enumerated",
                         )
@@ -1104,7 +1125,7 @@ class OptimizationLoop:
                         )
                         or any(
                             len(model.contributing_families)
-                            < self.policy.min_judge_families
+                            < effective_policy.min_judge_families
                             for model in models.models
                         )
                     )
@@ -1125,7 +1146,7 @@ class OptimizationLoop:
                         )
                     if mutation_status == "error":
                         return finish(
-                            OptimizationStopReason.FRONT_STABLE_UNRESOLVED,
+                            OptimizationStopReason.MUTATION_SOURCE_INVALID,
                             contenders=preference_front_ids,
                             detail="mutation neighborhood could not be enumerated",
                         )
@@ -1139,7 +1160,7 @@ class OptimizationLoop:
                         contenders=preference_front_ids,
                     )
 
-                required_calls = 2 * self.policy.min_judge_families
+                required_calls = 2 * effective_policy.min_judge_families
                 remaining_calls = budget.max_judge_calls - judge_calls
                 if remaining_calls < required_calls:
                     return finish(
@@ -1281,9 +1302,9 @@ class OptimizationLoop:
                     verbosity_contenders,
                     preference_ids,
                     archive.observations,
-                    ridge=self.policy.ridge,
-                    max_iterations=self.policy.max_iterations,
-                    tolerance=self.policy.tolerance,
+                    ridge=effective_policy.ridge,
+                    max_iterations=effective_policy.max_iterations,
+                    tolerance=effective_policy.tolerance,
                 )
                 model_snapshots.append(snapshot)
 

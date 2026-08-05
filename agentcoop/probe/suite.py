@@ -293,7 +293,6 @@ def standard_suite(
     specs: list[ProbeSpec] = []
     name = card.name
     valid = _valid_inputs(card, registry)
-    produced = [t.name for t in card.io.produces]
 
     # -- reachable ---------------------------------------------------------
     specs.append(

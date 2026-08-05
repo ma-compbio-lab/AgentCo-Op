@@ -433,8 +433,10 @@ L_k = d_k - z * sqrt(max(v_k, 0))
 ```
 
 A dominates B iff every `L_k >= -epsilon_k` and at least one
-`L_k > epsilon_k`. Epsilon is a non-negative log-odds tolerance, and the policy
-must cover every preference ID exactly. A selected candidate must dominate
+`L_k > epsilon_k`. Epsilon is a non-negative log-odds tolerance. An empty map
+means zero tolerance for every dossier preference and is expanded before work
+starts; any non-empty map must cover the preference IDs exactly. The resolved
+map is frozen in `OptimizationOutcome`. A selected candidate must dominate
 every rival under this simultaneous correction.
 
 The full archive must provide at least `min_judge_families` distinct usable
@@ -478,8 +480,17 @@ verifier, and condition fields are rejected even if declared.
 The source returns typed `MutationProposal(candidate, record)` values in
 `(parent_id, target, key, canonical value)` order, at most once, from the
 current preference front or provisional incumbent. `record` carries the full
-parent/child/key/value/domain/probe/rationale snapshot; the loop never reads
-source-private state to reconstruct it. A child gets deterministic
+parent/child/key/value/domain/probe/rationale snapshot. A mutation source is a
+discovery extension point, not an authorization authority: for every proposal,
+the loop reconstructs the domain from the record, revalidates its real library
+probes, reapplies the one-key mutation to the recorded parent, and requires the
+candidate workflow, ID, lineage, and static estimate to equal that reconstructed
+child exactly. The loop validates the entire returned batch before duplicate or
+seen filtering; one malformed or unauthorized member rejects the batch with
+`MUTATION_SOURCE_INVALID` before any child executes. A custom source is still
+trusted to enumerate its search
+neighborhood completely; use `ConfigGridMutationSource` when bounded
+exhaustiveness is required. A valid child gets deterministic
 `workflow_id="ecps::<task_id>::<fingerprint>"` while identity hashing still
 excludes workflow ID. Only then may it retain a deep copy of the parent's design
 ledger: the probe-backed domain is the evidence that the parameter variation
@@ -511,7 +522,7 @@ INITIALIZING
 | `OBJECTIVE_GATING` | multi-candidate front → verbosity/`COMPARING`; singleton with authorized unseen child → `MUTATING` | empty front → `NO_ADMISSIBLE_CANDIDATES`; exhausted singleton → `OBJECTIVE_SINGLETON` |
 | `COMPARING` | panel observations appended → `MODELING` | no judge/budget/protocol coverage → unresolved stop |
 | `MODELING` | unjudged informative pair → `COMPARING`; unseen authorized child → `MUTATING` | stable winner with no remaining child → `STOPPED(CONFIDENT_PREFERENCE)`; otherwise unresolved stop |
-| `MUTATING` | unseen config child → `EXECUTING` | no mutation/front stable → unresolved stop |
+| `MUTATING` | revalidated unseen config child → `EXECUTING` | exhausted neighborhood → front-dependent stop; invalid source → `MUTATION_SOURCE_INVALID` |
 
 Every transition emits an `OptimizationEvent`. The outcome contains all
 schema/algorithm version, dossier fingerprint, matched cases, frozen policy,
@@ -520,9 +531,14 @@ rejections, packet views, ordered calls and judgments, normalized judge and
 policy observations, every preference-model snapshot, full mutation records
 (parent/child/target/key/value/domain values/probe refs/rationale), budget
 ledger, explicit objective and preference fronts, selected ID if any, typed
-stop reason, events, and notes. These are sufficient to replay selection
-without executing a component or judge. Returning a selected workflow does not
-mutate its evidence ledger or append preference provenance.
+stop reason, events, and notes. These are sufficient to reconstruct selection
+records without executing a component or judge: JSON validation rebuilds
+them losslessly and checks cross-record candidate/case/packet/front/stop
+references, while the public pure inference functions support offline
+refitting. This release does not expose a one-call terminal-decision replay
+verifier; a caller that needs to reproduce exploration termination must also
+retain the configured panel and mutation neighborhood. Returning a selected
+workflow does not mutate its evidence ledger or append preference provenance.
 
 A provisional confident incumbent or objective singleton does not end search
 while an authorized unseen configuration child remains. Mutation parents are
@@ -571,6 +587,7 @@ Normal stop reasons are:
 - `BUDGET_EXHAUSTED`
 - `RESOURCE_ACCOUNTING_INVALID`
 - `EVALUATOR_UNSTABLE`
+- `MUTATION_SOURCE_INVALID`
 - `VERBOSITY_BASELINE_UNAVAILABLE`
 - `NO_MUTATIONS`
 - `FRONT_STABLE_UNRESOLVED`
@@ -581,8 +598,10 @@ panel is checked only after objective gating, so an objective or verbosity
 singleton needs no judge. `NO_JUDGES` means no panel was injected;
 `INSUFFICIENT_JUDGE_DIVERSITY` means too few families were configured;
 `EVALUATOR_UNSTABLE` means enough families were configured but valid
-order-swapped coverage could not be obtained. `FRONT_STABLE_UNRESOLVED` means
-valid coverage was exhausted with no stable winner. `NO_MUTATIONS` has only the
+order-swapped coverage could not be obtained. `MUTATION_SOURCE_INVALID` means a
+configured source failed, returned malformed output, or proposed a child that
+could not be independently reauthorized. `FRONT_STABLE_UNRESOLVED` means valid
+coverage was exhausted with no stable winner. `NO_MUTATIONS` has only the
 unresolved-front meaning above; exhausted neighborhoods never override an
 objective or confident winner's successful stop reason.
 
@@ -652,11 +671,13 @@ objective or confident winner's successful stop reason.
   child workflow ID, and typed proposal/record pairing;
 - reject undeclared, unprobed, uncertified, out-of-domain, and reserved
   contract-changing configuration mutations;
+- independently reject custom-source topology/evidence/static-estimate forgeries,
+  including mixed valid/invalid batches and forged existing IDs;
 - same ordered cases/seeds/limits/tool snapshot for every candidate;
 - exact state transitions and every stop reason;
 - hard count reservations and post-call soft-limit overshoot semantics;
-- selected/unresolved outcomes serialize and replay;
-- schema and algorithm versions both survive replay;
+- selected/unresolved outcomes round-trip with cross-record validation;
+- schema and algorithm versions both survive JSON reconstruction;
 - workflow evidence and objective utility are byte-equivalent before/after
   preference selection.
 
@@ -668,7 +689,7 @@ objective or confident winner's successful stop reason.
 - always-left judge is neutralized by order swapping;
 - A>B, B>C, C>A stays unresolved;
 - pure verbosity duplication cannot win under auto-loss;
-- real ProbeRunner domain evidence authorizes a child that executes and replays;
+- real ProbeRunner domain evidence authorizes a child that executes and round-trips;
 - unsupported claim and rubric-keyword/prompt-injection payloads cannot alter
   protocol fields;
 - all existing compile/execute/diagnose/repair/bench tests remain green.

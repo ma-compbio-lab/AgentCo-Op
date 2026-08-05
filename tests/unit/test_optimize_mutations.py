@@ -24,7 +24,6 @@ from agentcoop.ir.capability import (
     ComponentKind,
     ComponentLibrary,
     CostProfile,
-    EmpiricalRecord,
     IOContract,
 )
 from agentcoop.ir.faults import FaultClass
@@ -263,7 +262,7 @@ class TestConfigMutation:
 
 
 class TestConfigGridMutationSource:
-    async def test_proposals_are_deterministic_deduplicated_and_replayable(self) -> None:
+    async def test_proposals_are_deterministic_deduplicated_and_auditable(self) -> None:
         setup = await authorized()
         duplicate = setup.mutation.model_copy(update={"mutation_id": "duplicate"})
         source = ConfigGridMutationSource(

@@ -1,16 +1,17 @@
 # AgentCo-Op v2 — module interface contract
 
 This document is the coordination contract for the v2 rebuild. The typed IR in
-`agentcoop/ir/` is already written and is **authoritative**: read it before
-implementing anything here. Every subsystem below compiles against it.
+`agentcoop/ir/` is **authoritative**: read it before implementing anything
+here. Every subsystem below compiles against it.
 
 ## Non-negotiable constraints
 
 1. **No LLM is required for any core mechanism.** Compilation, static analysis,
    localization, diagnosis, patch proposal, shadow validation, and evaluation
    must all work deterministically with zero API keys. An LLM may only ever be
-   an *optional refinement layer*, and anything it produces enters the system as
-   `EvidenceStrength.ASSERTED`, which is never load-bearing.
+   an *optional refinement layer*. Design claims it produces enter as
+   `EvidenceStrength.ASSERTED`, which is never load-bearing; preference
+   judgments remain separate protocol records and never become evidence.
 2. **Determinism.** No `random` without an explicit seed, no wall-clock in
    decisions, no dict-iteration-order dependence. Same inputs → same outputs.
 3. **Dependencies are frozen**: pydantic v2, typer, rich, networkx, pyyaml,
@@ -18,8 +19,9 @@ implementing anything here. Every subsystem below compiles against it.
    only behind a guarded import. Do not add dependencies.
 4. **Every module ships tests** under `tests/unit/test_<module>.py`. Tests must
    run offline in under a second each.
-5. **Stay in your lane.** Only create/modify files under your assigned paths.
-   Never edit `agentcoop/ir/` — if the IR seems wrong, note it in your report.
+5. **Treat IR changes as cross-package contracts.** Any persistent record added
+   to `agentcoop/ir/` requires strict validation, JSON replay tests, and tests at
+   every adapter or state-machine boundary that consumes it.
 6. Python ≥ 3.11, `from __future__ import annotations`, full type annotations,
    `model_config = ConfigDict(extra="forbid")` on new pydantic models.
 
@@ -79,7 +81,7 @@ Adapters, each in its own module:
 | `python_fn.py` | `PythonFunctionAdapter` | wraps a callable; the deterministic workhorse |
 | `subprocess_adapter.py` | `SubprocessAdapter` | runs a command, collects declared output files, enforces timeout, captures exit code |
 | `container.py` | `ContainerAdapter` | `docker run`; must degrade to a clear `ok=False` with a `FaultClass.ENVIRONMENT`-shaped error when Docker is absent — never silently fall back to the host |
-| `coding_agent.py` | `CodingAgentAdapter` | headless `codex exec` / `claude -p`; **this is the Codex/Claude-Code-as-executor path**, see §10 |
+| `coding_agent.py` | `CodingAgentAdapter` | headless `codex exec` / `claude -p`; **this is the Codex/Claude-Code-as-executor path**, see §11 |
 
 Every adapter records `observed_facets` where it can. `ContainerAdapter` and
 `CodingAgentAdapter` must be importable and unit-testable without Docker or the
@@ -414,7 +416,97 @@ its rollback point.
 
 ---
 
-## 9. `agentcoop/bench/` — task suites, fault injection, baselines
+## 9. `agentcoop/optimize/` — evidence-constrained preference search
+
+ECPS is an optional post-execution resolver for a multi-candidate objective
+front. It is eligible only when the dossier declares preferences and
+`CheckLevel.PREFERENCE` availability is `RUBRIC` or `PREFERENCE_ONLY`. With no
+injected panel, it returns the observed front with a typed `NO_JUDGES` stop; no
+live model provider, API key, or network call is built in.
+
+`CompilationResult.workflows` is the executable archive of every candidate
+that passed justification and blocking static analysis. The caller supplies a
+matched case contract and an execution harness:
+
+```python
+class EvaluationCase(BaseModel):
+    case_id: str
+    input_fingerprint: str
+    seed: int
+    limits: ResourceLimits
+    evaluator_ids: tuple[str, ...]
+    tool_snapshot_id: str
+
+class CaseExecution(BaseModel):
+    case_fingerprint: str
+    result: ExecutionResult
+    cost_unit: CostUnit | None
+    latency_measured: bool
+
+OptimizationHarness = Callable[
+    [CompiledWorkflow, EvaluationCase], Awaitable[CaseExecution]
+]
+
+class OptimizationLoop:
+    def __init__(self, ctx, *, panel=None, policy=None, mutation_source=None): ...
+    async def run(self, compilation, cases, harness) -> OptimizationOutcome: ...
+```
+
+The loop validates a complete matched execution set, removes subjective checks
+from the objective snapshot, reapplies design/static/runtime/resource gates,
+and derives a Pareto front using one front-wide measured-objective mask. Only
+that front is converted to anonymous `CandidateView` packets. A `JudgePanel`
+uses two distinct `PreferenceJudge` families in both presentation orders; a
+third family is arbitration only. Each judge must generate a task-specific
+`PairRubric` and evidence-citing `Scorepad`. `ComponentPreferenceJudge` carries
+this protocol over `AdapterRegistry`; adapter-reported `InvocationResult.cost`
+is authoritative, while payload-reported cost is ignored.
+
+Persistent records are in `ir/preference.py`: `MetaRubric`, `PairRubric`,
+`Scorepad`, ordered judgments, normalized pair/policy observations, call and
+panel-attempt records, and `PreferenceArchive`. They do not inherit from or
+write to design evidence, checks, or utility. Criterion-wise Bradley–Terry
+models never sum scorepad scores or read `Preference.weight_hint`; stable
+selection requires simultaneous lower-bound dominance and leave-one-family-out
+agreement. Cycles, invalid/unavailable judges, or insufficient coverage are
+normal unresolved outcomes. `epsilon={}` is expanded to a frozen zero for each
+dossier preference; a non-empty partial or extra-key map is rejected before
+execution.
+
+The persisted state machine is:
+
+```text
+INITIALIZING → EXECUTING → OBJECTIVE_GATING
+                   ↑              ↓
+                MUTATING ← MODELING ↔ COMPARING
+                                  ↓
+                               STOPPED
+```
+
+`OptimizationOutcome` freezes cases, resolved policy,
+candidates/executions, objective
+and preference fronts, packet and preference archives, model snapshots,
+mutation records, events, resource ledger, selected ID, and typed stop reason.
+`ConfigGridMutationSource` may generate only one-key `Atomic` config children
+from a `CertifiedParameterDomain` proven by real schema/smoke/resource probes.
+Every proposal from any injected `MutationSource` is independently rebuilt and
+reauthorized against `RuleContext.library`; a forged topology, evidence ledger,
+lineage, estimate, domain, or probe set stops `MUTATION_SOURCE_INVALID` before
+execution. Validation precedes duplicate/seen filtering and is fail-closed for
+the whole returned batch. A custom source remains responsible for enumeration
+completeness;
+the built-in finite grid is the exhaustive option. JSON loading also
+cross-validates candidate/case/packet/front/model
+references and the selected-ID/stop-reason relationship. It provides lossless
+record reconstruction and inputs for offline refitting, not a one-call replay
+of panel or unexplored mutation-source configuration.
+Topology, component, or contract-affecting changes must return through
+`Compiler`. The complete protocol and stopping rules are specified in
+[`ecps_preference_search.md`](ecps_preference_search.md).
+
+---
+
+## 10. `agentcoop/bench/` — task suites, fault injection, baselines
 
 ```python
 class BenchTask(BaseModel):
@@ -444,7 +536,7 @@ multi-agent workflow" is a measurable success rather than a claim.
 
 ---
 
-## 10. Positioning: coding agents as executors, not rivals
+## 11. Positioning: coding agents as executors, not rivals
 
 `CodingAgentAdapter` exists so a general coding agent can be a *node* inside a
 compiled workflow. The comparison harness must support all four arms:
@@ -460,7 +552,7 @@ layers compose rather than compete.
 
 ---
 
-## 11. CLI surface (`agentcoop/cli.py`)
+## 12. CLI surface (`agentcoop/cli.py`)
 
 ```
 agentcoop dossier lint <dossier.yaml>          # specification defects

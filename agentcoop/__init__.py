@@ -12,6 +12,7 @@ Layout::
     probe/      executable capability certification
     compile/    grammar-constrained synthesis, static analysis, Pareto selection
     execute/    typed execution with artifact lineage
+    optimize/   evidence-constrained, non-gradient preference search
     diagnose/   detect -> localize -> diagnose
     repair/     propose -> shadow validate -> commit/rollback
     components/ the invocation boundary and its concrete adapters

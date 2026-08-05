@@ -135,6 +135,34 @@ enrichment sensitivity to database choice, negative-control behaviour, and
 traceability to specific cells and genes — none of which requires a ground-truth
 answer.
 
+#### Post-execution preference resolution
+
+When objective checks leave several incomparable workflows, v2 may run
+**Evidence-Constrained Preference Search (ECPS)**. This is a bounded,
+non-gradient selection loop, not RL and not a claim that an LLM judge is an
+oracle. Every compiler-admissible candidate is executed on the same case set;
+runtime gates remove invalid, incomplete, silently failing, or over-budget
+candidates before a judge sees them. The survivors form an observed Pareto
+front with one common measurement mask and cost unit.
+
+An optional injected judge panel then follows a forced protocol: read anonymous
+outcome packets, generate one operational criterion per dossier preference,
+complete an evidence-citing scorepad, and repeat with candidate order reversed.
+Two distinct model families are required for selection. Criterion-wise
+Bradley–Terry models schedule uncertain comparisons and select only a candidate
+that conservatively dominates every rival and remains selected when either
+family is removed. Scores are never summed across preferences.
+
+Judge output lives in `ir/preference.py`, separate from design evidence,
+objective checks, and utility. It cannot justify topology, change a
+`UtilityVector`, or prove scientific correctness. Cycles, position bias,
+unavailable evaluators, incomplete coverage, or exhausted budgets therefore
+produce a typed unresolved front. A deterministic verbosity budget may reject
+outputs that exceed a declared baseline multiplier before judging. Optional
+search is limited to one-key `Atomic` configuration changes backed by real
+schema/smoke/resource probes; topology or component changes return through the
+compiler. See [the full ECPS specification](ecps_preference_search.md).
+
 ### 4. "Why not just use Codex or Claude Code?"
 
 **Mechanism: treat them as executor backends, and measure the difference.**

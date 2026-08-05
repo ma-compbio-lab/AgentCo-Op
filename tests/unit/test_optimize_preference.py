@@ -15,7 +15,6 @@ from agentcoop.ir.preference import (
     JudgeCallRecord,
     JudgeCallStatus,
     MetaRubric,
-    ObservationStatus,
     OrderedPairJudgment,
     PairRubric,
     PairwisePreferenceObservation,
