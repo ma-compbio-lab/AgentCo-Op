@@ -581,6 +581,61 @@ class TestStaticAnalysis:
 
 
 class TestCompiler:
+    def test_retains_exactly_justified_static_pass_workflows(self) -> None:
+        lib = ComponentLibrary()
+        lib.add(
+            card(
+                "de",
+                ["differential_expression"],
+                ["matrix"],
+                ["gene_set"],
+                env=EnvironmentContract(python="3.9"),
+            )
+        )
+        lib.add(
+            card(
+                "gi",
+                ["gene_set_interpretation"],
+                ["gene_set"],
+                ["report"],
+                env=EnvironmentContract(python="3.11"),
+            )
+        )
+        lib.add(
+            card(
+                "omni",
+                ["differential_expression", "gene_set_interpretation"],
+                ["matrix", "gene_set"],
+                ["gene_set", "report"],
+            )
+        )
+
+        result = Compiler().compile(two_step_dossier(), lib)
+
+        assert set(result.workflows) == set(result.estimates)
+        assert set(result.workflows).isdisjoint(result.rejected)
+        assert "single::omni" in result.workflows
+        assert any(candidate_id.startswith("composed") for candidate_id in result.rejected)
+
+    def test_selected_workflow_is_the_provenance_updated_archive_object(self) -> None:
+        lib = ComponentLibrary()
+        lib.add(card("de", ["differential_expression"], ["matrix"], ["gene_set"]))
+        lib.add(card("gi", ["gene_set_interpretation"], ["gene_set"], ["report"]))
+        lib.add(
+            card(
+                "omni",
+                ["differential_expression", "gene_set_interpretation"],
+                ["matrix", "gene_set"],
+                ["gene_set", "report"],
+            )
+        )
+
+        result = Compiler().compile(two_step_dossier(), lib)
+
+        assert result.selection is not None and result.selection.chosen is not None
+        assert result.workflow is result.workflows[result.selection.chosen]
+        assert result.workflow.provenance[-1].startswith("selection:")
+
     def test_compiles_a_two_specialist_workflow(self) -> None:
         lib = ComponentLibrary()
         lib.add(card("de", ["differential_expression"], ["matrix"], ["gene_set"]))

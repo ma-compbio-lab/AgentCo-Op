@@ -54,6 +54,8 @@ class CompilationResult(BaseModel):
     candidates: list[CandidateWorkflow] = Field(default_factory=list)
     static_reports: dict[str, CheckReport] = Field(default_factory=dict)
     justifications: dict[str, JustificationResult] = Field(default_factory=dict)
+    #: Candidate ID -> executable workflow that passed justification and static analysis.
+    workflows: dict[str, CompiledWorkflow] = Field(default_factory=dict)
     estimates: dict[str, UtilityEstimate] = Field(default_factory=dict)
     selection: Optional[SelectionResult] = None
     dossier_defects: list[str] = Field(default_factory=list)
@@ -192,6 +194,8 @@ class Compiler:
                 )
                 continue
 
+            result.workflows[candidate.candidate_id] = workflow
+
             estimate = estimate_utility(
                 candidate.candidate_id, workflow, report, candidate.ledger, ctx
             )
@@ -207,22 +211,16 @@ class Compiler:
             )
             return result
 
-        winner = next(
-            c for c in enumeration.candidates if c.candidate_id == selection.chosen
+        selected_workflow = result.workflows[selection.chosen].model_copy(
+            update={
+                "provenance": [
+                    *result.workflows[selection.chosen].provenance,
+                    f"selection:{selection.rationale}",
+                ]
+            }
         )
-        result.workflow = CompiledWorkflow(
-            workflow_id=f"{workflow_id}::{winner.candidate_id}",
-            task_id=dossier.task_id,
-            term=winner.term,
-            evidence=winner.ledger,
-            repair_policy=self.repair_policy,
-            evaluation_contract=[],
-            compile_notes=list(winner.construction_log),
-            provenance=[
-                f"candidate:{winner.candidate_id}",
-                f"selection:{selection.rationale}",
-            ],
-        )
+        result.workflows[selection.chosen] = selected_workflow
+        result.workflow = selected_workflow
         return result
 
 
