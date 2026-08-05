@@ -56,7 +56,11 @@ from agentcoop.ir.capability import (
 from agentcoop.ir.dossier import ResourceLimits
 from agentcoop.ir.faults import FaultClass
 from agentcoop.probe.spec import ProbeSpec
-from agentcoop.probe.suite import resolve_type, standard_suite
+from agentcoop.probe.suite import (
+    _parameter_value_hash,
+    resolve_type,
+    standard_suite,
+)
 
 #: Faults that mean the component was never actually reached, as opposed to
 #: reached and unhappy. Only these can fail the ``reachable`` probe.
@@ -473,6 +477,32 @@ class ProbeRunner:
         payload.setdefault("errors", list(attempt.result.errors[:4]))
         payload["cost"] = attempt.result.cost.model_dump()
         payload["description"] = spec.description
+        if spec.expectations.get("probe_scope") == "parameter_domain":
+            metadata_keys = (
+                "probe_scope",
+                "parameter",
+                "allowed_values_hash",
+                "value_hash",
+                "contract_hash",
+                "output_context_id",
+            )
+            metadata_valid = all(key in spec.expectations for key in metadata_keys)
+            parameter = spec.expectations.get("parameter")
+            if metadata_valid and isinstance(parameter, str) and parameter in spec.config:
+                try:
+                    metadata_valid = (
+                        _parameter_value_hash(spec.config[parameter])
+                        == spec.expectations["value_hash"]
+                    )
+                except (TypeError, ValueError, UnicodeError):
+                    metadata_valid = False
+            else:
+                metadata_valid = False
+            for key in metadata_keys:
+                if key in spec.expectations:
+                    payload[key] = spec.expectations[key]
+            payload["probe_metadata_valid"] = metadata_valid
+            payload["contract_preserving"] = bool(passed and metadata_valid)
         return ProbeOutcome(
             probe_id=spec.probe_id,
             kind=spec.kind,

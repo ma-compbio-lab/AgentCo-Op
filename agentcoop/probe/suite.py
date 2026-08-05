@@ -22,7 +22,10 @@ anything, which is the weakest possible reading of the word.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple, Optional
+import hashlib
+import json
+import math
+from typing import Any, NamedTuple, Optional, Sequence
 
 from agentcoop.ir.artifacts import ArtifactType, TypeRegistry
 from agentcoop.ir.capability import CapabilityCard, CostProfile
@@ -41,6 +44,86 @@ DEFAULT_RESOURCE_LIMIT_S = 60.0
 #: Seed used by the determinism probe. Fixed, because varying it would make
 #: certification irreproducible for exactly the components it is testing.
 DETERMINISM_SEED = 20240617
+
+
+def _strict_json_value(value: Any, *, seen: set[int], depth: int = 0) -> Any:
+    if depth > 64:
+        raise ValueError("parameter value nesting exceeds limit")
+    if value is None or type(value) in (bool, int):
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("parameter values must be finite")
+        return value
+    if type(value) is str:
+        value.encode("utf-8")
+        return value
+    if type(value) is list:
+        identity = id(value)
+        if identity in seen:
+            raise ValueError("parameter values cannot be cyclic")
+        seen.add(identity)
+        try:
+            return [
+                _strict_json_value(item, seen=seen, depth=depth + 1)
+                for item in value
+            ]
+        finally:
+            seen.remove(identity)
+    if type(value) is dict:
+        identity = id(value)
+        if identity in seen:
+            raise ValueError("parameter values cannot be cyclic")
+        if any(type(key) is not str for key in value):
+            raise ValueError("parameter mappings require string keys")
+        for key in value:
+            key.encode("utf-8")
+        seen.add(identity)
+        try:
+            return {
+                key: _strict_json_value(value[key], seen=seen, depth=depth + 1)
+                for key in sorted(value)
+            }
+        finally:
+            seen.remove(identity)
+    raise ValueError("parameter values must be canonical JSON")
+
+
+def _strict_canonical_json(value: Any) -> str:
+    normalized = _strict_json_value(value, seen=set())
+    return json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _canonical_parameter_values(values: Sequence[Any]) -> tuple[Any, ...]:
+    normalized = [
+        (_strict_canonical_json(value), _strict_json_value(value, seen=set()))
+        for value in values
+    ]
+    if not normalized:
+        raise ValueError("parameter domain values must not be empty")
+    serialized = [item[0] for item in normalized]
+    if len(serialized) != len(set(serialized)):
+        raise ValueError("parameter domain values must be unique")
+    return tuple(value for _, value in sorted(normalized, key=lambda item: item[0]))
+
+
+def _parameter_values_hash(values: Sequence[Any]) -> str:
+    canonical_values = _canonical_parameter_values(values)
+    return _sha256(_strict_canonical_json(list(canonical_values)))
+
+
+def _parameter_value_hash(value: Any) -> str:
+    return _sha256(_strict_canonical_json(value))
 
 
 def resolve_type(
@@ -294,6 +377,116 @@ def standard_suite(
     return specs
 
 
+def parameter_domain_suite(
+    card: CapabilityCard,
+    *,
+    parameter: str,
+    values: Sequence[Any],
+    registry: Optional[TypeRegistry] = None,
+) -> list[ProbeSpec]:
+    """Probe a finite declared configuration domain through existing handlers."""
+    if not isinstance(parameter, str) or not parameter or parameter != parameter.strip():
+        raise ValueError("parameter must be a non-empty canonical string")
+    if parameter not in card.io.parameters:
+        raise ValueError(f"parameter '{parameter}' is not declared by '{card.name}'")
+    canonical_values = _canonical_parameter_values(values)
+    allowed_values_hash = _parameter_values_hash(canonical_values)
+    contract_hash = _sha256(_strict_canonical_json(card.io.model_dump(mode="python")))
+    valid = _valid_inputs(card, registry)
+    smoke_inputs, input_source = _smoke_inputs(card, registry, valid)
+    contexts = _output_contexts(card)
+    specs: list[ProbeSpec] = []
+
+    for value in canonical_values:
+        value_hash = _parameter_value_hash(value)
+        common = {
+            "probe_scope": "parameter_domain",
+            "parameter": parameter,
+            "allowed_values_hash": allowed_values_hash,
+            "value_hash": value_hash,
+            "contract_hash": contract_hash,
+        }
+        for context in contexts:
+            context_body = {
+                "produces": context.produces,
+                "subgoal_id": context.subgoal_id,
+                "config": context.config,
+            }
+            context_id = _sha256(_strict_canonical_json(context_body))
+            config = {**context.config, parameter: value}
+            suffix = (
+                "parameter_domain",
+                parameter,
+                allowed_values_hash,
+                value_hash,
+                context_id,
+            )
+            specs.append(
+                ProbeSpec(
+                    probe_id=probe_id_for(card.name, "schema", *suffix),
+                    kind="schema",
+                    description=(
+                        f"confirm parameter '{parameter}' value {value_hash[:8]} "
+                        f"preserves {context.described}"
+                    ),
+                    inputs=dict(valid),
+                    expectations={
+                        **common,
+                        "output_context_id": context_id,
+                        "produces": list(context.produces),
+                        "validate_schema": True,
+                    },
+                    config=config,
+                    subgoal_id=context.subgoal_id,
+                )
+            )
+            specs.append(
+                ProbeSpec(
+                    probe_id=probe_id_for(card.name, "smoke", *suffix),
+                    kind="smoke",
+                    description=(
+                        f"confirm parameter '{parameter}' value {value_hash[:8]} "
+                        f"produces a non-vacuous {context.described}"
+                    ),
+                    inputs=dict(smoke_inputs),
+                    expectations={
+                        **common,
+                        "output_context_id": context_id,
+                        "produces": list(context.produces),
+                        "require_non_empty": True,
+                        "input_source": input_source,
+                    },
+                    config=config,
+                    subgoal_id=context.subgoal_id,
+                )
+            )
+
+        resource_suffix = (
+            "parameter_domain",
+            parameter,
+            allowed_values_hash,
+            value_hash,
+        )
+        specs.append(
+            ProbeSpec(
+                probe_id=probe_id_for(card.name, "resource", *resource_suffix),
+                kind="resource",
+                description=(
+                    f"confirm parameter '{parameter}' value {value_hash[:8]} "
+                    "honours the declared resource budget"
+                ),
+                inputs=dict(valid),
+                expectations={
+                    **common,
+                    "output_context_id": "resource",
+                    "limits": _resource_limits(card),
+                },
+                config={parameter: value},
+            )
+        )
+    return specs
+
+
 def _invalid_input_specs(
     card: CapabilityCard,
     registry: Optional[TypeRegistry],
@@ -359,6 +552,7 @@ def _invalid_input_specs(
 
 __all__ = [
     "standard_suite",
+    "parameter_domain_suite",
     "applicable_corruptions",
     "resolve_type",
     "OutputContext",

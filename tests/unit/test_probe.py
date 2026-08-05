@@ -41,6 +41,7 @@ from agentcoop.probe import (
     derived_level,
     explain_level,
     first_blocking_step,
+    parameter_domain_suite,
     probe_artifact,
     standard_suite,
     synthesize_payload,
@@ -284,6 +285,142 @@ class TestSuite:
             s for s in standard_suite(card(), registry=registry()) if s.kind == "smoke"
         )
         assert smoke.expectations["input_source"] == "synthetic"
+
+    def test_parameter_domain_suite_uses_existing_kinds_for_every_value(self) -> None:
+        parameterized = card(
+            io=IOContract(
+                consumes=[GENE_SET],
+                produces=[ENRICHMENT],
+                parameters={"temperature": {"type": "number"}},
+            )
+        )
+
+        first = parameter_domain_suite(
+            parameterized,
+            parameter="temperature",
+            values=(0.1, 0.2),
+            registry=registry(),
+        )
+        second = parameter_domain_suite(
+            parameterized,
+            parameter="temperature",
+            values=(0.1, 0.2),
+            registry=registry(),
+        )
+
+        assert [spec.probe_id for spec in first] == [spec.probe_id for spec in second]
+        assert {spec.kind for spec in first} == {"schema", "smoke", "resource"}
+        assert len(first) == 6
+        assert all(spec.config["temperature"] in {0.1, 0.2} for spec in first)
+        assert all(
+            spec.expectations["probe_scope"] == "parameter_domain"
+            for spec in first
+        )
+
+    async def test_only_real_parameter_handlers_stamp_contract_evidence(self) -> None:
+        parameterized = card(
+            io=IOContract(
+                consumes=[GENE_SET],
+                produces=[ENRICHMENT],
+                parameters={"temperature": {"type": "number"}},
+            )
+        )
+        specs = parameter_domain_suite(
+            parameterized,
+            parameter="temperature",
+            values=(0.1, 0.2),
+            registry=registry(),
+        )
+
+        outcomes = await runner(FakeAdapter()).run_suite(parameterized, specs)
+
+        assert all(outcome.passed for outcome in outcomes)
+        assert all(
+            outcome.evidence["probe_scope"] == "parameter_domain"
+            and outcome.evidence["parameter"] == "temperature"
+            and outcome.evidence["contract_preserving"] is True
+            and outcome.evidence["allowed_values_hash"]
+            and outcome.evidence["value_hash"]
+            for outcome in outcomes
+        )
+
+    async def test_failed_parameter_handler_cannot_stamp_contract_preserving(self) -> None:
+        class RejectOne(FakeAdapter):
+            async def invoke(self, inv: Invocation) -> InvocationResult:
+                if inv.config.get("temperature") == 0.2:
+                    return InvocationResult(
+                        ok=False,
+                        errors=[error_line(FaultClass.TOOL_FAILURE, "rejected value")],
+                    )
+                return await super().invoke(inv)
+
+        parameterized = card(
+            io=IOContract(
+                consumes=[GENE_SET],
+                produces=[ENRICHMENT],
+                parameters={"temperature": {"type": "number"}},
+            )
+        )
+        specs = parameter_domain_suite(
+            parameterized,
+            parameter="temperature",
+            values=(0.1, 0.2),
+            registry=registry(),
+        )
+
+        outcomes = await runner(RejectOne()).run_suite(parameterized, specs)
+        failed = [outcome for outcome in outcomes if not outcome.passed]
+
+        assert failed
+        assert all(
+            outcome.evidence["contract_preserving"] is False
+            for outcome in failed
+        )
+
+    async def test_mutated_parameter_config_cannot_reuse_suite_stamp(self) -> None:
+        parameterized = card(
+            io=IOContract(
+                consumes=[GENE_SET],
+                produces=[ENRICHMENT],
+                parameters={"temperature": {"type": "number"}},
+            )
+        )
+        spec = parameter_domain_suite(
+            parameterized,
+            parameter="temperature",
+            values=(0.1, 0.2),
+            registry=registry(),
+        )[0]
+        altered = spec.model_copy(
+            update={"config": {**spec.config, "temperature": 0.9}},
+            deep=True,
+        )
+
+        outcome = await runner(FakeAdapter()).run_probe(parameterized, altered)
+
+        assert outcome.passed
+        assert outcome.evidence["contract_preserving"] is False
+
+    async def test_partial_scope_metadata_never_crashes_or_stamps_true(self) -> None:
+        ordinary = next(
+            spec
+            for spec in standard_suite(card(), registry=registry())
+            if spec.kind == "schema"
+        )
+        malformed = ordinary.model_copy(
+            update={
+                "expectations": {
+                    **ordinary.expectations,
+                    "probe_scope": "parameter_domain",
+                }
+            },
+            deep=True,
+        )
+
+        outcome = await runner(FakeAdapter()).run_probe(card(), malformed)
+
+        assert outcome.passed
+        assert outcome.evidence["contract_preserving"] is False
 
 
 # ---------------------------------------------------------------------------

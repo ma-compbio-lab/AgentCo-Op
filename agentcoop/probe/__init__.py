@@ -32,6 +32,7 @@ from agentcoop.probe.suite import (
     DEFAULT_RESOURCE_LIMIT_S,
     DETERMINISM_SEED,
     applicable_corruptions,
+    parameter_domain_suite,
     resolve_type,
     standard_suite,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "probe_id_for",
     "canonical",
     "standard_suite",
+    "parameter_domain_suite",
     "applicable_corruptions",
     "resolve_type",
     "DEFAULT_RESOURCE_LIMIT_S",
