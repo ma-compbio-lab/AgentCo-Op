@@ -144,6 +144,12 @@ deterministic verbosity auto-loss and has no judge ID, family, generated
 rubric, or forward/reverse judgments. Policy observations never count as judge
 diversity and never enter leave-one-family-out fitting.
 
+Every scheduled target also creates a typed `PanelAttemptRecord` containing
+attempt ID, pair/case IDs, canonical candidate A/B IDs, call IDs, and terminal
+status (`COMPLETE`, `UNAVAILABLE`, or `INVALID`). `PreferenceArchive.attempts`
+retains it even when no judgment/observation exists. Acquisition derives its
+attempted set only from these records—never by parsing request IDs or notes.
+
 ### Order-swap normalization
 
 For canonical candidates A and B:
@@ -401,7 +407,7 @@ not cycles. Every criterion model over the current contenders must be connected,
 converged, cycle-free, and have finite covariance.
 
 Active acquisition operates on the finite set
-`U={(unordered pair, case): no panel attempt exists}`. In dossier preference
+`U={(unordered pair, case): no PanelAttemptRecord exists}`. In dossier preference
 order, first select the lexicographically smallest target in `U` that bridges
 two connectivity components for the first disconnected criterion. Otherwise,
 for each target compute

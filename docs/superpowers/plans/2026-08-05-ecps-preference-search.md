@@ -138,8 +138,11 @@ class PolicyPreferenceObservation(BaseModel): observation_id, pair_id, case_id,
 class JudgeCallStatus(str, Enum): AVAILABLE, UNAVAILABLE, INVALID
 class JudgeCallRecord(BaseModel): call_id, status, request_id, judge_id,
     judge_family, source, judgment, cost, cost_complete, error
+class PanelAttemptStatus(str, Enum): COMPLETE, UNAVAILABLE, INVALID
+class PanelAttemptRecord(BaseModel): attempt_id, pair_id, case_id,
+    candidate_a_id, candidate_b_id, call_ids, status
 class PreferenceArchive(BaseModel): calls, judgments, observations,
-    policy_observations, notes
+    policy_observations, attempts, notes
 def normalize_order_swaps(
     forward: OrderedPairJudgment,
     reverse: OrderedPairJudgment,
@@ -291,6 +294,7 @@ class PanelResult(BaseModel):
     calls: tuple[JudgeCallRecord, ...]
     judgments: tuple[OrderedPairJudgment, ...]
     observations: tuple[PairwisePreferenceObservation, ...]
+    attempt: PanelAttemptRecord
     judge_calls: int
     cost: CostProfile
     cost_complete: bool
@@ -313,6 +317,9 @@ cost through `JudgeResponse`, not the judgment. Reject every negative or
 non-finite authoritative cost, mark accounting incomplete, and allow the loop
 to stop `RESOURCE_ACCOUNTING_INVALID`. Rebuild stamped Pydantic records through
 validation rather than unchecked `model_copy(update=...)`.
+Always emit and archive one `PanelAttemptRecord`, including when all calls are
+unavailable/invalid and no judgment exists; stamp pair/case/candidate fields in
+the panel rather than parsing opaque request IDs.
 
 - [ ] **Step 5: Commit**
 
@@ -435,7 +442,9 @@ LOO skips only the count gate and uses the same ridge/iterations/tolerance.
 Acquisition uses the finite unattempted target set, bridges disconnected
 criterion graphs in dossier order, then maximizes
 `max_k p_k(1-p_k)v_k/4` with lexicographic ties. Any recorded panel call marks
-the target attempted, including invalid/unavailable, so no target is retried.
+the target attempted via `PreferenceArchive.attempts`, including
+invalid/unavailable attempts with no judgment, so no target is retried. Never
+infer target identity from `request_id` or notes.
 
 - [ ] **Step 4: Verify GREEN and property regressions**
 
