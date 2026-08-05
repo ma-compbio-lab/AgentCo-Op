@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Annotated, Any, Optional, Protocol
 
 from pydantic import (
@@ -535,6 +535,7 @@ class JudgePanel:
         meta_rubric: MetaRubric,
         seed: int,
         remaining_calls: int,
+        continue_after_family: Callable[[CostProfile, bool], bool] | None = None,
     ) -> PanelResult:
         if candidate_a_id == candidate_b_id:
             raise ValueError("panel candidates must be distinct")
@@ -648,9 +649,28 @@ class JudgePanel:
             observations.extend(normalized)
             return normalized
 
+        def may_start_another_family() -> bool:
+            if continue_after_family is None:
+                return True
+            accumulated = CostProfile()
+            complete = True
+            for call in calls:
+                if call.cost is None:
+                    complete = False
+                    continue
+                candidate = accumulated + call.cost
+                if _cost_problem(candidate) is not None:
+                    complete = False
+                    continue
+                accumulated = candidate
+                complete = complete and call.cost_complete
+            return continue_after_family(accumulated, complete)
+
         primary = configured[:2]
         for judge in primary:
             family_observations[_judge_family(judge)] = await run_family(judge)
+            if not may_start_another_family():
+                break
 
         need_third = len(primary) < 2 or any(
             not _usable(family_observations.get(_judge_family(judge), ()))
@@ -661,7 +681,12 @@ class JudgePanel:
                 family_observations[_judge_family(primary[0])],
                 family_observations[_judge_family(primary[1])],
             )
-        if need_third and len(configured) >= 3 and calls_left >= 2:
+        if (
+            need_third
+            and len(configured) >= 3
+            and calls_left >= 2
+            and may_start_another_family()
+        ):
             third = configured[2]
             family_observations[_judge_family(third)] = await run_family(third)
 

@@ -254,7 +254,9 @@ class OptimizationPolicy(_FrozenRecord):
     epsilon: dict[NonEmptyStr, float] = Field(default_factory=dict)
     max_iterations: int = Field(default=100, gt=0)
     tolerance: float = Field(default=1e-8, gt=0.0, allow_inf_nan=False)
-    min_judge_families: int = Field(default=2, ge=2)
+    # The protocol has two required primary families; a third is arbitration
+    # only and therefore cannot be configured as required coverage.
+    min_judge_families: int = Field(default=2, ge=2, le=2)
     max_payload_chars: int = Field(default=50_000, gt=0)
     verbosity: VerbosityPolicy = Field(default_factory=VerbosityPolicy)
 
@@ -438,9 +440,26 @@ class OptimizationOutcome(_FrozenRecord):
         packet_ids = tuple(packet.packet_id for packet in self.packet_archive)
         if len(packet_ids) != len(set(packet_ids)):
             raise ValueError("duplicate packet ID in optimization outcome")
-        mutation_ids = tuple(record.mutation_id for record in self.mutation_records)
-        if len(mutation_ids) != len(set(mutation_ids)):
-            raise ValueError("duplicate mutation ID in optimization outcome")
+        mutation_keys = tuple(
+            (record.mutation_id, record.parent_id, record.child_id)
+            for record in self.mutation_records
+        )
+        if len(mutation_keys) != len(set(mutation_keys)):
+            raise ValueError("duplicate mutation record in optimization outcome")
+        candidates_by_id = {
+            evaluation.candidate.candidate_id: evaluation.candidate
+            for evaluation in self.candidates
+        }
+        for record in self.mutation_records:
+            if record.parent_id not in known_candidates or record.child_id not in known_candidates:
+                raise ValueError("mutation record references an unknown candidate")
+            child = candidates_by_id[record.child_id]
+            if (
+                child.parent_id != record.parent_id
+                or child.mutation_id != record.mutation_id
+                or child.generation != record.generation
+            ):
+                raise ValueError("mutation record differs from child lineage")
 
         expected_indices = tuple(range(len(self.events)))
         actual_indices = tuple(event.index for event in self.events)
